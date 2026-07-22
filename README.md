@@ -42,8 +42,12 @@ git -C /home/esfisher/dev/housedev/nestorage worktree add NSTR-2 -b feature/NSTR
   [`Makefile`](Makefile) and the version pinned in the lint job of
   [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-Everything else — lefthook, conform — is pinned in `go.mod` via Go tool
-directives, so no global install is needed: invoke it with `go tool <name>`.
+Everything else — lefthook, conform, templ — is pinned in `go.mod` via Go
+tool directives, so no global install is needed: invoke it with
+`go tool <name>`. The front-end has no Node toolchain: `make assets`
+downloads the pinned, checksum-verified
+[Tailwind v4 standalone CLI](https://tailwindcss.com/blog/standalone-cli) on
+first use.
 
 ### The local dev loop
 
@@ -52,7 +56,7 @@ git -C /home/esfisher/dev/housedev/nestorage worktree add <dir> -b <branch>
 cd /home/esfisher/dev/housedev/nestorage/<dir>
 make hooks   # once per clone: installs the Lefthook Git hooks
 # ... edit ...
-make build   # type-check the module (no binary artifact exists yet)
+make build   # build the CSS bundle, then compile bin/server
 make test    # run tests with the race detector; writes coverage.out
 make lint    # static analysis (golangci-lint)
 make fmt     # apply the configured formatters in place
@@ -61,17 +65,38 @@ make fmt     # apply the configured formatters in place
 Every target that exists on `main` today, as printed by `make help`:
 
 ```sh
-make build      # type-check the module (a library emits no binary artifact yet)
+make build      # build assets then compile the server binary into ./bin
+make assets     # build the Tailwind CSS bundle (downloads the pinned CLI if missing)
+make run        # run the server from source
 make test       # run the test suite with the race detector and write a coverage profile
+make test-gated # run the database-gated suites (needs NESTORAGE_TEST_DATABASE_URL)
 make cover      # summarise the coverage profile written by `make test`
 make lint       # run golangci-lint using the pinned version
 make fmt        # apply the configured formatters in place
+make generate   # generate Go code from .templ files
+make migrate-up      # apply all pending database migrations
+make migrate-down    # roll back the most recent migration
+make migrate-status  # show the migration status
+make migrate-reset   # roll back all migrations
+make migrate-create  # scaffold a new migration (usage: make migrate-create name=add_widgets)
 make tidy       # prune and refresh go.mod / go.sum
 make hooks      # install the Lefthook git hooks
 make hooks-uninstall  # remove the Lefthook git hooks
 make clean      # remove build artifacts
 make help       # list available targets
 ```
+
+The `migrate-*` targets invoke `./cmd/migrate`, which does not exist yet
+(NSTR-14). They are harmless until then — nothing in CI or the hooks calls
+them.
+
+### Gated tests
+
+`make test` is hermetic — no database, no network. Suites that need a real
+Postgres are gated behind `NESTORAGE_TEST_DATABASE_URL` and run separately
+with `make test-gated`, which fails fast with a clear message if the
+variable is unset. `GATED_TEST_PACKAGES` in the `Makefile` is empty until
+Sprint 4 (Bins & Items) adds the first adapter suite.
 
 ### What the hooks do
 
@@ -85,9 +110,10 @@ make help       # list available targets
 
 ### Not yet available
 
-The Postgres compose service, database migrations, runtime configuration,
-and the server entrypoint arrive in NSTR-14 and NSTR-15 — there is
-intentionally no way to run the app yet.
+`cmd/server` is a placeholder that does nothing but exist, so `make build`
+has something to compile — NSTR-15 fills in config loading and the HTTP
+server bootstrap. The Postgres compose service and database migrations
+arrive in NSTR-14. There is intentionally no way to run the app yet.
 
 ## License
 
