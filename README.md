@@ -86,17 +86,18 @@ make clean      # remove build artifacts
 make help       # list available targets
 ```
 
-The `migrate-*` targets invoke `./cmd/migrate`, which does not exist yet
-(NSTR-14). They are harmless until then — nothing in CI or the hooks calls
-them.
+The `migrate-*` targets invoke `./cmd/migrate` against the database named by
+`DATABASE_URL` (and, optionally, `MIGRATE_DATABASE_URL`) — start the local
+Postgres from [`compose.yaml`](compose.yaml) first: `docker compose up -d`.
 
 ### Gated tests
 
 `make test` is hermetic — no database, no network. Suites that need a real
 Postgres are gated behind `NESTORAGE_TEST_DATABASE_URL` and run separately
 with `make test-gated`, which fails fast with a clear message if the
-variable is unset. `GATED_TEST_PACKAGES` in the `Makefile` is empty until
-Sprint 4 (Bins & Items) adds the first adapter suite.
+variable is unset. `GATED_TEST_PACKAGES` in the `Makefile` currently covers
+`internal/platform/db/...`; see [`docs/testing.md`](docs/testing.md) for the
+full recipe, the isolation model, and how to write one.
 
 ### Git hooks (Lefthook)
 
@@ -129,8 +130,8 @@ worktree, and it covers every existing and future per-ticket worktree.
 
 `cmd/server` is a placeholder that does nothing but exist, so `make build`
 has something to compile — NSTR-15 fills in config loading and the HTTP
-server bootstrap. The Postgres compose service and database migrations
-arrive in NSTR-14. There is intentionally no way to run the app yet.
+server bootstrap. There is intentionally no way to run the app yet, even
+though the database it will use is already migratable.
 
 ## License
 

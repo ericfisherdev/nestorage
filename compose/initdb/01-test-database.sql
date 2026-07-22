@@ -1,0 +1,17 @@
+-- Creates the base database `make test-gated` derives its per-package
+-- databases from. nestcore's dbtest harness (internal/platform/db/dbtest)
+-- refuses any base DSN whose database is not literally "test" or suffixed
+-- "_test" — it drops and recreates schemas, and that name check is the
+-- safety rail against ever pointing it at a real database. Without this
+-- file, every developer would have to hand-run `createdb nestorage_test`
+-- before their first `make test-gated`.
+--
+-- The postgres image creates POSTGRES_USER (nestorage) as a superuser, so it
+-- already holds the CREATEDB privilege the harness needs to derive a
+-- database per gated package.
+--
+-- Scripts under /docker-entrypoint-initdb.d run only the FIRST time the
+-- postgres data volume is created, not on every container start. An
+-- existing nestorage-pgdata volume from before this file existed needs
+-- `nestorage_test` created by hand, once.
+CREATE DATABASE nestorage_test;
