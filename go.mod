@@ -9,7 +9,9 @@ tool (
 )
 
 require (
+	github.com/a-h/templ v0.3.1001
 	github.com/ericfisherdev/nestcore v0.1.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 )
 
@@ -19,7 +21,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
-	github.com/a-h/templ v0.3.1001 // indirect
 	github.com/alessio/shellescape v1.4.1 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

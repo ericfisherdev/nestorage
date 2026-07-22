@@ -62,9 +62,10 @@ GATED_COVERAGE_OUT := coverage.gated.out
 
 # Packages whose tests need NESTORAGE_TEST_DATABASE_URL (see docs/testing.md).
 # internal/platform/db/migrate and cmd/migrate are the first (NSTR-14);
-# cmd/server's own lifecycle test joins them (NSTR-15); appended to as
-# further bounded contexts land (Sprint 4, Bins & Items, adds the next one).
-GATED_TEST_PACKAGES := ./internal/platform/db/... ./cmd/migrate/... ./cmd/server/...
+# cmd/server's own lifecycle test joins them (NSTR-15); internal/identity is
+# Sprint 3's bounded context (NSTR-18); appended to as further bounded
+# contexts land (Sprint 4, Bins & Items, adds the next one).
+GATED_TEST_PACKAGES := ./internal/platform/db/... ./cmd/migrate/... ./cmd/server/... ./internal/identity/...
 
 .PHONY: all build run test test-gated cover lint fmt generate assets hooks hooks-uninstall tidy clean help \
 	migrate-up migrate-down migrate-status migrate-reset migrate-create
