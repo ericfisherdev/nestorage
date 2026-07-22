@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -59,17 +58,6 @@ func TestReadiness(t *testing.T) {
 
 	if err := readiness(pool)(context.Background()); err == nil {
 		t.Error("readiness()(ctx) = nil error, want an error for an unreachable database")
-	}
-}
-
-func TestAppRoutes(t *testing.T) {
-	mux := http.NewServeMux()
-	appRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_, pattern := mux.Handler(req)
-	if pattern != "" {
-		t.Errorf("appRoutes() registered pattern %q, want none (a no-op stub until NSTR-16)", pattern)
 	}
 }
 

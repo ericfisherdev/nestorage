@@ -1,0 +1,47 @@
+package components
+
+// ToolbarView is the view model for the heading strip above the bin list: a
+// page heading, an item count, and the category filters with the currently
+// active one.
+type ToolbarView struct {
+	Heading    string
+	Count      string
+	Categories []string
+	Active     string
+}
+
+// toolbarID is the DOM id the filter pills target for their HTMX outerHTML
+// swap, so pressing a pill re-renders the whole toolbar — including every
+// pill's own pressed state — from the /bins fragment response.
+const toolbarID = "bin-toolbar"
+
+// Toolbar renders the heading, item count, search box, view switch, and
+// filter row above the (Sprint 4) bin list.
+templ Toolbar(view ToolbarView) {
+	<div id={ toolbarID } class="border-b border-border px-[26px] pb-4 pt-5">
+		<div class="flex flex-wrap items-center gap-4">
+			<h2 class="text-xl font-extrabold text-text">{ view.Heading }</h2>
+			<p class="text-[15px] font-semibold text-text-faint">{ view.Count }</p>
+			<div class="flex-1"></div>
+			@SearchInput("bin-search", "Search bins and items", "Search bins & items")
+			@ViewSwitch(ViewGrid)
+		</div>
+		<div class="mt-4 flex flex-wrap gap-[9px]" role="group" aria-label="Filter by category">
+			for _, category := range view.Categories {
+				@FilterPill(category, category == view.Active, toolbarFilterAttrs())
+			}
+		</div>
+	</div>
+}
+
+// toolbarFilterAttrs is the HTMX wiring shared by every filter pill: a GET
+// against /bins, swapped into this toolbar's own outerHTML. render.Page
+// already returns the bare fragment for an HX-Request (and sets Vary:
+// HX-Request), so no second endpoint is needed.
+func toolbarFilterAttrs() templ.Attributes {
+	return templ.Attributes{
+		"hx-get":    "/bins",
+		"hx-target": "#" + toolbarID,
+		"hx-swap":   "outerHTML",
+	}
+}

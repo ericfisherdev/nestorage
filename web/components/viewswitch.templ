@@ -1,0 +1,36 @@
+package components
+
+// ViewStyle selects the bins list's display: cards laid out in a grid, or a
+// dense list. Wiring the switch to an actual layout change is Sprint 4's
+// job; this ticket only proves the control renders and toggles its own
+// pressed state.
+type ViewStyle int
+
+const (
+	ViewGrid ViewStyle = iota
+	ViewList
+)
+
+// ViewSwitch renders the grid/list segmented control. Each option is a real
+// button carrying aria-pressed and an sr-only label, grouped under a single
+// accessible name.
+templ ViewSwitch(active ViewStyle) {
+	<div class="flex gap-0 rounded-nav bg-segmented p-[3px]" role="group" aria-label="View style">
+		<button type="button" aria-pressed={ ariaBool(active == ViewGrid) } class={ "flex h-[34px] w-[38px] items-center justify-center rounded-lg", viewSwitchButtonClass(active == ViewGrid) }>
+			<span class="sr-only">Grid view</span>
+			@IconGrid("h-[18px] w-[18px]")
+		</button>
+		<button type="button" aria-pressed={ ariaBool(active == ViewList) } class={ "flex h-[34px] w-[38px] items-center justify-center rounded-lg", viewSwitchButtonClass(active == ViewList) }>
+			<span class="sr-only">List view</span>
+			@IconList("h-[18px] w-[18px]")
+		</button>
+	</div>
+}
+
+// viewSwitchButtonClass maps the pressed state to its Tailwind classes.
+func viewSwitchButtonClass(pressed bool) string {
+	if pressed {
+		return "bg-surface-raised text-primary-deep shadow-raised"
+	}
+	return "text-text-muted"
+}

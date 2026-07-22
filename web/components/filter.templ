@@ -1,0 +1,25 @@
+package components
+
+// FilterPill renders one toggle in a category filter row: a real button (not
+// a link) carrying aria-pressed, since selecting a category is a state
+// change on the current page rather than a navigation. attrs carries the
+// hx-* wiring (endpoint, target, swap) so this component stays ignorant of
+// what it is filtering.
+templ FilterPill(label string, active bool, attrs templ.Attributes) {
+	<button
+		type="button"
+		aria-pressed={ ariaBool(active) }
+		class={ "rounded-pill border px-4 py-2 text-sm font-semibold", filterPillClass(active) }
+		{ attrs... }
+	>
+		{ label }
+	</button>
+}
+
+// filterPillClass maps the pressed state to its Tailwind classes.
+func filterPillClass(active bool) string {
+	if active {
+		return "border-primary bg-primary font-bold text-white"
+	}
+	return "border-border-input bg-surface-raised text-text-secondary"
+}

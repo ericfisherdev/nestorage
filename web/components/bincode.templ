@@ -1,0 +1,8 @@
+package components
+
+// BinCode renders a bin's short code (e.g. "BIN-A01"). This is the only
+// component in the tree that applies font-mono: Space Mono is reserved
+// strictly for bin codes, never used as a general accent.
+templ BinCode(code string) {
+	<p class="font-mono text-xs font-bold tracking-wide text-mono-accent">{ code }</p>
+}

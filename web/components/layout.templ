@@ -1,0 +1,177 @@
+package components
+
+import "strconv"
+
+// NavItem is a sidebar navigation entry. Active marks the current page.
+type NavItem struct {
+	Label  string
+	Href   string
+	Active bool
+	Icon   templ.Component
+}
+
+// ShellStats is the sidebar's "Storage at a glance" summary.
+type ShellStats struct {
+	Bins  int
+	Items int
+	Rooms int
+}
+
+// ShellProps configures the Hearth app shell.
+type ShellProps struct {
+	// Title becomes the page's <title>, prefixed to " · Nestorage".
+	Title string
+	// Owners renders the sidebar Owners list.
+	Owners []OwnerView
+	Stats  ShellStats
+	// CSRFToken is carried for the first form the shell grows that needs it
+	// (e.g. a future logout or "New bin" submission); Sprint 3 owns auth, so
+	// nothing in this ticket renders it yet.
+	CSRFToken string
+}
+
+// Layout renders the Hearth app shell — a 264px sidebar plus main — around
+// content. Use it with the render seam, binding props and nav into the
+// layout func:
+//
+//	layout := func(c templ.Component) templ.Component { return components.Layout(props, nav, c) }
+//	render.Page(ctx, w, r, layout, content)
+//
+// Unlike Nestova's shell, the sidebar never hides behind an Alpine drawer:
+// below the "shell" breakpoint (900px) it collapses into a horizontal strip
+// that stays in the document flow, so navigation is reachable with no
+// JavaScript — the property that matters on the kiosk.
+templ Layout(props ShellProps, nav []NavItem, content templ.Component) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ props.Title } · Nestorage</title>
+			<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
+			<link rel="stylesheet" href="/static/css/app.css"/>
+			<script src="/static/js/htmx.min.js" defer></script>
+			<!-- Alpine loads last among the deferred scripts: a script registering
+			     Alpine.data or an alpine:init listener must run before Alpine's own
+			     deferred script dispatches that event, and Alpine dispatches it as
+			     soon as its script runs, not on DOMContentLoaded. No such script
+			     exists yet, but this ordering is the one that stays correct once
+			     one is added. -->
+			<script src="/static/js/alpine.min.js" defer></script>
+		</head>
+		<body class="flex min-h-screen flex-col bg-canvas font-sans text-text shell:flex-row">
+			<a
+				href="#main-content"
+				class="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-button focus:bg-primary focus:px-3 focus:py-2 focus:text-white"
+			>Skip to content</a>
+			@sidebar(props, nav)
+			<main id="main-content" class="min-w-0 flex-1 bg-surface">
+				@content
+			</main>
+		</body>
+	</html>
+}
+
+// sidebar is the brand lockup, primary action, primary nav, Owners list, and
+// "Storage at a glance" stats. It is a fixed 264px rail at the shell
+// breakpoint and up; below it, a full-width horizontal strip in normal flow.
+templ sidebar(props ShellProps, nav []NavItem) {
+	<aside
+		id="sidebar"
+		class="flex w-full flex-none flex-col gap-4 border-b border-border-strong bg-sidebar p-[22px_18px] shell:w-sidebar shell:border-b-0 shell:border-r"
+	>
+		<div class="flex items-center gap-[10px] text-lg font-extrabold tracking-[-0.01em] text-text">
+			@IconBin("h-7 w-7 flex-none text-primary")
+			Nestorage
+		</div>
+		<button
+			type="button"
+			class="flex items-center justify-center gap-[9px] rounded-button bg-primary p-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep"
+		>
+			@IconPlus("h-[19px] w-[19px]")
+			New bin
+		</button>
+		<nav class="flex flex-row gap-1 overflow-x-auto shell:flex-col shell:gap-0.5 shell:overflow-visible" aria-label="Primary">
+			for _, item := range nav {
+				@navLink(item)
+			}
+		</nav>
+		<hr class="border-divider"/>
+		<section>
+			<h2 class="mb-[10px] text-xs font-bold uppercase tracking-[.1em] text-text-faint">Owners</h2>
+			<ul class="flex flex-col gap-[9px]">
+				for _, o := range props.Owners {
+					@ownerRow(o)
+				}
+			</ul>
+		</section>
+		<hr class="border-divider"/>
+		<section class="rounded-2xl bg-sidebar-accent p-[15px]">
+			<h2 class="mb-1 text-sm font-bold text-primary-deep">Storage at a glance</h2>
+			<dl class="mt-2 flex gap-4">
+				@statItem(props.Stats.Bins, "bins")
+				@statItem(props.Stats.Items, "items")
+				@statItem(props.Stats.Rooms, "rooms")
+			</dl>
+		</section>
+	</aside>
+}
+
+// navLink renders one primary-nav entry, whitespace-nowrap so it stays
+// legible in the horizontal-scroll strip below the shell breakpoint.
+templ navLink(item NavItem) {
+	<a
+		href={ templ.SafeURL(item.Href) }
+		class={ "flex items-center gap-3 whitespace-nowrap rounded-nav px-3 py-[11px] text-[15px] font-semibold", navLinkClass(item.Active) }
+		if item.Active {
+			aria-current="page"
+		}
+	>
+		@item.Icon
+		{ item.Label }
+	</a>
+}
+
+// navLinkClass maps the active state to its Tailwind classes.
+func navLinkClass(active bool) string {
+	if active {
+		return "bg-sidebar-accent font-bold text-primary-deep"
+	}
+	return "text-text-secondary hover:bg-sidebar-accent"
+}
+
+// ownerRow renders one Owners-list entry: avatar, name, and a toggle showing
+// whether that owner's bins are currently included in the view. Sprint 4
+// wires the toggle to real filtering; this ticket renders it permanently
+// pressed, matching the reference's initial state.
+templ ownerRow(o OwnerView) {
+	<li class="flex items-center gap-[11px]">
+		@OwnerAvatar(o)
+		<span class="flex-1 text-base font-semibold text-text">{ o.Name }</span>
+		<button
+			type="button"
+			aria-pressed="true"
+			class={ "flex h-[19px] w-[19px] items-center justify-center rounded-md", ownerSolidClasses(o.Color) }
+		>
+			<span class="sr-only">{ ownerToggleLabel(o) }</span>
+			@IconCheck("h-3 w-3")
+		</button>
+	</li>
+}
+
+// ownerToggleLabel names what the toggle shows, distinguishing the shared
+// family owner from a named person.
+func ownerToggleLabel(o OwnerView) string {
+	if o.Color == OwnerShared {
+		return "Show shared family bins"
+	}
+	return "Show " + o.Name + "'s bins"
+}
+
+// statItem renders one "Storage at a glance" value/label pair.
+templ statItem(value int, label string) {
+	<div>
+		<dd class="text-[22px] font-extrabold leading-none text-text">{ strconv.Itoa(value) }</dd>
+		<dt class="mt-[2px] text-xs font-semibold text-text-muted">{ label }</dt>
+	</div>
+}
