@@ -53,6 +53,15 @@ CSS_OUTPUT := web/static/css/app.css
 # Coverage profile written by `make test` and read by `make cover`.
 COVERAGE_OUT := coverage.out
 
+# Coverage profile written by `make test-gated`. A separate file because the
+# two runs cover the same packages to very different depths: without a
+# database the gated tests self-skip, so COVERAGE_OUT alone reports
+# db-adjacent code as barely covered. Both profiles are handed to Sonar,
+# which unions them. Written even while GATED_TEST_PACKAGES is empty (below)
+# so the CI job that uploads it has something valid to upload ahead of
+# NSTR-14 adding the first gated package.
+GATED_COVERAGE_OUT := coverage.gated.out
+
 # Packages whose tests need NESTORAGE_TEST_DATABASE_URL (see README.md).
 # Empty until Sprint 4 (Bins & Items) adds the first adapter suite; appended
 # to as further bounded contexts land.
@@ -102,8 +111,9 @@ test-gated:
 		{ echo "NESTORAGE_TEST_DATABASE_URL is not set; see README.md#gated-tests"; exit 1; }
 	@if [ -z "$(strip $(GATED_TEST_PACKAGES))" ]; then \
 		echo "no gated test packages yet"; \
+		echo "mode: set" > $(GATED_COVERAGE_OUT); \
 	else \
-		go test -race -count=1 $(GATED_TEST_PACKAGES); \
+		go test -race -count=1 -coverprofile=$(GATED_COVERAGE_OUT) $(GATED_TEST_PACKAGES); \
 	fi
 
 ## cover: summarise the coverage profile written by `make test`
@@ -159,7 +169,7 @@ hooks-uninstall:
 ## clean: remove build artifacts
 clean:
 	rm -rf $(BIN_DIR)
-	rm -f $(COVERAGE_OUT)
+	rm -f $(COVERAGE_OUT) $(GATED_COVERAGE_OUT)
 
 ## help: list available targets
 help:
