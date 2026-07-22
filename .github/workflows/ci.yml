@@ -132,16 +132,16 @@ jobs:
   test-gated:
     name: test-gated
     runs-on: ubuntu-latest
-    # GATED_TEST_PACKAGES in the Makefile is empty until NSTR-14 adds the
-    # first Postgres-backed adapter suite, so `make test-gated` currently
-    # just writes an empty coverage.gated.out and exits. The job is wired up
-    # now rather than after NSTR-14 lands so the Postgres service, cache
-    # scoping and coverage handoff are already proven correct the moment
-    # there is a real gated package to run.
+    # GATED_TEST_PACKAGES in the Makefile covers internal/platform/db/...
+    # (NSTR-14), so `make test-gated` here runs real Postgres-backed tests,
+    # not the empty-package stub this job originally shipped with (NSTR-13,
+    # wired up ahead of time so the Postgres service, cache scoping and
+    # coverage handoff were already proven correct the moment there was a
+    # real gated package to run).
     services:
       postgres:
-        # 17-alpine, not nestcore's 16-alpine: NSTR-14 pins postgres:17-alpine
-        # in compose.yaml, and CI must exercise the same major that local dev
+        # 17-alpine, not nestcore's 16-alpine: compose.yaml pins
+        # postgres:17-alpine, and CI must exercise the same major that local dev
         # and the appliance run. Digest-pinned like every action in this file,
         # so a retagged upstream image can't silently change what CI runs
         # against; the trailing tag is for humans only -- Docker resolves by
@@ -195,7 +195,7 @@ jobs:
 
       - name: Upload gated coverage profile
         # Handed to the sonarqube job below so the scan sees database-adjacent
-        # code as covered rather than self-skipped once NSTR-14 lands.
+        # code as covered rather than self-skipped.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-gated
@@ -301,9 +301,6 @@ jobs:
     name: SonarQube
     runs-on: ubuntu-latest
     # Gated on both test jobs purely to inherit their coverage profiles.
-    # test-gated is included so its profile is available the moment
-    # NSTR-14 lands a gated package -- until then it just contributes an
-    # empty coverage.gated.out, which is harmless to union in.
     needs: [build, test-gated]
     # Skip while a PR is a draft. The event_name arm is load-bearing: on a push
     # github.event.pull_request is null, and `null == false` is false in GitHub
