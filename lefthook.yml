@@ -1,0 +1,43 @@
+# Lefthook Git hooks.
+#
+# Commands delegate to Makefile targets / pinned go tools so local hooks and CI
+# enforce the same gates. Enable them with `make hooks` (which runs
+# `go tool lefthook install`). Tooling is pinned in go.mod (lefthook, conform)
+# and the README (golangci-lint).
+
+# commit-msg validates the message against Conventional Commits (.conform.yaml)
+# so a non-conforming message is rejected before the commit is created. {1} is
+# the path to the commit message file that git passes to the hook.
+commit-msg:
+  jobs:
+    - name: conventional-commit
+      run: go tool conform enforce --commit-msg-file {1}
+
+# pre-commit runs the fast gates on staged changes, piped so it stops at the
+# first failure. Committing unformatted, lint-failing, or test-failing code is
+# blocked.
+pre-commit:
+  piped: true
+  jobs:
+    - name: fmt
+      glob: "*.go"
+      run: make fmt
+      # Re-stage files that were already staged and got reformatted.
+      stage_fixed: true
+    - name: lint
+      glob: "*.go"
+      run: make lint
+    - name: test
+      glob: "*.go"
+      # Fast feedback on commit; the full race suite runs on pre-push and in CI.
+      run: go test ./...
+
+# pre-push is the heavier safety net: the full race-enabled suite and lint over
+# the whole module before anything leaves the machine.
+pre-push:
+  parallel: true
+  jobs:
+    - name: lint
+      run: make lint
+    - name: test
+      run: make test

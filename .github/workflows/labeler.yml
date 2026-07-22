@@ -1,0 +1,41 @@
+name: PR Labeler
+
+on:
+  # pull_request_target rather than pull_request so the token is writable on
+  # pull requests opened from forks, where pull_request grants only read access
+  # and labelling would silently no-op.
+  #
+  # This is the usage actions/labeler documents as safe: the job never checks
+  # out, builds, or executes pull-request-authored code. It reads the changed
+  # file list through the API and applies labels, so the elevated token is
+  # never exposed to untrusted input.
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  # A rapid push sequence would otherwise queue one labelling run per push, all
+  # converging on the same answer.
+  group: labeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: label
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to add labels to the pull request.
+      pull-requests: write
+    steps:
+      - name: Apply labels
+        # No checkout step: when the configuration file is absent from the
+        # runner the action reads .github/labeler.yml from the repository over
+        # the API, which is exactly what we want here.
+        uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          # Additive only. Syncing would strip a label a human applied by hand
+          # the moment the matching file stopped being touched.
+          sync-labels: false
