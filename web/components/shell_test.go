@@ -136,3 +136,58 @@ func TestSidebar_ExactlyOneActiveNavEntry(t *testing.T) {
 		t.Errorf(`aria-current="page" appears %d times, want exactly 1: %s`, got, page)
 	}
 }
+
+// TestSetupPage_NoExternalHost extends TestLayout_NoExternalHost's coverage
+// to the first-run onboarding wizard (NSTR-19): it renders outside Layout
+// entirely, so the no-external-host guarantee has to be checked again
+// independently rather than inherited from the shell's own test.
+func TestSetupPage_NoExternalHost(t *testing.T) {
+	page := renderString(t, components.SetupPage(components.SetupForm{CSRFToken: "test-token"}))
+
+	if externalHostPattern.MatchString(page) {
+		t.Error("rendered setup page contains an absolute or scheme-relative src/href — the appliance must render with the internet down")
+	}
+	for _, host := range deniedHosts {
+		if strings.Contains(page, host) {
+			t.Errorf("rendered setup page references denied host %q", host)
+		}
+	}
+}
+
+// TestSetupPage_ErrorRegionAndAutocomplete verifies the accessibility
+// contract the ticket calls out: the error region only appears when there
+// is an error to show, and both password fields disable autofill of a
+// saved password in favor of prompting for a new one.
+func TestSetupPage_ErrorRegionAndAutocomplete(t *testing.T) {
+	page := renderString(t, components.SetupPage(components.SetupForm{CSRFToken: "tok", Error: "Passwords do not match."}))
+
+	if !strings.Contains(page, `role="alert"`) {
+		t.Error("setup page missing the role=alert error region when Error is set")
+	}
+	if got := strings.Count(page, `autocomplete="new-password"`); got != 2 {
+		t.Errorf(`setup page has %d autocomplete="new-password" fields, want exactly 2 (password + confirmation)`, got)
+	}
+
+	noError := renderString(t, components.SetupPage(components.SetupForm{CSRFToken: "tok"}))
+	if strings.Contains(noError, `role="alert"`) {
+		t.Error("setup page renders the error region even when Error is empty")
+	}
+}
+
+// TestSetupPage_FieldValuesRoundTrip verifies a failed submission's display
+// name and email are preserved for correction, matching every other form in
+// this codebase (e.g. Nestova's onboarding form).
+func TestSetupPage_FieldValuesRoundTrip(t *testing.T) {
+	page := renderString(t, components.SetupPage(components.SetupForm{
+		CSRFToken:   "tok",
+		DisplayName: "Maya",
+		Email:       "maya@example.com",
+	}))
+
+	if !strings.Contains(page, `value="Maya"`) {
+		t.Error("setup page did not round-trip DisplayName")
+	}
+	if !strings.Contains(page, `value="maya@example.com"`) {
+		t.Error("setup page did not round-trip Email")
+	}
+}

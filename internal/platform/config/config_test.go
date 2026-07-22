@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	corecfg "github.com/ericfisherdev/nestcore/config"
 
@@ -22,6 +23,7 @@ var allKeys = []string{
 	"DB_POOL_MODE", "DB_SSL_ROOT_CERT", "MIGRATE_DATABASE_URL",
 	"TLS_CERT_FILE", "TLS_KEY_FILE",
 	"HSTS_ENABLED", "HSTS_MAX_AGE", "HSTS_INCLUDE_SUBDOMAINS", "HSTS_PRELOAD",
+	"SESSION_SECRET", "SESSION_LIFETIME", "SESSION_COOKIE_SECURE",
 }
 
 // setEnv isolates a test case from both the developer's ambient environment
@@ -77,6 +79,33 @@ func TestLoad_ProdWithNoDatabaseURLFails(t *testing.T) {
 	}
 }
 
+func TestLoad_SessionDefaultsWireThrough(t *testing.T) {
+	setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev})
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.Session.Secret != corecfg.DevSessionSecret {
+		t.Errorf("Session.Secret = %q, want the dev default", cfg.Session.Secret)
+	}
+	if cfg.Session.Lifetime != 12*time.Hour {
+		t.Errorf("Session.Lifetime = %v, want the 12h default", cfg.Session.Lifetime)
+	}
+}
+
+func TestLoad_ProdRejectsDefaultSessionSecret(t *testing.T) {
+	setEnv(t, map[string]string{
+		"APP_ENV":      corecfg.EnvProd,
+		"DATABASE_URL": "postgres://u:p@example.com:5432/nestorage?sslmode=disable",
+	})
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "SESSION_SECRET") {
+		t.Fatalf("Load() error = %v, want an error naming SESSION_SECRET", err)
+	}
+}
+
 func TestLoad_AggregatesMultipleErrors(t *testing.T) {
 	setEnv(t, map[string]string{
 		"APP_ENV":                "staging",
@@ -124,7 +153,11 @@ func TestLoad_DotenvReadInDevOnly(t *testing.T) {
 
 	t.Run("prod", func(t *testing.T) {
 		const explicit = "postgres://u:p@example.com:5432/nestorage?sslmode=disable"
-		setEnv(t, map[string]string{"APP_ENV": corecfg.EnvProd, "DATABASE_URL": explicit})
+		setEnv(t, map[string]string{
+			"APP_ENV":        corecfg.EnvProd,
+			"DATABASE_URL":   explicit,
+			"SESSION_SECRET": "a-real-32-byte-plus-production-secret",
+		})
 		writeDotenv(t, fromEnvFile)
 
 		cfg, err := config.Load()

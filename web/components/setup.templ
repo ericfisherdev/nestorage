@@ -1,0 +1,109 @@
+package components
+
+// SetupForm holds the data the first-run admin onboarding wizard needs to
+// render. It is shown before any user exists, so it is a self-contained
+// page — not wrapped in Layout, since there is no sidebar to render before
+// an account exists. The password is never carried back into the form.
+type SetupForm struct {
+	// CSRFToken is the per-session CSRF token embedded as a hidden form field.
+	CSRFToken string
+	// DisplayName pre-fills the name field after a failed submission.
+	DisplayName string
+	// Email pre-fills the email field after a failed submission.
+	Email string
+	// Error is a validation or provisioning error shown below the form.
+	// Empty means no error is shown.
+	Error string
+}
+
+// SetupPage renders the first-run admin onboarding wizard: the only route
+// to creating the very first user. It emits its own doctype/head and links
+// only /static/css/app.css and /static/favicon.svg — no external host, so
+// it renders with the internet down like every other page.
+templ SetupPage(form SetupForm) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>Set up Nestorage</title>
+			<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
+			<link rel="stylesheet" href="/static/css/app.css"/>
+		</head>
+		<body class="flex min-h-screen items-center justify-center bg-canvas p-4 font-sans text-text">
+			<div class="w-full max-w-sm">
+				<div class="mb-8 text-center">
+					@IconBin("mx-auto h-10 w-10 text-primary")
+					<h1 class="mt-3 text-xl font-extrabold text-text">Welcome to Nestorage</h1>
+					<p class="mt-1 text-sm text-text-muted">Create the administrator account to get started</p>
+				</div>
+				<div class="rounded-card bg-surface p-6 shadow-card">
+					<form method="POST" action="/setup" novalidate>
+						<input type="hidden" name="csrf_token" value={ form.CSRFToken }/>
+						<div class="flex flex-col gap-4">
+							<div class="flex flex-col gap-1">
+								<label for="display_name" class="text-sm font-semibold text-text-secondary">Your name</label>
+								<input
+									id="display_name"
+									type="text"
+									name="display_name"
+									value={ form.DisplayName }
+									autocomplete="name"
+									required
+									class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+									placeholder="Alex"
+								/>
+							</div>
+							<div class="flex flex-col gap-1">
+								<label for="email" class="text-sm font-semibold text-text-secondary">Email</label>
+								<input
+									id="email"
+									type="email"
+									name="email"
+									value={ form.Email }
+									autocomplete="email"
+									required
+									class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+									placeholder="you@example.com"
+								/>
+							</div>
+							<div class="flex flex-col gap-1">
+								<label for="password" class="text-sm font-semibold text-text-secondary">Password</label>
+								<input
+									id="password"
+									type="password"
+									name="password"
+									autocomplete="new-password"
+									required
+									class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+									placeholder="At least 12 characters"
+								/>
+							</div>
+							<div class="flex flex-col gap-1">
+								<label for="password_confirmation" class="text-sm font-semibold text-text-secondary">Confirm password</label>
+								<input
+									id="password_confirmation"
+									type="password"
+									name="password_confirmation"
+									autocomplete="new-password"
+									required
+									class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+									placeholder="At least 12 characters"
+								/>
+							</div>
+							if form.Error != "" {
+								<p role="alert" class="text-sm text-red-600">{ form.Error }</p>
+							}
+							<button
+								type="submit"
+								class="flex items-center justify-center rounded-button bg-primary p-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep"
+							>
+								Create administrator account
+							</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		</body>
+	</html>
+}
