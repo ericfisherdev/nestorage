@@ -98,15 +98,32 @@ with `make test-gated`, which fails fast with a clear message if the
 variable is unset. `GATED_TEST_PACKAGES` in the `Makefile` is empty until
 Sprint 4 (Bins & Items) adds the first adapter suite.
 
-### What the hooks do
+### Git hooks (Lefthook)
 
-- `commit-msg` runs `conform`, validating the message against
-  [Conventional Commits](https://www.conventionalcommits.org) before the
-  commit is created.
-- `pre-commit` runs `fmt`, then `lint`, then a fast `go test ./...`, piped so
-  it stops at the first failure.
-- `pre-push` runs the full race-enabled test suite and lint over the whole
-  module before anything leaves the machine.
+[Lefthook](https://lefthook.dev) is pinned as a Go tool directive in
+`go.mod`. Enable the hooks once per clone:
+
+```sh
+make hooks            # go tool lefthook install
+make hooks-uninstall  # remove them (lefthook.yml itself is left in place)
+```
+
+The hooks delegate to the same `make` targets as CI, so local and CI checks
+never diverge ([`lefthook.yml`](lefthook.yml)):
+
+- **commit-msg**: enforce [Conventional Commits](https://www.conventionalcommits.org)
+  ([`.conform.yaml`](.conform.yaml)) before the commit is created.
+- **pre-commit** (piped, fails fast): format staged `.go`/`.templ` sources,
+  verify generated `*_templ.go` is in sync, `make lint`, then a fast
+  `go test ./...`.
+- **pre-push**: the full race-enabled `make test` plus `make lint` over the
+  whole module before anything leaves the machine.
+
+This repo uses the [bare-clone-plus-worktrees layout](#repository-layout)
+above, and hooks install into the repository-wide `.bare/hooks` directory —
+`git rev-parse --git-path hooks` resolves through `--git-common-dir`, which
+every worktree shares. So `make hooks` is run once per clone, not once per
+worktree, and it covers every existing and future per-ticket worktree.
 
 ### Not yet available
 
