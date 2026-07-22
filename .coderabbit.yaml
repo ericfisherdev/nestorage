@@ -33,3 +33,8 @@ reviews:
     # every other branch as a valid review target.
     base_branches:
       - ".*"
+    # Reviews are opt-in: only pull requests carrying this label are
+    # reviewed. A non-empty list acts as a filter, so an unlabelled PR gets
+    # no review at all until the label is applied.
+    labels:
+      - "CR Review"
