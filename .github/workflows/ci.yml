@@ -59,6 +59,35 @@ jobs:
           restore-keys: |
             go-test-${{ runner.os }}-
 
+      - name: Verify generated templ output is in sync
+        # templ is pinned via the go.mod tool directive, so the generated code
+        # (including its version header) is reproducible across machines.
+        # Use `git status --porcelain` rather than `git diff` so a newly added
+        # but uncommitted *_templ.go (untracked) also fails the gate.
+        run: |
+          go tool templ generate
+          if [ -n "$(git status --porcelain -- '*_templ.go')" ]; then
+            echo "::error::Generated templ output is stale or uncommitted. Run 'make generate' and commit the *_templ.go files."
+            git status --porcelain -- '*_templ.go'
+            exit 1
+          fi
+
+      - name: Build front-end assets
+        # Downloads the pinned, checksum-verified Tailwind standalone CLI and
+        # rebuilds the CSS bundle (no Node toolchain). Tailwind's output is
+        # deterministic for a pinned version and platform-independent across the
+        # supported binaries, so the committed app.css must match this Linux
+        # rebuild (mirrors the templ-freshness gate); a stale or hand-edited
+        # bundle fails CI.
+        run: |
+          make assets
+          test -s web/static/css/app.css
+          if [ -n "$(git status --porcelain -- web/static/css/app.css)" ]; then
+            echo "::error::web/static/css/app.css is stale. Run 'make assets' and commit the result."
+            git diff -- web/static/css/app.css | head -40
+            exit 1
+          fi
+
       - name: Build
         run: make build
 
@@ -92,6 +121,89 @@ jobs:
       - name: Save Go caches
         # Only main-branch runs write the cache. PRs restore but never save,
         # which keeps the repo under GitHub's 10 GB cache ceiling.
+        if: always() && github.event_name == 'push' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  test-gated:
+    name: test-gated
+    runs-on: ubuntu-latest
+    # GATED_TEST_PACKAGES in the Makefile is empty until NSTR-14 adds the
+    # first Postgres-backed adapter suite, so `make test-gated` currently
+    # just writes an empty coverage.gated.out and exits. The job is wired up
+    # now rather than after NSTR-14 lands so the Postgres service, cache
+    # scoping and coverage handoff are already proven correct the moment
+    # there is a real gated package to run.
+    services:
+      postgres:
+        # 17-alpine, not nestcore's 16-alpine: NSTR-14 pins postgres:17-alpine
+        # in compose.yaml, and CI must exercise the same major that local dev
+        # and the appliance run. Digest-pinned like every action in this file,
+        # so a retagged upstream image can't silently change what CI runs
+        # against; the trailing tag is for humans only -- Docker resolves by
+        # digest regardless.
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: nestorage_test
+        ports:
+          - 5432:5432
+        # GitHub Actions blocks the job's steps until this passes, so no
+        # hand-rolled wait loop is needed.
+        options: >-
+          --health-cmd="pg_isready -U postgres -d nestorage_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      # The role is the container's default `postgres` superuser, which
+      # already has CREATEDB -- required if the gated harness creates a
+      # database per package. localhost is correct, not the service label:
+      # these steps run directly on the runner, not inside a container.
+      NESTORAGE_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/nestorage_test?sslmode=disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          # Job-scoped prefix, distinct from the build job's: saving under the
+          # same key from two jobs in one workflow run races.
+          key: go-test-gated-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-test-gated-${{ runner.os }}-
+
+      - name: Test (gated, needs Postgres)
+        run: make test-gated
+
+      - name: Upload gated coverage profile
+        # Handed to the sonarqube job below so the scan sees database-adjacent
+        # code as covered rather than self-skipped once NSTR-14 lands.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-gated
+          path: coverage.gated.out
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Save Go caches
         if: always() && github.event_name == 'push' && steps.go-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -188,8 +300,11 @@ jobs:
   sonarqube:
     name: SonarQube
     runs-on: ubuntu-latest
-    # Gated on build purely to inherit its coverage profile.
-    needs: build
+    # Gated on both test jobs purely to inherit their coverage profiles.
+    # test-gated is included so its profile is available the moment
+    # NSTR-14 lands a gated package -- until then it just contributes an
+    # empty coverage.gated.out, which is harmless to union in.
+    needs: [build, test-gated]
     # Skip while a PR is a draft. The event_name arm is load-bearing: on a push
     # github.event.pull_request is null, and `null == false` is false in GitHub
     # expressions, so testing the draft field alone would stop analysing main.
@@ -203,10 +318,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Download coverage profile
+      - name: Download coverage profiles
+        # Both artifacts land at the workspace root, where the two paths in
+        # sonar.go.coverage.reportPaths expect them. Sonar unions the
+        # profiles, so a line covered by either run counts as covered.
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: coverage
+          pattern: coverage*
+          merge-multiple: true
 
       - name: SonarQube Scan
         # Project key and organization come from sonar-project.properties at the
