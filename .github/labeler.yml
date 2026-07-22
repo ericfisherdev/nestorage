@@ -1,0 +1,21 @@
+# Configuration for actions/labeler (v7 schema).
+#
+# Only labels that already exist in the repository may be used here; the action
+# does not create missing ones.
+#
+# "CR Review" is deliberately absent. It gates CodeRabbit reviews in
+# .coderabbit.yaml and is applied by hand, so that requesting a review stays an
+# explicit decision rather than something a path glob does on your behalf. Do
+# not add it here.
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '**/*.md'
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/workflows/**'
+          - '.github/labeler.yml'

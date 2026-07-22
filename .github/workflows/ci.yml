@@ -1,0 +1,221 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    # ready_for_review is NOT in the default type set, and omitting it would
+    # quietly break the SonarQube gate: the scan is skipped while a PR is a
+    # draft, so without a run triggered by the draft -> ready transition the
+    # check would never execute on a PR that is actually up for merge.
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Runs on main exist to populate the *default-branch* cache scope. A workflow
+  # run may only restore caches written by its own ref or by the default branch,
+  # so without this trigger every PR starts from a cold Go cache and recompiles
+  # every dependency (twice: once plain, once race-instrumented).
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel superseded PR runs, but never cancel a main-branch run: those are the
+  # only runs that refresh the shared cache every PR restores from.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # CI only reads and runs checks; it never pushes.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # Single source of truth: the version in go.mod.
+          go-version-file: go.mod
+          # Caching is handled explicitly below. setup-go's built-in cache
+          # derives its key solely from the Go version and the go.sum hash, with
+          # no job discriminator, so every job in this workflow would contend for
+          # one key and only the fastest job's cache would ever persist.
+          cache: false
+
+      - name: Restore Go caches
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          # Job-scoped prefix: this job's build cache is race-instrumented and
+          # is not interchangeable with the lint job's.
+          key: go-test-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-test-${{ runner.os }}-
+
+      - name: Build
+        run: make build
+
+      - name: Test (race detector + coverage)
+        run: make test
+
+      - name: Report coverage
+        if: always()
+        run: |
+          if [[ ! -f coverage.out ]]; then
+            echo '_No coverage data (tests did not complete)._' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo '### Coverage'
+            echo '```'
+            go tool cover -func=coverage.out | tail -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage profile
+        # Handed to the sonarqube job below so the scan imports real coverage
+        # rather than reporting zero.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Save Go caches
+        # Only main-branch runs write the cache. PRs restore but never save,
+        # which keeps the repo under GitHub's 10 GB cache ceiling.
+        if: always() && github.event_name == 'push' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    # Split out of `build` so static analysis runs concurrently with the test
+    # suite instead of serially ahead of it.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-
+
+      - name: Install golangci-lint
+        # install-only adds the pinned binary to PATH without running it, so the
+        # lint and format steps invoke the same binary the Makefile does.
+        # version must match GOLANGCI_LINT_VERSION in the Makefile.
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          install-only: true
+          version: v2.11.4
+          skip-cache: true
+
+      - name: Lint
+        run: make lint
+
+      - name: Check formatting
+        run: golangci-lint fmt --diff
+
+      - name: Save Go caches
+        if: always() && github.event_name == 'push' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  commit-lint:
+    name: commit-lint
+    runs-on: ubuntu-latest
+    # Inherently PR-scoped: it diffs the PR's commits against the base branch,
+    # and both `pull_request.head.sha` and `base_ref` are empty on a push.
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Check out the PR head with full history so conform can diff the
+          # branch's commits against the base.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # Deliberately uncached: this job only compiles `conform`, finishes in
+          # under a minute, and is never on the critical path.
+          cache: false
+
+      - name: Lint commit messages
+        # conform enforces the Conventional Commits policy in .conform.yaml over
+        # the commits this PR adds on top of the base branch. The base ref is
+        # passed via env (not expanded inline) to avoid shell injection.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: go tool conform enforce --base-branch="origin/${BASE_REF}"
+
+  sonarqube:
+    name: SonarQube
+    runs-on: ubuntu-latest
+    # Gated on build purely to inherit its coverage profile.
+    needs: build
+    # Skip while a PR is a draft. The event_name arm is load-bearing: on a push
+    # github.event.pull_request is null, and `null == false` is false in GitHub
+    # expressions, so testing the draft field alone would stop analysing main.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Sonar reads SCM blame from local history to attribute issues and to
+          # decide what counts as "new code"; a shallow clone degrades both.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download coverage profile
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage
+
+      - name: SonarQube Scan
+        # Project key and organization come from sonar-project.properties at the
+        # repo root. SONAR_HOST_URL is unset: the action targets SonarQube Cloud
+        # by default, which is the instance this project uses.
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        with:
+          # Without this the scanner uploads its report and exits 0 whatever the
+          # verdict, so the job goes green on a failing gate and gates nothing.
+          args: -Dsonar.qualitygate.wait=true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
