@@ -41,6 +41,26 @@ func TestNextVersion(t *testing.T) {
 			t.Error("nextVersion() = nil error, want error for missing dir")
 		}
 	})
+
+	t.Run("skips a numeric prefix too large to parse as int", func(t *testing.T) {
+		dir := t.TempDir()
+		// migrationFilePrefix only checks for a leading run of digits, so a
+		// corrupted or hand-edited filename with an absurdly long numeric
+		// prefix still matches the regexp but overflows strconv.Atoi's int
+		// range. That entry must be skipped, not treated as an error.
+		for _, name := range []string{"99999999999999999999999_overflow.sql", "00001_baseline.sql"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := nextVersion(dir)
+		if err != nil {
+			t.Fatalf("nextVersion() error: %v", err)
+		}
+		if got != 2 {
+			t.Errorf("nextVersion() = %d, want 2 (overflow entry skipped)", got)
+		}
+	})
 }
 
 func TestCreateMigration(t *testing.T) {
@@ -71,6 +91,13 @@ func TestCreateMigration(t *testing.T) {
 			t.Error("createMigration() = nil error, want error for empty slug")
 		}
 	})
+
+	t.Run("propagates a nextVersion failure", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "does-not-exist")
+		if _, err := createMigration(missing, "add widgets"); err == nil {
+			t.Error("createMigration() = nil error, want the underlying nextVersion error")
+		}
+	})
 }
 
 func TestRunUnknownCommand(t *testing.T) {
@@ -83,6 +110,44 @@ func TestRunUnknownCommand(t *testing.T) {
 func TestRunNoArgs(t *testing.T) {
 	if err := run(nil); err == nil {
 		t.Error("run() = nil error, want usage error for no args")
+	}
+}
+
+// TestRunDatabaseCommandsFailWithoutConfig exercises run()'s configuration
+// loading and aggregation for every database-backed command, without a
+// database: an empty DATABASE_URL fails config.LoadDB()'s Validate() before
+// run() ever constructs a Runner or attempts a connection.
+func TestRunDatabaseCommandsFailWithoutConfig(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+
+	for _, command := range []string{"up", "down", "status", "reset"} {
+		err := run([]string{command})
+		if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+			t.Errorf("run([%q]) error = %v, want a DATABASE_URL configuration error", command, err)
+		}
+	}
+}
+
+// TestRunCreateWithUnusableName exercises run()'s "create" case on its
+// error path. An unusable slug is rejected by createMigration before it
+// touches any directory, so this needs neither a database nor a real
+// migrations directory.
+func TestRunCreateWithUnusableName(t *testing.T) {
+	if err := run([]string{"create", "!!!"}); err == nil {
+		t.Error(`run(["create", "!!!"]) = nil error, want error for an unusable migration name`)
+	}
+}
+
+// TestRunStatusConnectionFailure exercises run()'s "status" case on its
+// error path — Status() failing to connect — without a database: the DSN
+// is syntactically valid so it passes config validation, but points at a
+// loopback port nothing listens on, so the connection is refused
+// immediately.
+func TestRunStatusConnectionFailure(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")
+
+	if err := run([]string{"status"}); err == nil {
+		t.Error(`run(["status"]) against an unreachable database = nil error, want a connection error`)
 	}
 }
 

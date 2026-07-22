@@ -96,8 +96,9 @@ Postgres from [`compose.yaml`](compose.yaml) first: `docker compose up -d`.
 Postgres are gated behind `NESTORAGE_TEST_DATABASE_URL` and run separately
 with `make test-gated`, which fails fast with a clear message if the
 variable is unset. `GATED_TEST_PACKAGES` in the `Makefile` currently covers
-`internal/platform/db/...`; see [`docs/testing.md`](docs/testing.md) for the
-full recipe, the isolation model, and how to write one.
+`internal/platform/db/...` and `cmd/migrate/...`; see
+[`docs/testing.md`](docs/testing.md) for the full recipe, the isolation
+model, and how to write one.
 
 ### Git hooks (Lefthook)
 
