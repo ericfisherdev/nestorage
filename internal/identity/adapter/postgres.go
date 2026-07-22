@@ -196,12 +196,12 @@ func isDuplicateEmail(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == appUserEmailUnique
 }
 
-// row abstracts pgx.Row and pgx.Rows for the shared scan helper.
-type row interface {
+// scanner abstracts pgx.Row and pgx.Rows for the shared scan helper.
+type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanUser(r row) (*domain.User, error) {
+func scanUser(r scanner) (*domain.User, error) {
 	var (
 		u     domain.User
 		idStr string
