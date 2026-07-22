@@ -35,102 +35,105 @@ func setEnv(t *testing.T, env map[string]string) {
 	}
 }
 
-func TestLoad(t *testing.T) {
-	t.Run("dev with an empty environment gets the dev DSN fallback", func(t *testing.T) {
+// TestLoad_DevDSNFallback and its siblings below were originally table-driven
+// subtests of one TestLoad; split into separate top-level functions so each
+// case's setup and assertions read as one story instead of accumulating into
+// a single function's cognitive complexity.
+
+func TestLoad_DevDSNFallback(t *testing.T) {
+	setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev})
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if !strings.Contains(cfg.DB.DSN, "localhost:5433") {
+		t.Errorf("DB.DSN = %q, want the dev fallback pointing at compose's port 5433", cfg.DB.DSN)
+	}
+	if cfg.Env != corecfg.EnvDev {
+		t.Errorf("Env = %q, want %q", cfg.Env, corecfg.EnvDev)
+	}
+}
+
+func TestLoad_ExplicitDatabaseURLWinsOverDevFallback(t *testing.T) {
+	const explicit = "postgres://u:p@example.com:5432/nestorage?sslmode=disable"
+	setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev, "DATABASE_URL": explicit})
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.DB.DSN != explicit {
+		t.Errorf("DB.DSN = %q, want %q", cfg.DB.DSN, explicit)
+	}
+}
+
+func TestLoad_ProdWithNoDatabaseURLFails(t *testing.T) {
+	setEnv(t, map[string]string{"APP_ENV": corecfg.EnvProd})
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("Load() error = %v, want an error naming DATABASE_URL", err)
+	}
+}
+
+func TestLoad_AggregatesMultipleErrors(t *testing.T) {
+	setEnv(t, map[string]string{
+		"APP_ENV":                "staging",
+		"DATABASE_URL":           "postgres://u:p@example.com:5432/nestorage?sslmode=disable",
+		"SERVER_REQUEST_TIMEOUT": "not-a-duration",
+	})
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want an aggregated configuration error")
+	}
+	if !strings.Contains(err.Error(), "APP_ENV") {
+		t.Errorf("Load() error = %v, want it to name APP_ENV", err)
+	}
+	if !strings.Contains(err.Error(), "SERVER_REQUEST_TIMEOUT") {
+		t.Errorf("Load() error = %v, want it to name SERVER_REQUEST_TIMEOUT", err)
+	}
+}
+
+func TestLoad_DotenvReadInDevOnly(t *testing.T) {
+	const fromEnvFile = "postgres://u:p@from-dotenv:5432/nestorage?sslmode=disable"
+
+	t.Run("dev", func(t *testing.T) {
 		setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev})
+		// setEnv leaves DATABASE_URL set (to ""), and godotenv treats any
+		// already-set key — even an empty one — as "do not overwrite" (it
+		// checks presence in os.Environ(), not emptiness). Unsetting it
+		// here, after t.Setenv already registered the restore, is the
+		// standard way to test the "real environment wins" precedence
+		// without giving DATABASE_URL an empty-but-present value that
+		// would silently shadow the .env file.
+		if err := os.Unsetenv("DATABASE_URL"); err != nil {
+			t.Fatalf("os.Unsetenv(DATABASE_URL): %v", err)
+		}
+		writeDotenv(t, fromEnvFile)
 
 		cfg, err := config.Load()
 		if err != nil {
 			t.Fatalf("Load() error = %v, want nil", err)
 		}
-		if !strings.Contains(cfg.DB.DSN, "localhost:5433") {
-			t.Errorf("DB.DSN = %q, want the dev fallback pointing at compose's port 5433", cfg.DB.DSN)
-		}
-		if cfg.Env != corecfg.EnvDev {
-			t.Errorf("Env = %q, want %q", cfg.Env, corecfg.EnvDev)
+		if cfg.DB.DSN != fromEnvFile {
+			t.Errorf("DB.DSN = %q, want the value loaded from .env %q", cfg.DB.DSN, fromEnvFile)
 		}
 	})
 
-	t.Run("an explicit DATABASE_URL wins over the dev fallback", func(t *testing.T) {
+	t.Run("prod", func(t *testing.T) {
 		const explicit = "postgres://u:p@example.com:5432/nestorage?sslmode=disable"
-		setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev, "DATABASE_URL": explicit})
+		setEnv(t, map[string]string{"APP_ENV": corecfg.EnvProd, "DATABASE_URL": explicit})
+		writeDotenv(t, fromEnvFile)
 
 		cfg, err := config.Load()
 		if err != nil {
 			t.Fatalf("Load() error = %v, want nil", err)
 		}
 		if cfg.DB.DSN != explicit {
-			t.Errorf("DB.DSN = %q, want %q", cfg.DB.DSN, explicit)
+			t.Errorf("DB.DSN = %q, want the real environment value %q (.env must be ignored outside dev)", cfg.DB.DSN, explicit)
 		}
-	})
-
-	t.Run("prod with no DATABASE_URL fails naming DATABASE_URL", func(t *testing.T) {
-		setEnv(t, map[string]string{"APP_ENV": corecfg.EnvProd})
-
-		_, err := config.Load()
-		if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
-			t.Fatalf("Load() error = %v, want an error naming DATABASE_URL", err)
-		}
-	})
-
-	t.Run("a bad SERVER_REQUEST_TIMEOUT and a bad APP_ENV are both reported in one error", func(t *testing.T) {
-		setEnv(t, map[string]string{
-			"APP_ENV":                "staging",
-			"DATABASE_URL":           "postgres://u:p@example.com:5432/nestorage?sslmode=disable",
-			"SERVER_REQUEST_TIMEOUT": "not-a-duration",
-		})
-
-		_, err := config.Load()
-		if err == nil {
-			t.Fatal("Load() error = nil, want an aggregated configuration error")
-		}
-		if !strings.Contains(err.Error(), "APP_ENV") {
-			t.Errorf("Load() error = %v, want it to name APP_ENV", err)
-		}
-		if !strings.Contains(err.Error(), "SERVER_REQUEST_TIMEOUT") {
-			t.Errorf("Load() error = %v, want it to name SERVER_REQUEST_TIMEOUT", err)
-		}
-	})
-
-	t.Run(".env is read in dev and ignored outside dev", func(t *testing.T) {
-		const fromEnvFile = "postgres://u:p@from-dotenv:5432/nestorage?sslmode=disable"
-
-		t.Run("dev", func(t *testing.T) {
-			setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev})
-			// setEnv leaves DATABASE_URL set (to ""), and godotenv treats any
-			// already-set key — even an empty one — as "do not overwrite" (it
-			// checks presence in os.Environ(), not emptiness). Unsetting it
-			// here, after t.Setenv already registered the restore, is the
-			// standard way to test the "real environment wins" precedence
-			// without giving DATABASE_URL an empty-but-present value that
-			// would silently shadow the .env file.
-			if err := os.Unsetenv("DATABASE_URL"); err != nil {
-				t.Fatalf("os.Unsetenv(DATABASE_URL): %v", err)
-			}
-			writeDotenv(t, fromEnvFile)
-
-			cfg, err := config.Load()
-			if err != nil {
-				t.Fatalf("Load() error = %v, want nil", err)
-			}
-			if cfg.DB.DSN != fromEnvFile {
-				t.Errorf("DB.DSN = %q, want the value loaded from .env %q", cfg.DB.DSN, fromEnvFile)
-			}
-		})
-
-		t.Run("prod", func(t *testing.T) {
-			const explicit = "postgres://u:p@example.com:5432/nestorage?sslmode=disable"
-			setEnv(t, map[string]string{"APP_ENV": corecfg.EnvProd, "DATABASE_URL": explicit})
-			writeDotenv(t, fromEnvFile)
-
-			cfg, err := config.Load()
-			if err != nil {
-				t.Fatalf("Load() error = %v, want nil", err)
-			}
-			if cfg.DB.DSN != explicit {
-				t.Errorf("DB.DSN = %q, want the real environment value %q (.env must be ignored outside dev)", cfg.DB.DSN, explicit)
-			}
-		})
 	})
 }
 

@@ -148,4 +148,6 @@ func readiness(pool *pgxpool.Pool) httpserver.ReadinessFunc {
 
 // appRoutes registers Nestorage's own routes (pages, HTMX fragments, static
 // assets, feature handlers). It is a no-op stub until NSTR-16 fills it in.
-func appRoutes(_ *http.ServeMux) {}
+func appRoutes(_ *http.ServeMux) {
+	// Intentionally empty: see the package comment above.
+}
