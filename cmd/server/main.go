@@ -1,11 +1,151 @@
-// Command server is the Nestorage HTTP server entrypoint.
-//
-// This is a placeholder: it exists only so the module has a buildable
-// ./cmd/server target, which is what lets `make build` and CI produce
-// bin/server from the first commit. NSTR-15 replaces this body with the
-// actual config loading and HTTP server bootstrap.
+// Command server is the Nestorage HTTP server entrypoint. It composes
+// configuration, the database pool, and nestcore's HTTP server into a
+// single process with a graceful shutdown lifecycle. Application routes are
+// registered through appRoutes, the seam NSTR-16 fills in — this ticket
+// leaves it a no-op stub so the shell ticket adds routes without
+// restructuring main.
 package main
 
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	corecfg "github.com/ericfisherdev/nestcore/config"
+	"github.com/ericfisherdev/nestcore/db"
+	"github.com/ericfisherdev/nestcore/httpserver"
+	"github.com/ericfisherdev/nestcore/metrics"
+
+	"github.com/ericfisherdev/nestorage/internal/platform/config"
+)
+
+// shutdownTimeout bounds how long in-flight requests have to drain on
+// shutdown.
+const shutdownTimeout = 15 * time.Second
+
 func main() {
-	// Intentionally empty: see the package comment above.
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if err := run(logger); err != nil {
+		logger.Error("server exited with error", "error", err)
+		os.Exit(1)
+	}
 }
+
+// run listens for SIGINT/SIGTERM and delegates the rest of the lifecycle to
+// serve. It is split from serve so a test can drive serve directly, under
+// its own cancellable context, instead of sending a real OS signal to the
+// test process — which would tear down the whole `go test` run, not just
+// the server under test.
+func run(logger *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return serve(ctx, logger)
+}
+
+// serve loads configuration, wires the HTTP server, and blocks until ctx is
+// cancelled — by run's signal handling, or directly by a caller — then
+// drains in-flight requests via a graceful shutdown.
+func serve(ctx context.Context, logger *slog.Logger) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Establish the Postgres pool up front so a bad DSN or unreachable
+	// database fails fast at boot (db.New bounds its own ping with
+	// DB.ConnTimeout). context.Background(), not ctx: an interrupt racing
+	// this initial check should not turn a real DSN/connectivity problem
+	// into an ambiguous context-cancelled error.
+	pool, err := db.New(context.Background(), cfg.DB)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
+
+	registry := metrics.NewRegistry()
+	// "nestorage" namespaces every metric this process emits, so Nestova and
+	// Nestorage can share a scrape target without their HTTP metrics colliding.
+	httpMetrics := metrics.NewHTTPMetrics(registry, "nestorage")
+
+	srv := httpserver.New(httpserver.Config{
+		Server: cfg.Server,
+		HSTS:   cfg.HSTS,
+	}, httpserver.Deps{
+		Logger: logger,
+		Ready:  readiness(pool),
+		// metrics.Handler keeps the promhttp dependency inside the metrics
+		// package and reports scrape errors as metrics instead of failing
+		// silently.
+		MetricsHandler: metrics.Handler(registry),
+		HTTPMetrics:    httpMetrics,
+		Routes:         appRoutes,
+	})
+
+	// Surface listen errors from the background goroutine to the main flow.
+	serverErr := make(chan error, 1)
+	go func() {
+		logger.Info("starting http server", "addr", cfg.Server.Addr, "env", cfg.Env, "tls", cfg.TLS.Enabled())
+		if err := listenAndServe(srv, cfg.TLS); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	// A private cancel so either branch below — a server error or an
+	// already-cancelled ctx — ends up with ctx definitively cancelled before
+	// shutdown proceeds. There are no background workers to drain in this
+	// ticket, but this keeps that guarantee in place for the ones a later
+	// sprint adds against the same ctx.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var runErr error
+	select {
+	case err := <-serverErr:
+		runErr = err
+	case <-ctx.Done():
+		logger.Info("shutdown signal received")
+	}
+	cancel()
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancelShutdown()
+	shutdownErr := srv.Shutdown(shutdownCtx)
+
+	if shutdownErr != nil {
+		return errors.Join(runErr, shutdownErr)
+	}
+	return runErr
+}
+
+// listenAndServe starts srv with app-terminated TLS when cert+key are
+// configured, otherwise plain HTTP. Both paths return http.ErrServerClosed
+// on a graceful Shutdown, which the caller treats as a clean exit — the
+// Tailscale deployment (tailscale serve terminates TLS) uses the plain-HTTP
+// path. The branch is a thin wrapper so the cert-configured decision
+// (TLSConfig.Enabled) stays unit-testable without binding a socket.
+func listenAndServe(srv *http.Server, tlsCfg corecfg.TLSConfig) error {
+	if tlsCfg.Enabled() {
+		return srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
+	}
+	return srv.ListenAndServe()
+}
+
+// readiness returns the ReadinessFunc backing the /readyz probe: ready when
+// pool reports a live connection.
+func readiness(pool *pgxpool.Pool) httpserver.ReadinessFunc {
+	return func(ctx context.Context) error {
+		return db.Health(ctx, pool)
+	}
+}
+
+// appRoutes registers Nestorage's own routes (pages, HTMX fragments, static
+// assets, feature handlers). It is a no-op stub until NSTR-16 fills it in.
+func appRoutes(_ *http.ServeMux) {}
