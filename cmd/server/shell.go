@@ -16,6 +16,11 @@ import (
 // shellIconClass sizes every sidebar nav icon uniformly.
 const shellIconClass = "h-[21px] w-[21px] flex-none"
 
+// binsPageTitle names the one page this ticket's demo route serves: the
+// "All bins" nav entry, page title, and toolbar heading all have to agree,
+// so it is named once rather than repeated as three separate literals.
+const binsPageTitle = "All bins"
+
 // shellHandlers serves the application shell: the embedded static assets and
 // a demo /bins page proving the Hearth shell renders and HTMX fragment swaps
 // work. Owners, stats, and the bin toolbar are hard-coded here — Sprint 3
@@ -70,7 +75,7 @@ func (h *shellHandlers) handleBins(w http.ResponseWriter, r *http.Request) {
 // gets a real handler alongside the feature it belongs to.
 func shellNav() []components.NavItem {
 	return []components.NavItem{
-		{Label: "All bins", Href: "/bins", Active: true, Icon: components.IconBin(shellIconClass)},
+		{Label: binsPageTitle, Href: "/bins", Active: true, Icon: components.IconBin(shellIconClass)},
 		{Label: "Search & find", Href: "/search", Icon: components.IconSearch(shellIconClass)},
 		{Label: "Categories", Href: "/categories", Icon: components.IconCategories(shellIconClass)},
 		{Label: "Locations", Href: "/locations", Icon: components.IconLocations(shellIconClass)},
@@ -94,7 +99,7 @@ func shellOwners() []components.OwnerView {
 // hard-coded stats with a real query.
 func shellProps() components.ShellProps {
 	return components.ShellProps{
-		Title:  "All bins",
+		Title:  binsPageTitle,
 		Owners: shellOwners(),
 		Stats:  components.ShellStats{Bins: 8, Items: 201, Rooms: 5},
 	}
@@ -105,7 +110,7 @@ func shellProps() components.ShellProps {
 // bins.
 func binsToolbarView() components.ToolbarView {
 	return components.ToolbarView{
-		Heading:    "All bins",
+		Heading:    binsPageTitle,
 		Count:      "8 containers",
 		Categories: []string{"All", "Seasonal", "Tools", "Keepsakes", "Outdoor", "Toys", "Food"},
 		Active:     "All",
