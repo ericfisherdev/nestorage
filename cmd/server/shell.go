@@ -9,6 +9,7 @@ import (
 	"github.com/ericfisherdev/nestcore/httpserver"
 	"github.com/ericfisherdev/nestcore/render"
 
+	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	"github.com/ericfisherdev/nestorage/web"
 	"github.com/ericfisherdev/nestorage/web/components"
 )
@@ -42,12 +43,22 @@ func newShellHandlers(logger *slog.Logger) *shellHandlers {
 }
 
 // Routes registers the shell's routes on mux: the embedded static assets,
-// the root redirect, and the demo bins page. This is the func value that
-// plugs into httpserver.Deps.Routes.
+// the root redirect, and the demo bins page.
 func (h *shellHandlers) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", httpserver.StaticFileServer(web.StaticFS())))
 	mux.HandleFunc("GET /{$}", h.handleRoot)
 	mux.HandleFunc("GET /bins", h.handleBins)
+}
+
+// newAppRoutes composes every route group into the one func value that
+// plugs into httpserver.Deps.Routes: the shell's demo pages and static
+// assets, plus the identity context's first-run onboarding wizard.
+func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHandlers) func(mux *http.ServeMux) {
+	shell := newShellHandlers(logger)
+	return func(mux *http.ServeMux) {
+		shell.Routes(mux)
+		onboarding.Routes(mux)
+	}
 }
 
 // handleRoot sends the app's one entry point, /bins, until there is more

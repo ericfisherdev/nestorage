@@ -29,4 +29,19 @@ var (
 	// ParseUserColor when given a string that is not a known, user-assignable
 	// UserColor.
 	ErrInvalidColor = errors.New("identity: invalid user color")
+
+	// ErrSetupComplete is returned by Provisioner.CreateFirstAdmin when at
+	// least one user already exists. The first-run wizard treats it as "lost
+	// the race" and redirects to / rather than surfacing it as a failure.
+	ErrSetupComplete = errors.New("identity: setup already complete")
+
+	// ErrPasswordTooShort is returned by ValidatePassword when password is
+	// under minPasswordRunes.
+	ErrPasswordTooShort = errors.New("identity: password must be at least 12 characters")
+
+	// ErrPasswordTooLong is returned by ValidatePassword when password
+	// exceeds maxPasswordRunes. The bound exists to cap the cost of the
+	// argon2id derivation (nestcore/crypto.Hash), not to discourage long
+	// passwords.
+	ErrPasswordTooLong = errors.New("identity: password must be at most 128 characters")
 )

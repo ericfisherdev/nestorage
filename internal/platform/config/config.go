@@ -5,10 +5,10 @@
 // reporting every problem found in one pass rather than one at a time.
 //
 // This package holds only the sub-configs that have a consumer today
-// (Server, DB, TLS, HSTS) plus Env. Config is the extension point a later
-// sprint grows: add one field, one loader line, and one validate line here
-// without touching what already exists (OCP) — see the ticket history for
-// which nestcore loaders (Session, Crypto, S3, Email, Cache) and
+// (Server, DB, TLS, HSTS, Session) plus Env. Config is the extension point a
+// later sprint grows: add one field, one loader line, and one validate line
+// here without touching what already exists (OCP) — see the ticket history
+// for which nestcore loaders (Crypto, S3, Email, Cache) and
 // Nestorage-specific sections have no reader yet.
 package config
 
@@ -28,10 +28,11 @@ const devDSN = "postgres://nestorage:nestorage@localhost:5433/nestorage?sslmode=
 // Config holds Nestorage's validated runtime configuration, composed from
 // nestcore's generic sub-configs plus the deployment environment.
 type Config struct {
-	Server corecfg.ServerConfig
-	DB     corecfg.DBConfig
-	TLS    corecfg.TLSConfig
-	HSTS   corecfg.HSTSConfig
+	Server  corecfg.ServerConfig
+	DB      corecfg.DBConfig
+	TLS     corecfg.TLSConfig
+	HSTS    corecfg.HSTSConfig
+	Session corecfg.SessionConfig
 	// Env is the deployment environment: one of corecfg.EnvDev, EnvTest, or
 	// EnvProd.
 	Env string
@@ -60,6 +61,11 @@ func Load() (Config, error) {
 	hsts, hstsErrs := corecfg.LoadHSTS()
 	errs = append(errs, hstsErrs...)
 	tls := corecfg.LoadTLS()
+	// LoadSession takes env to resolve SESSION_COOKIE_SECURE's auto setting
+	// (Secure only in EnvProd), so it must run after env is fully resolved
+	// (post dotenv re-read) above.
+	session, sessionErrs := corecfg.LoadSession(env)
+	errs = append(errs, sessionErrs...)
 
 	// Dev-only convenience DSN, applied before validation so the dev happy
 	// path boots with no environment at all. Test and prod are left alone
@@ -74,16 +80,18 @@ func Load() (Config, error) {
 	errs = append(errs, db.Validate()...)
 	errs = append(errs, hsts.Validate()...)
 	errs = append(errs, tls.Validate()...)
+	errs = append(errs, session.Validate(env)...)
 
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("invalid configuration:\n%w", errors.Join(errs...))
 	}
 
 	return Config{
-		Server: server,
-		DB:     db,
-		TLS:    tls,
-		HSTS:   hsts,
-		Env:    env,
+		Server:  server,
+		DB:      db,
+		TLS:     tls,
+		HSTS:    hsts,
+		Session: session,
+		Env:     env,
 	}, nil
 }

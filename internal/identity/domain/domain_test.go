@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
@@ -64,5 +65,50 @@ func TestUserIDRoundTrip(t *testing.T) {
 	}
 	if _, err := domain.ParseUserID("not-a-uuid"); err == nil {
 		t.Error("ParseUserID(not-a-uuid) = nil error, want error")
+	}
+}
+
+func TestValidatePassword(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		wantErr  error
+	}{
+		{"11 chars: too short", strings.Repeat("a", 11), domain.ErrPasswordTooShort},
+		{"12 chars: minimum accepted", strings.Repeat("a", 12), nil},
+		{"128 chars: maximum accepted", strings.Repeat("a", 128), nil},
+		{"129 chars: too long", strings.Repeat("a", 129), domain.ErrPasswordTooLong},
+		{
+			// Multi-byte runes must count once each, not once per byte —
+			// len([]rune(...)) is what makes this pass; len(string) would
+			// see 24 bytes and wrongly accept it.
+			"12 multi-byte runes at the boundary",
+			strings.Repeat("é", 12),
+			nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := domain.ValidatePassword(tt.password)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("ValidatePassword(%d runes) = %v, want %v", len([]rune(tt.password)), err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNormalizeEmail(t *testing.T) {
+	tests := []struct {
+		email string
+		want  string
+	}{
+		{"  Maya@Example.com  ", "maya@example.com"},
+		{"already@lower.case", "already@lower.case"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := domain.NormalizeEmail(tt.email); got != tt.want {
+			t.Errorf("NormalizeEmail(%q) = %q, want %q", tt.email, got, tt.want)
+		}
 	}
 }

@@ -20,9 +20,12 @@ import (
 	corecfg "github.com/ericfisherdev/nestcore/config"
 	"github.com/ericfisherdev/nestcore/db"
 	"github.com/ericfisherdev/nestcore/httpserver"
+	"github.com/ericfisherdev/nestcore/httpserver/middleware"
 	"github.com/ericfisherdev/nestcore/metrics"
 
+	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
+	"github.com/ericfisherdev/nestorage/internal/platform/session"
 )
 
 // shutdownTimeout bounds how long in-flight requests have to drain on
@@ -74,6 +77,19 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// Nestorage can share a scrape target without their HTTP metrics colliding.
 	httpMetrics := metrics.NewHTTPMetrics(registry, "nestorage")
 
+	// Identity composition: the session manager (backed by the shared pool
+	// via pgxstore), the user repository, the first-run provisioner, and
+	// the onboarding wizard it backs. SetupGuard must be the outermost
+	// feature middleware so an unconfigured app is sent to the wizard
+	// before anything else — including session loading — runs; LoadAndSave
+	// wraps the routes so the session is loaded and Set-Cookie written for
+	// every request that gets past the guard.
+	sm := session.New(pool, cfg.Session)
+	identityRepo := identityadapter.NewUserRepository(pool)
+	provisioner := identityadapter.NewProvisioner(pool)
+	onboarding := identityadapter.NewOnboardingHandlers(identityRepo, provisioner, sm, logger)
+	setupGuard := identityadapter.SetupGuard(identityRepo, logger)
+
 	srv := httpserver.New(httpserver.Config{
 		Server: cfg.Server,
 		HSTS:   cfg.HSTS,
@@ -85,7 +101,8 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		// silently.
 		MetricsHandler: metrics.Handler(registry),
 		HTTPMetrics:    httpMetrics,
-		Routes:         newShellHandlers(logger).Routes,
+		Routes:         newAppRoutes(logger, onboarding),
+		Middleware:     []middleware.Middleware{setupGuard, sm.LoadAndSave},
 	})
 
 	// Surface listen errors from the background goroutine to the main flow.

@@ -10,6 +10,8 @@ tool (
 
 require (
 	github.com/a-h/templ v0.3.1001
+	github.com/alexedwards/scs/pgxstore v0.0.0-20251002162104-209de6e426de
+	github.com/alexedwards/scs/v2 v2.9.0
 	github.com/ericfisherdev/nestcore v0.1.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
