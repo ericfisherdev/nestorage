@@ -2,8 +2,8 @@
 #
 # Commands delegate to Makefile targets / pinned go tools so local hooks and CI
 # enforce the same gates. Enable them with `make hooks` (which runs
-# `go tool lefthook install`). Tooling is pinned in go.mod (lefthook, conform)
-# and the README (golangci-lint).
+# `go tool lefthook install`). Tooling is pinned in go.mod (lefthook, conform,
+# templ) and the README (golangci-lint).
 
 # commit-msg validates the message against Conventional Commits (.conform.yaml)
 # so a non-conforming message is rejected before the commit is created. {1} is
@@ -14,16 +14,19 @@ commit-msg:
       run: go tool conform enforce --commit-msg-file {1}
 
 # pre-commit runs the fast gates on staged changes, piped so it stops at the
-# first failure. Committing unformatted, lint-failing, or test-failing code is
-# blocked.
+# first failure. Committing unformatted, stale-generated, lint-failing, or
+# test-failing code is blocked.
 pre-commit:
   piped: true
   jobs:
     - name: fmt
-      glob: "*.go"
+      glob: "*.{go,templ}"
       run: make fmt
       # Re-stage files that were already staged and got reformatted.
       stage_fixed: true
+    - name: templ-generate
+      glob: "*.templ"
+      run: make generate && git diff --exit-code -- '*_templ.go'
     - name: lint
       glob: "*.go"
       run: make lint
