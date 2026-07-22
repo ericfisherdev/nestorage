@@ -1,0 +1,45 @@
+/* source(none) disables Tailwind's automatic source detection so it does not
+ * scan .go files (whose identifiers/comments would otherwise leak spurious
+ * utilities and make app.css depend on Go code). Only the explicit @source
+ * globs below are scanned. */
+@import "tailwindcss" source(none);
+
+/* Scan the templ sources for utility classes. */
+@source "../../**/*.templ";
+
+/*
+ * Nestorage design tokens (see nestorage-web/tokens.css, the palette's single
+ * source of truth). Theme keys reuse the token names from that file — minus
+ * the "ns-" namespace prefix, which Tailwind's own "color-"/"font-" namespace
+ * already supplies — so a value here always traces back to one line there.
+ *
+ * This seeds only fonts and the Surfaces/Lines/Text categories, enough to
+ * prove the build pipeline. NSTR-16 owns the full Hearth theme, including the
+ * Brand and Owner color matrix.
+ */
+@theme static {
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, "Cascadia Code", monospace;
+
+  /* Surfaces */
+  --color-canvas: #d7dbe3;
+  --color-surface: #f5f7fa;
+  --color-surface-raised: #ffffff;
+  --color-sidebar: #e8ecf2;
+  --color-sidebar-accent: #dde4ef;
+  --color-segmented: #e6eaf1;
+
+  /* Lines */
+  --color-border: #e4e8ef;
+  --color-border-strong: #d9dfe8;
+  --color-border-input: #dbe1ea;
+  --color-divider: #d5dbe4;
+  --color-divider-subtle: #eef1f5;
+
+  /* Text */
+  --color-text: #2c313a;
+  --color-text-secondary: #5b6472;
+  --color-text-muted: #737b88;
+  --color-text-faint: #98a1b0;
+  --color-text-emphasis: #4a5568;
+}
