@@ -6,4 +6,6 @@
 // actual config loading and HTTP server bootstrap.
 package main
 
-func main() {}
+func main() {
+	// Intentionally empty: see the package comment above.
+}
