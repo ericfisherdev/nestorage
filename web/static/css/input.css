@@ -7,15 +7,15 @@
 /* Scan the templ sources for utility classes. */
 @source "../../**/*.templ";
 
+/* Owner color utilities are composed dynamically (e.g. bg-owner-<key>-tint),
+ * so force-generate the full 45-class matrix for the five palette keys. */
+@source inline("{bg,text,border}-owner-{indigo,steel,teal,peri,shared}-{solid,tint,fg}");
+
 /*
  * Nestorage design tokens (see nestorage-web/tokens.css, the palette's single
  * source of truth). Theme keys reuse the token names from that file — minus
  * the "ns-" namespace prefix, which Tailwind's own "color-"/"font-" namespace
  * already supplies — so a value here always traces back to one line there.
- *
- * This seeds only fonts and the Surfaces/Lines/Text categories, enough to
- * prove the build pipeline. NSTR-16 owns the full Hearth theme, including the
- * Brand and Owner color matrix.
  */
 @theme static {
   --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
@@ -42,4 +42,112 @@
   --color-text-muted: #737b88;
   --color-text-faint: #98a1b0;
   --color-text-emphasis: #4a5568;
+
+  /* Brand */
+  --color-primary: #3f5a80;
+  --color-primary-deep: #35507a;
+  --color-mono-accent: #8b94c0;
+
+  /* Owner colors — one distinct blue per household member. Every owner set is
+   * a triple: solid (chips/checks), tint (avatar fill), fg (text on tint).
+   * The helpers in web/components/owner.templ always emit a tint+fg pair
+   * from the same key, so mixing across sets is structurally unrepresentable
+   * rather than merely discouraged. */
+  --color-owner-indigo-solid: #43608c;
+  --color-owner-indigo-tint: #e4e9f2;
+  --color-owner-indigo-fg: #2c3f5c;
+
+  --color-owner-steel-solid: #5b8aa6;
+  --color-owner-steel-tint: #e0edf3;
+  --color-owner-steel-fg: #2f5261;
+
+  --color-owner-teal-solid: #4f8f8a;
+  --color-owner-teal-tint: #e0efec;
+  --color-owner-teal-fg: #2c4f4b;
+
+  --color-owner-peri-solid: #7b7fc0;
+  --color-owner-peri-tint: #e8e8f6;
+  --color-owner-peri-fg: #3f4278;
+
+  --color-owner-shared-solid: #6f7aa8; /* "Family" — bins owned by the household */
+  --color-owner-shared-tint: #e8eaf4;
+  --color-owner-shared-fg: #3c4670;
+
+  /* Type scale (px, per the reference implementation) */
+  --text-xs: 11.5px;
+  --text-sm: 13px;
+  --text-base: 14.5px;
+  --text-md: 16.5px;
+  --text-lg: 21px;
+  --text-xl: 25px;
+  --text-2xl: 27px;
+
+  /* Radii */
+  --radius-badge: 7px;
+  --radius-input: 10px;
+  --radius-nav: 11px;
+  --radius-button: 13px;
+  --radius-card: 16px;
+  --radius-pill: 20px;
+
+  /* Elevation */
+  --shadow-card: 0 1px 3px rgba(30, 38, 55, 0.06);
+  --shadow-raised: 0 1px 2px rgba(30, 38, 55, 0.12);
+  --shadow-frame: 0 1px 3px rgba(30, 38, 55, 0.12), 0 16px 44px rgba(30, 38, 55, 0.08);
+  --shadow-primary: 0 3px 9px rgba(63, 90, 128, 0.34);
+
+  /* The reference collapses the sidebar to a horizontal strip at exactly
+   * 900px; Tailwind's stock md/lg (768px/1024px) match neither, so this
+   * names a dedicated "shell" breakpoint the layout components use instead. */
+  --breakpoint-shell: 900px;
+
+  /* Names the sidebar width so w-sidebar / shell:w-sidebar compose. */
+  --spacing-sidebar: 264px;
+}
+
+/* Self-hosted fonts (the appliance has to render with the internet down).
+ * Hanken Grotesk's variable axis reaches weight 900 (verified via
+ * `fc-query --format='%{weight}'`, which reported the fontconfig range
+ * [0, 210] — comfortably past the 205/800 this theme's boldest text needs),
+ * so declaring up to 800 here does not synthesize a fake bold the way a
+ * capped axis would. Space Mono ships one static weight; declaring only 400
+ * matches the font file instead of asking the browser to fake a bold it
+ * cannot back. */
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/static/fonts/hanken-grotesk.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Space Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/fonts/space-mono.woff2") format("woff2");
+}
+
+/* Hide Alpine x-cloak elements until Alpine initializes, preventing a flash
+ * of pre-hydration markup. */
+[x-cloak] {
+  display: none !important;
+}
+
+/*
+ * Pointer cursor on interactive elements. Tailwind v4's Preflight resets
+ * <button> to `cursor: default`, so every clickable control needs the hand
+ * cursor restored explicitly rather than relying on the pre-v4 default.
+ * Links are unaffected by Preflight and keep the browser default.
+ */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  label[for] {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
 }

@@ -1,0 +1,113 @@
+package components
+
+// Icon components render the inline SVGs from the nestorage-web reference
+// (bins.html) as reusable templ components, so every consumer (sidebar,
+// toolbar, and — from Sprint 4 — bin cards) shares one copy of each glyph
+// instead of duplicating markup.
+//
+// Every icon is decorative: aria-hidden and unfocusable, with the
+// accessible label carried by surrounding text or an sr-only span at the
+// call site. class controls size and, for the currentColor-stroked icons,
+// color — callers size a nav icon and a toolbar icon differently from the
+// same component (e.g. class="h-5 w-5 text-current").
+
+// IconBin is the storage-bin glyph: the brand mark and the "All bins" nav
+// icon.
+templ IconBin(class string) {
+	@binGlyph(class)
+}
+
+// IconBox is the same bin glyph reserved for a bin card's placeholder media
+// (Sprint 4). Kept as its own exported name, sharing binGlyph's markup, so
+// that placeholder can diverge from the nav/brand icon later without
+// touching this ticket's callers.
+templ IconBox(class string) {
+	@binGlyph(class)
+}
+
+templ binGlyph(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<rect x="3" y="7" width="18" height="13" rx="2.5"></rect>
+		<path d="M3 11h18M9 7V4.5h6V7"></path>
+	</svg>
+}
+
+// IconSearch is the magnifying-glass glyph for the "Search & find" nav
+// entry and the toolbar search box.
+templ IconSearch(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
+		<circle cx="11" cy="11" r="7"></circle>
+		<path d="M21 21l-3.6-3.6"></path>
+	</svg>
+}
+
+// IconCategories is the tote/crate glyph for the "Categories" nav entry.
+templ IconCategories(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M3 7.5l2-3h14l2 3M4 7.5h16V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"></path>
+		<path d="M9.5 12h5"></path>
+	</svg>
+}
+
+// IconLocations is the map-pin glyph for the "Locations" nav entry.
+templ IconLocations(class string) {
+	@pinGlyph(class)
+}
+
+// IconPin is the same map-pin glyph reserved for a bin card's location line
+// (Sprint 4). See IconBox for why this is a separate exported name over
+// shared markup.
+templ IconPin(class string) {
+	@pinGlyph(class)
+}
+
+templ pinGlyph(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M12 21s-7-5.2-7-11a7 7 0 0 1 14 0c0 5.8-7 11-7 11z"></path>
+		<circle cx="12" cy="10" r="2.4"></circle>
+	</svg>
+}
+
+// IconLabels is the label-sheet glyph for the "Labels & codes" nav entry.
+templ IconLabels(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect>
+		<rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect>
+		<rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect>
+		<path d="M13.5 13.5h7v7h-7z"></path>
+	</svg>
+}
+
+// IconPlus is the "New bin" primary button's glyph.
+templ IconPlus(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" focusable="false">
+		<path d="M12 5v14M5 12h14"></path>
+	</svg>
+}
+
+// IconGrid is the grid-view button in the toolbar's view switch.
+templ IconGrid(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect>
+		<rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect>
+		<rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect>
+		<rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect>
+	</svg>
+}
+
+// IconList is the list-view button in the toolbar's view switch.
+templ IconList(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
+		<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"></path>
+	</svg>
+}
+
+// IconCheck is the owner-toggle checkmark. Its stroke is a fixed white,
+// not currentColor: it always sits on an owner's solid background color
+// (see ownerSolidClasses), which is dark enough in every palette entry for
+// a white mark to stay legible regardless of the surrounding text color.
+templ IconCheck(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M5 12.5l4 4L19 7"></path>
+	</svg>
+}

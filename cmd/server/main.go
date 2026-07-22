@@ -1,9 +1,8 @@
 // Command server is the Nestorage HTTP server entrypoint. It composes
 // configuration, the database pool, and nestcore's HTTP server into a
 // single process with a graceful shutdown lifecycle. Application routes are
-// registered through appRoutes, the seam NSTR-16 fills in — this ticket
-// leaves it a no-op stub so the shell ticket adds routes without
-// restructuring main.
+// registered through shellHandlers (shell.go), plugged into
+// httpserver.Deps.Routes — the seam NSTR-15 left for this ticket to fill.
 package main
 
 import (
@@ -86,7 +85,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		// silently.
 		MetricsHandler: metrics.Handler(registry),
 		HTTPMetrics:    httpMetrics,
-		Routes:         appRoutes,
+		Routes:         newShellHandlers(logger).Routes,
 	})
 
 	// Surface listen errors from the background goroutine to the main flow.
@@ -144,10 +143,4 @@ func readiness(pool *pgxpool.Pool) httpserver.ReadinessFunc {
 	return func(ctx context.Context) error {
 		return db.Health(ctx, pool)
 	}
-}
-
-// appRoutes registers Nestorage's own routes (pages, HTMX fragments, static
-// assets, feature handlers). It is a no-op stub until NSTR-16 fills it in.
-func appRoutes(_ *http.ServeMux) {
-	// Intentionally empty: see the package comment above.
 }

@@ -1,0 +1,73 @@
+package components
+
+// OwnerColor is one of Nestorage's five owner palette keys, matching the
+// Tailwind owner-color token infix (owner-<key>-{solid,tint,fg} in
+// web/static/css/input.css). It is typed rather than a bare string (compare
+// Nestova's MemberColor) so an invalid value can only ever reach a template
+// through ParseOwnerColor's documented fallback, never propagated silently.
+type OwnerColor string
+
+// The five owner palette keys. OwnerShared is "Family" — a bin owned by the
+// household rather than a person.
+const (
+	OwnerIndigo OwnerColor = "indigo"
+	OwnerSteel  OwnerColor = "steel"
+	OwnerTeal   OwnerColor = "teal"
+	OwnerPeri   OwnerColor = "peri"
+	OwnerShared OwnerColor = "shared"
+)
+
+// String returns the Tailwind class infix for c.
+func (c OwnerColor) String() string {
+	return string(c)
+}
+
+// ParseOwnerColor parses s into an OwnerColor, falling back to OwnerShared
+// for an unrecognized value so a bad input can never emit a class outside
+// the @source inline safelist in web/static/css/input.css.
+func ParseOwnerColor(s string) OwnerColor {
+	switch OwnerColor(s) {
+	case OwnerIndigo, OwnerSteel, OwnerTeal, OwnerPeri, OwnerShared:
+		return OwnerColor(s)
+	default:
+		return OwnerShared
+	}
+}
+
+// OwnerView is the view-layer model for an owner avatar/chip: a display
+// name, avatar initials, and a color. It deliberately is not a domain type —
+// Nestorage's identity model does not land until Sprint 3, and the shell has
+// to render before then.
+type OwnerView struct {
+	Name     string
+	Initials string
+	Color    OwnerColor
+}
+
+// OwnerAvatar renders o's initials on a tinted circle, sized for touch. The
+// accessible name identifies the owner by name ("Owned by Maya") rather than
+// exposing the bare initial to assistive tech.
+templ OwnerAvatar(o OwnerView) {
+	<span
+		class={ "flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full text-sm font-bold", ownerTintClasses(o.Color) }
+		aria-label={ "Owned by " + o.Name }
+		title={ o.Name }
+	>
+		<span aria-hidden="true">{ o.Initials }</span>
+	</span>
+}
+
+// ownerTintClasses returns an owner's tint background and matching
+// foreground together, so a tint from one palette key can never be paired
+// with a foreground from another — that pairing guarantee is what makes it
+// structurally impossible, not just discouraged.
+func ownerTintClasses(c OwnerColor) string {
+	return "bg-owner-" + c.String() + "-tint text-owner-" + c.String() + "-fg"
+}
+
+// ownerSolidClasses returns an owner's solid background paired with a white
+// foreground, for chips that sit on the solid fill rather than the tint
+// (e.g. the sidebar owner toggle).
+func ownerSolidClasses(c OwnerColor) string {
+	return "bg-owner-" + c.String() + "-solid text-white"
+}

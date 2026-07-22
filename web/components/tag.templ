@@ -1,0 +1,7 @@
+package components
+
+// Tag renders a small label chip. It is a bare <li>: callers wrap it in a
+// <ul> (see the reference's ns-tags list on a bin card, Sprint 4).
+templ Tag(label string) {
+	<li class="inline-block rounded-badge bg-divider-subtle px-[10px] py-[3px] text-xs font-bold text-text-secondary">{ label }</li>
+}
