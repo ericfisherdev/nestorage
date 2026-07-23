@@ -10,11 +10,14 @@ import (
 	"github.com/ericfisherdev/nestcore/httpserver/middleware"
 )
 
+// setupPath is the first-run onboarding wizard's route.
+const setupPath = "/setup"
+
 // setupExemptPrefixes are the path prefixes SetupGuard never blocks, even
 // before setup is complete: /setup itself (obviously — the wizard has to be
 // reachable), /static/ (else the wizard renders unstyled), and the platform
 // probes (else the appliance looks unhealthy while unconfigured).
-var setupExemptPrefixes = []string{"/setup", "/static/", "/healthz", "/readyz", "/metrics"}
+var setupExemptPrefixes = []string{setupPath, "/static/", "/healthz", "/readyz", "/metrics"}
 
 // firstUserChecker is the narrow read port (ISP) SetupGuard depends on:
 // only the first-run existence check, satisfied by domain.UserRepository (a
@@ -75,9 +78,9 @@ func isSetupExempt(path string) bool {
 // navigation gets a plain 303.
 func redirectToSetup(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("HX-Request") == "true" {
-		w.Header().Set("HX-Redirect", "/setup")
+		w.Header().Set("HX-Redirect", setupPath)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	http.Redirect(w, r, "/setup", http.StatusSeeOther)
+	http.Redirect(w, r, setupPath, http.StatusSeeOther)
 }

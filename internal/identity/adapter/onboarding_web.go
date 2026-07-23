@@ -17,6 +17,11 @@ import (
 	"github.com/ericfisherdev/nestorage/web/components"
 )
 
+// errInternalServerError is the generic message every unexpected failure in
+// this handler responds with — the real cause is logged, never surfaced to
+// the client.
+const errInternalServerError = "internal server error"
+
 // existingUserChecker is the narrow read port (ISP) OnboardingHandlers
 // depends on for the first-run guard: only HasAnyUser, satisfied by
 // domain.UserRepository (a superset) and by test fakes.
@@ -72,7 +77,7 @@ func (h *OnboardingHandlers) Page(w http.ResponseWriter, r *http.Request) {
 	has, err := h.repo.HasAnyUser(r.Context())
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "setup: check existing users", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
 	if has {
@@ -99,7 +104,7 @@ func (h *OnboardingHandlers) Submit(w http.ResponseWriter, r *http.Request) {
 	has, err := h.repo.HasAnyUser(r.Context())
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "setup: re-check existing users", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
 	if has {
@@ -126,7 +131,7 @@ func (h *OnboardingHandlers) Submit(w http.ResponseWriter, r *http.Request) {
 	hash, err := crypto.Hash(password)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "setup: hash password", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
 
@@ -144,7 +149,7 @@ func (h *OnboardingHandlers) Submit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "setup: create first admin", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
 
@@ -152,7 +157,7 @@ func (h *OnboardingHandlers) Submit(w http.ResponseWriter, r *http.Request) {
 	// privilege in the session.
 	if err := h.sm.RenewToken(r.Context()); err != nil {
 		h.logger.ErrorContext(r.Context(), "setup: renew session token", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
 	h.sm.Put(r.Context(), session.KeyUserID, u.ID.String())
