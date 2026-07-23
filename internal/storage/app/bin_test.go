@@ -106,7 +106,7 @@ func (f *fakeBinReadWriter) Delete(_ context.Context, _ identity.Principal, id d
 	return nil
 }
 
-// fakeMemberDirectory is an in-memory memberDirectory fake for BinService's
+// fakeMemberDirectory is an in-memory memberLister fake for BinService's
 // owner-enrichment tests.
 type fakeMemberDirectory struct {
 	members []identity.User
@@ -150,7 +150,7 @@ func TestNewBinService_PanicsOnNilDeps(t *testing.T) {
 		}()
 		app.NewBinService(nil, &fakeMemberDirectory{}, &fakeItemCounter{}, testLogger())
 	})
-	t.Run("nil memberDirectory", func(t *testing.T) {
+	t.Run("nil memberLister", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
 				t.Error("NewBinService did not panic")
@@ -225,6 +225,26 @@ func TestBinService_ListVisible_UnknownOwnerYieldsNilOwner(t *testing.T) {
 	}
 }
 
+func TestBinService_ListVisible_OwnerBlankNameYieldsQuestionMarkInitials(t *testing.T) {
+	bins := newFakeBinReadWriter()
+	owner := identity.User{ID: identity.NewUserID(), DisplayName: "   ", Color: identity.ColorIndigo}
+	b := &domain.Bin{ID: domain.NewBinID(), Code: "A1", OwnerID: &owner.ID}
+	if err := bins.Create(context.Background(), b); err != nil {
+		t.Fatalf("seed bin: %v", err)
+	}
+	members := &fakeMemberDirectory{members: []identity.User{owner}}
+	svc := newBinService(bins, members, nil)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	got, err := svc.ListVisible(context.Background(), viewer)
+	if err != nil {
+		t.Fatalf("ListVisible: %v", err)
+	}
+	if got[0].Owner == nil || got[0].Owner.Initials != "?" {
+		t.Errorf("ListVisible() Owner.Initials = %+v, want \"?\" for a blank display name", got[0].Owner)
+	}
+}
+
 func TestBinService_ListVisibleByLocation(t *testing.T) {
 	bins := newFakeBinReadWriter()
 	garage := domain.NewLocationID()
@@ -245,6 +265,99 @@ func TestBinService_ListVisibleByLocation(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Bin.Code != "G1" {
 		t.Errorf("ListVisibleByLocation(garage) = %+v, want exactly the garage bin", got)
+	}
+}
+
+func TestBinService_ListVisible_RepositoryErrorWrapped(t *testing.T) {
+	bins := newFakeBinReadWriter()
+	bins.listErr = errors.New("boom")
+	svc := newBinService(bins, nil, nil)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	_, err := svc.ListVisible(context.Background(), viewer)
+	if err == nil {
+		t.Fatal("ListVisible() error = nil, want a wrapped error")
+	}
+}
+
+func TestBinService_ListVisible_MemberListErrorWrapped(t *testing.T) {
+	bins := newFakeBinReadWriter()
+	members := &fakeMemberDirectory{err: errors.New("directory down")}
+	svc := newBinService(bins, members, nil)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	_, err := svc.ListVisible(context.Background(), viewer)
+	if err == nil {
+		t.Fatal("ListVisible() error = nil, want a wrapped error when the member directory fails")
+	}
+}
+
+func TestBinService_ListVisible_ItemCounterErrorWrapped(t *testing.T) {
+	bins := newFakeBinReadWriter()
+	items := &fakeItemCounter{err: errors.New("counts down")}
+	svc := newBinService(bins, nil, items)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	_, err := svc.ListVisible(context.Background(), viewer)
+	if err == nil {
+		t.Fatal("ListVisible() error = nil, want a wrapped error when the item counter fails")
+	}
+}
+
+func TestBinService_ListVisibleByLocation_RepositoryErrorWrapped(t *testing.T) {
+	bins := newFakeBinReadWriter()
+	bins.listByLocErr = errors.New("boom")
+	svc := newBinService(bins, nil, nil)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	_, err := svc.ListVisibleByLocation(context.Background(), viewer, domain.NewLocationID())
+	if err == nil {
+		t.Fatal("ListVisibleByLocation() error = nil, want a wrapped error")
+	}
+}
+
+func TestBinService_GetByID_Success_EnrichesView(t *testing.T) {
+	bins := newFakeBinReadWriter()
+	owner := identity.User{ID: identity.NewUserID(), DisplayName: "Maya", Color: identity.ColorIndigo}
+	b := &domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes", OwnerID: &owner.ID}
+	if err := bins.Create(context.Background(), b); err != nil {
+		t.Fatalf("seed bin: %v", err)
+	}
+	members := &fakeMemberDirectory{members: []identity.User{owner}}
+	items := &fakeItemCounter{counts: map[domain.BinID]int{b.ID: 5}}
+	svc := newBinService(bins, members, items)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	got, err := svc.GetByID(context.Background(), viewer, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Bin.ID != b.ID {
+		t.Errorf("GetByID() Bin.ID = %v, want %v", got.Bin.ID, b.ID)
+	}
+	if got.Owner == nil || got.Owner.Name != "Maya" {
+		t.Errorf("GetByID() Owner = %+v, want Maya", got.Owner)
+	}
+	if got.ItemCount != 5 {
+		t.Errorf("GetByID() ItemCount = %d, want 5", got.ItemCount)
+	}
+}
+
+func TestBinService_GetByCode_Success_EnrichesView(t *testing.T) {
+	bins := newFakeBinReadWriter()
+	b := &domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes"}
+	if err := bins.Create(context.Background(), b); err != nil {
+		t.Fatalf("seed bin: %v", err)
+	}
+	svc := newBinService(bins, nil, nil)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	got, err := svc.GetByCode(context.Background(), viewer, "a1")
+	if err != nil {
+		t.Fatalf("GetByCode: %v", err)
+	}
+	if got.Bin.ID != b.ID {
+		t.Errorf("GetByCode() Bin.ID = %v, want %v", got.Bin.ID, b.ID)
 	}
 }
 
@@ -273,7 +386,9 @@ func TestBinService_Create_NormalizesCodeAndValidates(t *testing.T) {
 	svc := newBinService(bins, nil, nil)
 	creator := identity.NewUserID()
 
-	b, err := svc.Create(context.Background(), "  a1  ", "Winter Clothes", "", domain.NewLocationID(), nil, domain.VisibilityPublic, creator)
+	b, err := svc.Create(context.Background(), app.CreateBinInput{
+		Code: "  a1  ", Name: "Winter Clothes", LocationID: domain.NewLocationID(), Visibility: domain.VisibilityPublic, CreatedBy: creator,
+	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -285,7 +400,9 @@ func TestBinService_Create_NormalizesCodeAndValidates(t *testing.T) {
 func TestBinService_Create_ValidationRejected(t *testing.T) {
 	svc := newBinService(newFakeBinReadWriter(), nil, nil)
 
-	_, err := svc.Create(context.Background(), "A1", "  ", "", domain.NewLocationID(), nil, domain.VisibilityPublic, identity.NewUserID())
+	_, err := svc.Create(context.Background(), app.CreateBinInput{
+		Code: "A1", Name: "  ", LocationID: domain.NewLocationID(), Visibility: domain.VisibilityPublic, CreatedBy: identity.NewUserID(),
+	})
 	if !errors.Is(err, domain.ErrInvalidBin) {
 		t.Errorf("Create(blank name) error = %v, want ErrInvalidBin", err)
 	}
@@ -296,7 +413,9 @@ func TestBinService_Create_RepositoryErrorWrapped(t *testing.T) {
 	bins.createErr = domain.ErrDuplicateBinCode
 	svc := newBinService(bins, nil, nil)
 
-	_, err := svc.Create(context.Background(), "A1", "Name", "", domain.NewLocationID(), nil, domain.VisibilityPublic, identity.NewUserID())
+	_, err := svc.Create(context.Background(), app.CreateBinInput{
+		Code: "A1", Name: "Name", LocationID: domain.NewLocationID(), Visibility: domain.VisibilityPublic, CreatedBy: identity.NewUserID(),
+	})
 	if !errors.Is(err, domain.ErrDuplicateBinCode) {
 		t.Errorf("Create() error = %v, want wrapped ErrDuplicateBinCode", err)
 	}
@@ -331,6 +450,23 @@ func TestBinService_Edit_NeverTouchesCodeOrLocation(t *testing.T) {
 	}
 	if got.Code != "A1" || got.LocationID != loc {
 		t.Errorf("Edit must never touch code/location: %+v", got)
+	}
+}
+
+func TestBinService_Delete_Success(t *testing.T) {
+	bins := newFakeBinReadWriter()
+	b := &domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes"}
+	if err := bins.Create(context.Background(), b); err != nil {
+		t.Fatalf("seed bin: %v", err)
+	}
+	svc := newBinService(bins, nil, nil)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	if err := svc.Delete(context.Background(), viewer, b.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, ok := bins.bins[b.ID]; ok {
+		t.Error("Delete did not remove the bin via the repository")
 	}
 }
 

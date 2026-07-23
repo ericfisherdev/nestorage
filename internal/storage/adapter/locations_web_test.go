@@ -2,6 +2,7 @@ package adapter_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -99,7 +100,7 @@ func (f *fakeLocationService) Delete(_ context.Context, id domain.LocationID) er
 	return nil
 }
 
-// fakeBinsByLocation is a configurable binsByLocation fake for
+// fakeBinsByLocation is a configurable locationBinLister fake for
 // LocationsWebHandlers' own detail page.
 type fakeBinsByLocation struct {
 	views []app.BinView
@@ -254,6 +255,304 @@ func TestLocationsWebHandlers_Create_Success_Finishes(t *testing.T) {
 	}
 	if locations.createCalls != 1 {
 		t.Errorf("Create was called %d times, want 1", locations.createCalls)
+	}
+}
+
+func TestLocationsWebHandlers_List_ServiceError(t *testing.T) {
+	locations := newFakeLocationService()
+	locations.listErr = errors.New("boom")
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+
+	resp, err := h.client.Get(h.server.URL + "/locations")
+	if err != nil {
+		t.Fatalf("GET /locations: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("GET /locations (service error) = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Create_HTMX_Success_RerendersIndex(t *testing.T) {
+	locations := newFakeLocationService()
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	csrf := h.getCSRF(t, "/locations")
+
+	resp, body := h.postForm(t, "/locations", url.Values{"csrf_token": {csrf}, "name": {"Garage"}}, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /locations (htmx, valid) = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "Garage") {
+		t.Error("HTMX create response did not re-render the index with the new location")
+	}
+}
+
+func TestLocationsWebHandlers_Create_UnmappedServiceError_Returns500(t *testing.T) {
+	locations := newFakeLocationService()
+	locations.createErr = errors.New("boom")
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	csrf := h.getCSRF(t, "/locations")
+
+	resp, _ := h.postForm(t, "/locations", url.Values{"csrf_token": {csrf}, "name": {"Garage"}}, false)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("POST /locations (unmapped error) = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Detail_NotFound(t *testing.T) {
+	h := newLocationsWebHarness(t, testViewer(), newFakeLocationService(), &fakeBinsByLocation{})
+
+	resp, err := h.client.Get(h.server.URL + "/locations/" + domain.NewLocationID().String())
+	if err != nil {
+		t.Fatalf("GET /locations/{id}: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /locations/{unknown id} = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Detail_BadID_Returns400(t *testing.T) {
+	h := newLocationsWebHarness(t, testViewer(), newFakeLocationService(), &fakeBinsByLocation{})
+
+	resp, err := h.client.Get(h.server.URL + "/locations/not-a-uuid")
+	if err != nil {
+		t.Fatalf("GET /locations/not-a-uuid: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("GET /locations/not-a-uuid = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Detail_BinsServiceError(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	bins := &fakeBinsByLocation{err: errors.New("boom")}
+	h := newLocationsWebHarness(t, testViewer(), locations, bins)
+
+	resp, err := h.client.Get(h.server.URL + "/locations/" + loc.ID.String())
+	if err != nil {
+		t.Fatalf("GET /locations/{id}: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("GET /locations/{id} (bins service error) = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Detail_Success_ShowsBins(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	bins := &fakeBinsByLocation{views: []app.BinView{
+		{Bin: domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes", LocationID: loc.ID}},
+	}}
+	h := newLocationsWebHarness(t, testViewer(), locations, bins)
+
+	resp, err := h.client.Get(h.server.URL + "/locations/" + loc.ID.String())
+	if err != nil {
+		t.Fatalf("GET /locations/{id}: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /locations/{id} = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "Winter Clothes") {
+		t.Error("location detail body missing the location's own bin")
+	}
+}
+
+func TestLocationsWebHandlers_EditForm_Success(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+
+	resp, err := h.client.Get(h.server.URL + "/locations/" + loc.ID.String() + "/edit")
+	if err != nil {
+		t.Fatalf("GET /locations/{id}/edit: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /locations/{id}/edit = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "Garage") {
+		t.Error("edit form body missing the location's current name")
+	}
+}
+
+func TestLocationsWebHandlers_EditForm_NotFound(t *testing.T) {
+	h := newLocationsWebHarness(t, testViewer(), newFakeLocationService(), &fakeBinsByLocation{})
+
+	resp, err := h.client.Get(h.server.URL + "/locations/" + domain.NewLocationID().String() + "/edit")
+	if err != nil {
+		t.Fatalf("GET /locations/{id}/edit: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /locations/{unknown id}/edit = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_EditForm_BadID_Returns400(t *testing.T) {
+	h := newLocationsWebHarness(t, testViewer(), newFakeLocationService(), &fakeBinsByLocation{})
+
+	resp, err := h.client.Get(h.server.URL + "/locations/not-a-uuid/edit")
+	if err != nil {
+		t.Fatalf("GET /locations/not-a-uuid/edit: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("GET /locations/not-a-uuid/edit = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_EditForm_ServiceError_Returns500(t *testing.T) {
+	locations := newFakeLocationService()
+	locations.getErr = errors.New("boom")
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+
+	resp, err := h.client.Get(h.server.URL + "/locations/" + domain.NewLocationID().String() + "/edit")
+	if err != nil {
+		t.Fatalf("GET /locations/{id}/edit: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("GET /locations/{id}/edit (service error) = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Update_Success_Redirects(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	csrf := h.getCSRF(t, "/locations/"+loc.ID.String()+"/edit")
+
+	resp, _ := h.postForm(t, "/locations/"+loc.ID.String(), url.Values{"csrf_token": {csrf}, "name": {"Attic"}}, false)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /locations/{id} (valid) = %d, want 303", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Location"); got != "/locations/"+loc.ID.String() {
+		t.Errorf("Location = %q, want %q", got, "/locations/"+loc.ID.String())
+	}
+	if locations.locations[loc.ID].Name != "Attic" {
+		t.Errorf("Update did not rename the location: %+v", locations.locations[loc.ID])
+	}
+}
+
+func TestLocationsWebHandlers_Update_ValidationRejected(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	// fakeLocationService.Rename does not itself replicate the real
+	// LocationService's blank-name validation (unlike its Create, which
+	// does) — renameErr simulates that rejection the same way the real
+	// service's domain.ValidateLocationName would produce it.
+	locations.renameErr = domain.ErrInvalidLocationName
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	csrf := h.getCSRF(t, "/locations/"+loc.ID.String()+"/edit")
+
+	resp, body := h.postForm(t, "/locations/"+loc.ID.String(), url.Values{"csrf_token": {csrf}, "name": {"   "}}, true)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("POST /locations/{id} (blank name) = %d, want 422:\n%s", resp.StatusCode, body)
+	}
+	if locations.locations[loc.ID].Name != "Garage" {
+		t.Error("a rejected rename must not change the location's name")
+	}
+}
+
+func TestLocationsWebHandlers_Update_NotFound(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	// CSRF is session-scoped, not resource-scoped (see session.CSRFToken's
+	// doc), so a token from the seeded location's own edit form still
+	// verifies against the unrelated, unknown target id below.
+	csrf := h.getCSRF(t, "/locations/"+loc.ID.String()+"/edit")
+
+	resp, _ := h.postForm(t, "/locations/"+domain.NewLocationID().String(), url.Values{"csrf_token": {csrf}, "name": {"Attic"}}, false)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST /locations/{unknown id} = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Update_BadID_Returns400(t *testing.T) {
+	h := newLocationsWebHarness(t, testViewer(), newFakeLocationService(), &fakeBinsByLocation{})
+	csrf := h.getCSRF(t, "/locations")
+
+	resp, _ := h.postForm(t, "/locations/not-a-uuid", url.Values{"csrf_token": {csrf}, "name": {"Attic"}}, false)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("POST /locations/not-a-uuid = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Update_CSRFRejected(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	h.getCSRF(t, "/locations/"+loc.ID.String()+"/edit") // establishes the session cookie
+
+	resp, _ := h.postForm(t, "/locations/"+loc.ID.String(), url.Values{"csrf_token": {"wrong-token"}, "name": {"Attic"}}, false)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("POST /locations/{id} (bad CSRF) = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Update_UnmappedServiceError_Returns500(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	locations.renameErr = errors.New("boom")
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	csrf := h.getCSRF(t, "/locations/"+loc.ID.String()+"/edit")
+
+	resp, _ := h.postForm(t, "/locations/"+loc.ID.String(), url.Values{"csrf_token": {csrf}, "name": {"Attic"}}, false)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("POST /locations/{id} (unmapped error) = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Delete_CSRFRejected(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	h.getCSRF(t, "/locations/"+loc.ID.String()) // establishes the session cookie
+
+	resp, _ := h.postForm(t, "/locations/"+loc.ID.String()+"/delete", url.Values{"csrf_token": {"wrong-token"}}, false)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("POST delete (bad CSRF) = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Delete_BadID_Returns400(t *testing.T) {
+	h := newLocationsWebHarness(t, testViewer(), newFakeLocationService(), &fakeBinsByLocation{})
+	csrf := h.getCSRF(t, "/locations")
+
+	resp, _ := h.postForm(t, "/locations/not-a-uuid/delete", url.Values{"csrf_token": {csrf}}, false)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("POST /locations/not-a-uuid/delete = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocationsWebHandlers_Delete_UnmappedServiceError_Returns500(t *testing.T) {
+	locations := newFakeLocationService()
+	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	locations.locations[loc.ID] = loc
+	locations.deleteErr = errors.New("boom")
+	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	csrf := h.getCSRF(t, "/locations/"+loc.ID.String())
+
+	resp, _ := h.postForm(t, "/locations/"+loc.ID.String()+"/delete", url.Values{"csrf_token": {csrf}}, false)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("POST delete (unmapped error) = %d, want 500", resp.StatusCode)
 	}
 }
 
