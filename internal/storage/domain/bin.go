@@ -108,6 +108,21 @@ func (b *Bin) Validate() error {
 	return nil
 }
 
+// MoveTo relocates b to target, mutating LocationID on the in-memory
+// aggregate only — persisting the change is BinRepository.Move's job (see
+// its own doc); NSTR-30's app.BinMover is the caller that does both. Returns
+// ErrBinAlreadyInLocation, leaving b unmodified, when target equals b's
+// current LocationID — the no-op guard, checked here rather than by the
+// caller so it holds regardless of caller, mirroring Item's EnterBin/
+// CheckOut/ReturnTo guards (bare sentinel, no wrapping).
+func (b *Bin) MoveTo(target LocationID) error {
+	if target == b.LocationID {
+		return ErrBinAlreadyInLocation
+	}
+	b.LocationID = target
+	return nil
+}
+
 // BinCreator returns the id of the user who created the bin, satisfying
 // identity.BinSubject.
 func (b *Bin) BinCreator() identity.UserID { return b.CreatedBy }
@@ -147,6 +162,11 @@ var _ identity.BinSubject = (*Bin)(nil)
 //     missing or viewer may not mutate it (CanMutateBin). Delete also
 //     returns ErrBinNotEmpty when an item (NSTR-28) still references the
 //     bin.
+//   - GetForUpdate returns ErrBinNotFound when id is unknown. Move returns
+//     ErrBinNotFound when id is unknown, or a wrapped ErrLocationNotFound
+//     when target's foreign key is violated (a backstop — app.BinMover's
+//     own visibility check against the target is the primary guard; see its
+//     own doc).
 type BinRepository interface {
 	Create(ctx context.Context, b *Bin) error
 	FindVisibleByID(ctx context.Context, viewer identity.Principal, id BinID) (*Bin, error)
@@ -156,4 +176,20 @@ type BinRepository interface {
 	ListVisible(ctx context.Context, viewer identity.Principal) ([]Bin, error)
 	UpdateVisibility(ctx context.Context, viewer identity.Principal, id BinID, visibility Visibility) error
 	Delete(ctx context.Context, viewer identity.Principal, id BinID) error
+	// GetForUpdate returns the bin locked FOR UPDATE within the caller's
+	// transaction — the caller must supply a pgx.Tx (via the repository's
+	// constructor) for the lock to have any scope beyond the single
+	// statement. Not visibility-scoped: NSTR-30's app.BinMover calls this
+	// only after a prior FindVisibleByID has already confirmed the
+	// principal may see the bin. Mirrors ItemRepository.GetForUpdate's own
+	// doc exactly.
+	GetForUpdate(ctx context.Context, id BinID) (*Bin, error)
+	// Move is the relocation primitive app.BinMover.Move builds on: it
+	// overwrites location_id/updated_at to target/now in one statement and
+	// reports the number of rows affected (0 or 1) alongside the usual
+	// error contract, mirroring ItemRepository.Move's own doc. now is
+	// supplied by the caller rather than read from SQL's own now() so the
+	// persisted updated_at matches exactly the MovedAt app.MoveResult
+	// returns.
+	Move(ctx context.Context, id BinID, target LocationID, now time.Time) (rowsAffected int64, err error)
 }

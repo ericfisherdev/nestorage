@@ -75,6 +75,18 @@ func (r *LocationRepository) FindByID(ctx context.Context, id domain.LocationID)
 	return l, nil
 }
 
+// FindVisibleByID returns the location, scoped to what viewer may see — see
+// domain.LocationRepository.FindVisibleByID's own doc for why every
+// principal currently sees every location (Location carries no privacy
+// field yet, unlike Bin's Visibility). viewer is accepted but not yet
+// filtered on for that reason: the parameter is the forward-compatible seam,
+// unused today, kept named in the interface (not the receiver here) so a
+// reader can see at a glance what a later privacy check would bind to.
+// Returns domain.ErrLocationNotFound when id is unknown.
+func (r *LocationRepository) FindVisibleByID(ctx context.Context, _ identity.Principal, id domain.LocationID) (*domain.Location, error) {
+	return r.FindByID(ctx, id)
+}
+
 // List returns every location ordered by name, tie-broken by id for a
 // stable order between rows sharing a name. Returns an empty slice, not an
 // error, when no locations exist.

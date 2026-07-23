@@ -131,6 +131,37 @@ func TestLocationRepository_FindByID_NotFound(t *testing.T) {
 	}
 }
 
+// TestLocationRepository_FindVisibleByID proves NSTR-30's new port method
+// returns the same row FindByID does — see the port's own doc for why every
+// principal currently sees every location.
+func TestLocationRepository_FindVisibleByID(t *testing.T) {
+	f := newLocationFixture(t)
+	owner := f.seedOwner(t)
+	loc := newLocation(owner, "Garage")
+	if err := f.repo.Create(testCtx(t), loc); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Anyone")
+	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, loc.ID)
+	if err != nil {
+		t.Fatalf("FindVisibleByID: %v", err)
+	}
+	if got.ID != loc.ID || got.Name != loc.Name {
+		t.Errorf("FindVisibleByID = %+v, want it to match the created location", got)
+	}
+}
+
+func TestLocationRepository_FindVisibleByID_NotFound(t *testing.T) {
+	f := newLocationFixture(t)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Anyone")
+
+	_, err := f.repo.FindVisibleByID(testCtx(t), viewer, domain.NewLocationID())
+	if !errors.Is(err, domain.ErrLocationNotFound) {
+		t.Errorf("FindVisibleByID(unknown) = %v, want ErrLocationNotFound", err)
+	}
+}
+
 func TestLocationRepository_List_Ordered(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
