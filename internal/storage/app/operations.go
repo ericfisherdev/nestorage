@@ -9,34 +9,38 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/storage/domain"
 )
 
-// ItemStore is the narrow port (ISP) a unitOfWork's transactional closure
+// ItemStore is the narrow port (ISP) a transactor's transactional closure
 // receives: only the row-locked read and placement-swap update
 // OperationService's add/remove/return build on. Satisfied by a
 // *domain.ItemRepository constructed over a pgx transaction (a superset —
 // see domain.ItemRepository.GetForUpdate/Move for the exact contract this
 // mirrors). Exported, unlike the other ports in this file, because
 // adapter.PostgresUnitOfWork's WithinTx method must spell this type by name
-// to satisfy unitOfWork's identical method signature.
+// to satisfy transactor's identical method signature.
 type ItemStore interface {
 	GetForUpdate(ctx context.Context, id domain.ItemID) (*domain.Item, error)
 	Move(ctx context.Context, id domain.ItemID, dst domain.Placement) (int64, error)
 }
 
-// binVisibility is the narrow port (ISP) OperationService depends on to
+// binFinder is the narrow port (ISP) OperationService depends on to
 // resolve a destination bin the acting principal may actually see,
 // satisfied by domain.BinRepository (a superset, via FindVisibleByID).
-type binVisibility interface {
+// Named for the single method it exposes, per Go's single-method-interface
+// naming convention (io.Reader, fmt.Stringer, ...).
+type binFinder interface {
 	FindVisibleByID(ctx context.Context, viewer identity.Principal, id domain.BinID) (*domain.Bin, error)
 }
 
-// unitOfWork runs fn inside one transaction against a tx-bound ItemStore,
+// transactor runs fn inside one transaction against a tx-bound ItemStore,
 // committing when fn returns nil and rolling back — with no partial write —
 // on any error fn returns, including a failed domain transition guard. This
 // is the seam that keeps OperationService pure and unit-testable with a
 // fake; adapter.PostgresUnitOfWork supplies the real pgx transaction, with
 // the item row locked FOR UPDATE for its duration so a second, concurrent
-// operation against the same item blocks rather than racing.
-type unitOfWork interface {
+// operation against the same item blocks rather than racing. Named for its
+// single WithinTx method (see binFinder's own doc for the same rationale);
+// it plays the unit-of-work role the ticket describes under that name.
+type transactor interface {
 	WithinTx(ctx context.Context, fn func(ItemStore) error) error
 }
 
@@ -73,26 +77,26 @@ type Operation struct {
 // OperationService implements the three item placement transitions this
 // bounded context exposes: AddToBin, RemoveFromBin (check out), and
 // ReturnToBin. Each runs inside one transaction with the item row locked
-// FOR UPDATE for its duration (see unitOfWork), so two concurrent
+// FOR UPDATE for its duration (see transactor), so two concurrent
 // operations against the same item never produce a partial write — the
 // loser blocks on the row lock, then re-reads the just-committed state and
 // fails its own domain transition guard (ErrItemAlreadyInBin/
 // ErrItemAlreadyCheckedOut/ErrItemNotCheckedOut).
 type OperationService struct {
-	uow    unitOfWork
-	bins   binVisibility
+	uow    transactor
+	bins   binFinder
 	logger *slog.Logger
 }
 
 // NewOperationService constructs OperationService. Every dependency is
 // required; a missing one panics at construction time, matching every other
 // constructor in this codebase (see NewItemService).
-func NewOperationService(uow unitOfWork, bins binVisibility, logger *slog.Logger) *OperationService {
+func NewOperationService(uow transactor, bins binFinder, logger *slog.Logger) *OperationService {
 	if uow == nil {
-		panic("storage/app: NewOperationService requires a non-nil unitOfWork")
+		panic("storage/app: NewOperationService requires a non-nil transactor")
 	}
 	if bins == nil {
-		panic("storage/app: NewOperationService requires a non-nil binVisibility")
+		panic("storage/app: NewOperationService requires a non-nil binFinder")
 	}
 	if logger == nil {
 		panic("storage/app: NewOperationService requires a non-nil logger")
