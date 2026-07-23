@@ -321,7 +321,7 @@ func TestLogout_DestroysSessionAndRedirectsToLogin(t *testing.T) {
 	if loc := resp.Header.Get("Location"); loc != "/login" {
 		t.Errorf("Location = %q, want %q", loc, "/login")
 	}
-	if postLogoutToken := sessionCookieValue(h.client, h.server.URL); postLogoutToken == postLoginToken {
+	if sessionCookieValue(h.client, h.server.URL) == postLoginToken {
 		t.Error("logout did not change the session token — the server-side session must be destroyed, not just the cookie")
 	}
 }

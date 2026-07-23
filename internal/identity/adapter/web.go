@@ -102,7 +102,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "login: authenticate", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
 	h.limiter.recordSuccess(email)
@@ -111,7 +111,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	// privilege in the session.
 	if err := h.sm.RenewToken(r.Context()); err != nil {
 		h.logger.ErrorContext(r.Context(), "login: renew session token", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
 	h.sm.Put(r.Context(), session.KeyUserID, userID.String())
@@ -131,7 +131,7 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.sm.Destroy(r.Context()); err != nil {
 		h.logger.ErrorContext(r.Context(), "logout: destroy session", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
