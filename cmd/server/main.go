@@ -118,6 +118,18 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	deviceTokenAPI := identityadapter.NewDeviceTokenAPIHandlers(deviceTokenService, logger)
 	deviceTokenWeb := identityadapter.NewDeviceTokenWebHandlers(deviceTokenService, sm, newDeviceSettingsLayout(), logger)
 
+	// NSTR-23's account api key: the single credential the Nestova
+	// integration authenticates with. NewAPIKeyService returns an error
+	// rather than panicking on a nil dependency (see its own doc); every
+	// dependency here is non-nil, so the error is checked but never
+	// expected in practice.
+	apiKeyRepo := identityadapter.NewAPIKeyRepository(pool)
+	apiKeyService, err := identityapp.NewAPIKeyService(apiKeyRepo, time.Now, logger)
+	if err != nil {
+		return err
+	}
+	apiKeyWeb := identityadapter.NewAPIKeyWebHandlers(apiKeyService, sm, newAPIKeySettingsLayout(), logger)
+
 	// NSTR-21's admin user management: Revokers is the open seam NSTR-22
 	// plugs its device-token revoker into (OCP) — session revocation and
 	// device-token revocation, so deactivating (or resetting the password
@@ -137,7 +149,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		// silently.
 		MetricsHandler: metrics.Handler(registry),
 		HTTPMetrics:    httpMetrics,
-		Routes:         newAppRoutes(logger, onboarding, login, usersHandlers, deviceTokenAPI, deviceTokenWeb),
+		Routes:         newAppRoutes(logger, onboarding, login, usersHandlers, deviceTokenAPI, deviceTokenWeb, apiKeyWeb),
 		Middleware:     []middleware.Middleware{setupGuard, sm.LoadAndSave, authenticate},
 	})
 

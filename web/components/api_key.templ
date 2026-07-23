@@ -1,0 +1,237 @@
+package components
+
+// APIKeyRowView is the view-layer model for one row in the account api key
+// history — not a domain type, matching the rationale already written on
+// DeviceView (this package's other domain-adjacent view models).
+// CreatedAt/LastUsedAt/ExpiresAt/RevokedAt are pre-formatted strings: the
+// handler formats every timestamp, never this template. ExpiresAt/RevokedAt
+// are "" when the key was never superseded/revoked.
+type APIKeyRowView struct {
+	ID         string
+	Label      string
+	KeyPrefix  string
+	Status     string
+	CreatedAt  string
+	LastUsedAt string
+	ExpiresAt  string
+	RevokedAt  string
+}
+
+// APIKeySecretReveal is the one-time reveal of a freshly created or rotated
+// key's raw secret, embedded in the SAME response as the successful
+// create/rotate POST — mirroring Nestova's KioskActivationReveal: a
+// redirect would lose the one value the admin needs, and this secret is
+// never shown again after this response.
+type APIKeySecretReveal struct {
+	Secret string
+	Label  string
+}
+
+// OverlapOption is one choice in the rotate form's overlap <select>.
+type OverlapOption struct {
+	Value string
+	Label string
+}
+
+// APIKeySettingsView is the view-layer model for the account api key
+// management screen.
+type APIKeySettingsView struct {
+	CSRFToken string
+	// Current is nil when no key has ever been created — the create form
+	// renders instead of the rotate/revoke controls.
+	Current   *APIKeyRowView
+	History   []APIKeyRowView
+	Reveal    *APIKeySecretReveal
+	FormError string
+	Overlaps  []OverlapOption
+}
+
+// apiKeySectionID is the DOM id every mutation's HTMX outerHTML swap
+// targets, so a create/rotate/revoke re-renders the whole screen from one
+// response — the same pattern usersTableID/deviceListID use.
+const apiKeySectionID = "api-key-section"
+
+// APIKeySettingsSection renders the account api key management screen: the
+// one-time secret reveal (when present), the create form (no key yet) or
+// the current key's status plus rotate/revoke controls, and the history
+// list.
+templ APIKeySettingsSection(view APIKeySettingsView) {
+	<div id={ apiKeySectionID } class="flex flex-col gap-6 p-[26px]">
+		<div>
+			<h2 class="text-xl font-extrabold text-text">Account API key</h2>
+			<p class="mt-1 text-[15px] text-text-faint">The single key the Nestova integration authenticates with — it acts as the integration, never as a person.</p>
+		</div>
+		if view.FormError != "" {
+			<p role="alert" class="rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+		}
+		if view.Reveal != nil {
+			@apiKeySecretReveal(*view.Reveal)
+		}
+		if view.Current != nil {
+			@apiKeyCurrentPanel(view.CSRFToken, *view.Current, view.Overlaps)
+		} else {
+			@apiKeyCreateForm(view.CSRFToken)
+		}
+		@apiKeyHistory(view.History)
+	</div>
+}
+
+// apiKeySecretReveal shows the raw secret exactly once. The secret is never
+// interpolated into an inline script: the copy button reads it back from
+// this element's own data-secret attribute ($el.previousElementSibling),
+// keeping the value out of any JS string literal entirely. Deliberately no
+// font-mono here — Space Mono is reserved strictly for bin codes
+// (web/components/bincode.templ) — wide tracking on the normal UI face
+// stands in for it instead.
+templ apiKeySecretReveal(reveal APIKeySecretReveal) {
+	<div x-data="{ copied: false }" role="alert" class="flex flex-col gap-2 rounded-card border border-primary/40 bg-surface-raised p-4">
+		<p class="text-sm font-semibold text-text">New key for "{ reveal.Label }" — copy it now, it will not be shown again.</p>
+		<div class="flex items-center gap-2">
+			<code data-secret={ reveal.Secret } class="flex-1 overflow-x-auto rounded-input border border-border-input bg-surface px-3 py-2 text-sm tracking-wide text-text">{ reveal.Secret }</code>
+			<button
+				type="button"
+				x-on:click="navigator.clipboard.writeText($el.previousElementSibling.dataset.secret); copied = true; setTimeout(() => copied = false, 2000)"
+				class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised"
+			>
+				<span x-show="!copied">Copy</span>
+				<span x-show="copied" x-cloak>Copied!</span>
+			</button>
+		</div>
+	</div>
+}
+
+// apiKeyCreateForm renders the create form, shown only when no key exists
+// yet — HTMX-posted and swapped into the same outerHTML target as every
+// other mutation on this screen.
+templ apiKeyCreateForm(csrfToken string) {
+	<form
+		method="POST"
+		action="/settings/api-key"
+		hx-post="/settings/api-key"
+		hx-target={ "#" + apiKeySectionID }
+		hx-swap="outerHTML"
+		class="flex flex-col gap-3 rounded-card bg-surface-raised p-4"
+	>
+		<input type="hidden" name="csrf_token" value={ csrfToken }/>
+		<h3 class="text-sm font-bold text-text-secondary">Create the account API key</h3>
+		<input
+			type="text"
+			name="label"
+			placeholder="Label (e.g. Nestova integration)"
+			required
+			class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+		/>
+		<button type="submit" class="self-start rounded-button bg-primary px-4 py-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep">
+			Create key
+		</button>
+	</form>
+}
+
+// apiKeyCurrentPanel renders the current key's identity plus its rotate and
+// revoke forms, shown once a key exists.
+templ apiKeyCurrentPanel(csrfToken string, current APIKeyRowView, overlaps []OverlapOption) {
+	<div class="flex flex-col gap-3 rounded-card border border-border p-4">
+		<div>
+			<p class="text-base font-semibold text-text">{ current.Label }</p>
+			<p class="text-sm tracking-wide text-text-faint">{ current.KeyPrefix }&#8230; · Added { current.CreatedAt } · Last used { current.LastUsedAt }</p>
+		</div>
+		<form
+			method="POST"
+			action="/settings/api-key/rotate"
+			hx-post="/settings/api-key/rotate"
+			hx-target={ "#" + apiKeySectionID }
+			hx-swap="outerHTML"
+			class="flex flex-wrap items-center gap-2"
+		>
+			<input type="hidden" name="csrf_token" value={ csrfToken }/>
+			<input
+				type="text"
+				name="label"
+				value={ current.Label }
+				required
+				class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text focus:border-primary focus:outline-none"
+			/>
+			@overlapSelect(overlaps)
+			<button type="submit" class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+				Rotate
+			</button>
+		</form>
+		<form
+			method="POST"
+			action="/settings/api-key/revoke"
+			hx-post="/settings/api-key/revoke"
+			hx-target={ "#" + apiKeySectionID }
+			hx-swap="outerHTML"
+		>
+			<input type="hidden" name="csrf_token" value={ csrfToken }/>
+			<input type="hidden" name="id" value={ current.ID }/>
+			<button type="submit" class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">
+				Revoke
+			</button>
+		</form>
+	</div>
+}
+
+// overlapSelect renders the rotate form's overlap <select>.
+templ overlapSelect(overlaps []OverlapOption) {
+	<select name="overlap" class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text focus:border-primary focus:outline-none">
+		for _, o := range overlaps {
+			<option value={ o.Value }>{ o.Label }</option>
+		}
+	</select>
+}
+
+// apiKeyHistory renders every key ever issued, newest first, or an
+// empty-state message.
+templ apiKeyHistory(rows []APIKeyRowView) {
+	<div>
+		<h3 class="text-sm font-bold text-text-secondary">History</h3>
+		<ul class="mt-2 flex flex-col gap-2">
+			if len(rows) == 0 {
+				<li class="text-sm text-text-faint">No keys yet.</li>
+			}
+			for _, row := range rows {
+				@apiKeyHistoryRow(row)
+			}
+		</ul>
+	</div>
+}
+
+// apiKeyHistoryRow renders one key row: label, non-secret prefix, and a
+// status badge.
+templ apiKeyHistoryRow(row APIKeyRowView) {
+	<li class="flex flex-col gap-1 rounded-card border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+		<div>
+			<p class="text-sm font-semibold text-text">
+				{ row.Label }
+				<span class="ml-2 tracking-wide text-text-faint">{ row.KeyPrefix }&#8230;</span>
+			</p>
+			<p class="text-xs text-text-faint">Added { row.CreatedAt } · Last used { row.LastUsedAt }</p>
+		</div>
+		@apiKeyStatusBadge(row.Status)
+	</li>
+}
+
+// apiKeyStatusBadge renders one key's lifecycle status.
+templ apiKeyStatusBadge(status string) {
+	<span class={ "rounded-pill px-2 py-1 text-xs font-bold", apiKeyStatusClass(status) }>{ status }</span>
+}
+
+// apiKeyStatusClass maps a status value to its badge color, with a default
+// for any value outside the four domain.APIKeyStatus constants — this
+// template must never fail to render just because a future status is added
+// to the domain before this mapping is updated.
+func apiKeyStatusClass(status string) string {
+	switch status {
+	case "current":
+		return "bg-green-50 text-green-700"
+	case "retiring":
+		return "bg-amber-50 text-amber-700"
+	case "expired":
+		return "bg-slate-100 text-slate-500"
+	case "revoked":
+		return "bg-red-50 text-red-600"
+	default:
+		return "bg-slate-100 text-slate-500"
+	}
+}

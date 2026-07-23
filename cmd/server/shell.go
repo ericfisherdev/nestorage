@@ -29,6 +29,9 @@ const usersPageTitle = "Users"
 // devicesPageTitle names NSTR-22's device self-service page.
 const devicesPageTitle = "Devices"
 
+// apiKeySettingsPageTitle names NSTR-23's account api key management page.
+const apiKeySettingsPageTitle = "API key"
+
 // shellHandlers serves the application shell: the embedded static assets and
 // a demo /bins page proving the Hearth shell renders and HTMX fragment swaps
 // work. Owners, stats, and the bin toolbar are hard-coded here — Sprint 3
@@ -76,7 +79,16 @@ func (h *shellHandlers) Routes(mux *http.ServeMux) {
 // any signed-in user manages their own devices. The exchange endpoint
 // (deviceTokenAPI) carries no session at all and is mounted at the top
 // level alongside login, matching its own doc.
-func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHandlers, login *identityadapter.Handlers, users *identityadapter.UsersWebHandlers, deviceTokenAPI *identityadapter.DeviceTokenAPIHandlers, deviceTokenWeb *identityadapter.DeviceTokenWebHandlers) func(mux *http.ServeMux) {
+//
+// NSTR-23's account api key routes sit under the same "/settings/" path
+// prefix as the device screen but, unlike it, need RequireAdmin: the
+// credential is account-wide, not per-user. They are mounted on their own
+// mux at both "/settings/api-key" (exact) and "/settings/api-key/"
+// (subtree), the two registrations together covering the bare path
+// (create/view) and its /rotate and /revoke children without a redirect —
+// net/http.ServeMux picks the more specific match over the broader
+// "/settings/" registration either way.
+func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHandlers, login *identityadapter.Handlers, users *identityadapter.UsersWebHandlers, deviceTokenAPI *identityadapter.DeviceTokenAPIHandlers, deviceTokenWeb *identityadapter.DeviceTokenWebHandlers, apiKeyWeb *identityadapter.APIKeyWebHandlers) func(mux *http.ServeMux) {
 	shell := newShellHandlers(logger)
 	adminGate := middleware.Chain(identityadapter.RequireUser(), identityadapter.RequireAdmin(logger))
 	userGate := identityadapter.RequireUser()
@@ -93,6 +105,12 @@ func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHan
 		settingsMux := http.NewServeMux()
 		deviceTokenWeb.Routes(settingsMux)
 		mux.Handle("/settings/", userGate(settingsMux))
+
+		apiKeyMux := http.NewServeMux()
+		apiKeyWeb.Routes(apiKeyMux)
+		gatedAPIKey := adminGate(apiKeyMux)
+		mux.Handle("/settings/api-key", gatedAPIKey)
+		mux.Handle("/settings/api-key/", gatedAPIKey)
 	}
 }
 
@@ -132,6 +150,16 @@ func isCurrentUserAdmin(r *http.Request) bool {
 func newAdminUsersLayout() func(templ.Component) templ.Component {
 	return func(content templ.Component) templ.Component {
 		return components.Layout(shellProps(usersPageTitle), shellNav(true), content)
+	}
+}
+
+// newAPIKeySettingsLayout returns the layout func injected into
+// identityadapter.NewAPIKeyWebHandlers. isAdmin is unconditionally true
+// here, the same rationale as newAdminUsersLayout: every request that
+// reaches this layout already passed RequireAdmin (see newAppRoutes).
+func newAPIKeySettingsLayout() func(templ.Component) templ.Component {
+	return func(content templ.Component) templ.Component {
+		return components.Layout(shellProps(apiKeySettingsPageTitle), shellNav(true), content)
 	}
 }
 
