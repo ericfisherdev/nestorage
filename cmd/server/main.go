@@ -164,7 +164,16 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		// silently.
 		MetricsHandler: metrics.Handler(registry),
 		HTTPMetrics:    httpMetrics,
-		Routes:         newAppRoutes(logger, onboarding, login, usersHandlers, deviceTokenAPI, deviceTokenWeb, apiKeyWeb, denier),
+		Routes: newAppRoutes(appRouteDeps{
+			Logger:         logger,
+			Onboarding:     onboarding,
+			Login:          login,
+			Users:          usersHandlers,
+			DeviceTokenAPI: deviceTokenAPI,
+			DeviceTokenWeb: deviceTokenWeb,
+			APIKeyWeb:      apiKeyWeb,
+			Denier:         denier,
+		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's
 		// session-based CurrentUser, still consumed by settingsMux and
 		// shellNav) and resolve (NSTR-24's Principal, consumed by
