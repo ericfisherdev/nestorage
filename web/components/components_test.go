@@ -64,7 +64,7 @@ func TestTag(t *testing.T) {
 }
 
 func TestSearchInput(t *testing.T) {
-	out := renderString(t, components.SearchInput("bin-search", "Search bins and items", "Search bins & items"))
+	out := renderString(t, components.SearchInput("bin-search", "Search bins and items", "Search bins & items", nil))
 	if !strings.Contains(out, `id="bin-search"`) {
 		t.Errorf("SearchInput() missing input id: %s", out)
 	}
@@ -73,6 +73,21 @@ func TestSearchInput(t *testing.T) {
 	}
 	if !strings.Contains(out, `type="search"`) {
 		t.Errorf("SearchInput() should render type=\"search\": %s", out)
+	}
+}
+
+// TestSearchInput_SpreadsAttrs proves the item search page's type-ahead
+// wiring (item_search.templ's itemSearchAttrs) actually reaches the
+// rendered <input>, mirroring TestFilterPill_ActiveState's own assertion for
+// the identical attrs-injection shape.
+func TestSearchInput_SpreadsAttrs(t *testing.T) {
+	attrs := templ.Attributes{"hx-get": "/search", "name": "q"}
+	out := renderString(t, components.SearchInput("item-search", "Search items", "Search items", attrs))
+	if !strings.Contains(out, `hx-get="/search"`) {
+		t.Errorf("SearchInput() did not spread its attrs: %s", out)
+	}
+	if !strings.Contains(out, `name="q"`) {
+		t.Errorf("SearchInput() did not spread its name attr: %s", out)
 	}
 }
 

@@ -23,7 +23,7 @@ templ Toolbar(view ToolbarView) {
 			<h2 class="text-xl font-extrabold text-text">{ view.Heading }</h2>
 			<p class="text-[15px] font-semibold text-text-faint">{ view.Count }</p>
 			<div class="flex-1"></div>
-			@SearchInput("bin-search", "Search bins and items", "Search bins & items")
+			@SearchInput("bin-search", "Search bins and items", "Search bins & items", nil)
 			@ViewSwitch(ViewGrid)
 		</div>
 		<div class="mt-4 flex flex-wrap gap-[9px]" role="group" aria-label="Filter by category">
