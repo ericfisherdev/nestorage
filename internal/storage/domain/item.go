@@ -168,4 +168,19 @@ type ItemRepository interface {
 	// "absence means zero/none" contract ListVisible's empty slice follows.
 	CountsByBin(ctx context.Context, viewer identity.Principal) (map[BinID]int, error)
 	Delete(ctx context.Context, id ItemID) error
+	// FindVisibleDetail returns id's detail read model — the joined bin/
+	// location name or holder name/color Get's bare Item does not carry —
+	// scoped to what viewer may see (the same rule Get applies, including
+	// the held-item exception in itemVisibilityWhere). Returns
+	// ErrItemNotFound both when id is unknown and when the item exists but
+	// is not visible to viewer.
+	FindVisibleDetail(ctx context.Context, viewer identity.Principal, id ItemID) (*ItemDetailResult, error)
+	// SearchVisible returns every item viewer may see whose own name/
+	// description, its bin's name, or its location's name contains query
+	// (case-insensitive substring, pg_trgm-accelerated — see
+	// 00009_item_search.sql), ordered by name and tie-broken by id, capped
+	// at limit rows. A held item matches only on its own name/description,
+	// since it has no bin/location to join (see ItemSearchResult's own
+	// doc). Returns an empty slice, not an error, when nothing matches.
+	SearchVisible(ctx context.Context, viewer identity.Principal, query string, limit int) ([]ItemSearchResult, error)
 }
