@@ -193,68 +193,113 @@ func TestWizard_EndToEnd(t *testing.T) {
 	}
 }
 
-// TestWizard_ConcurrentSubmissionsCannotCreateTwoAdmins fires N simultaneous
-// wizard submissions — each its own session, its own CSRF token, its own
-// client — at the handler over one real pool, and asserts exactly one
-// app_user row results and exactly one response actually signed a user in
-// (rotated its session token: only the winning submission calls
-// RenewToken+Put; every loser's request never touches the session, so its
-// token survives unchanged even though scs's IdleTimeout sliding reissues
-// Set-Cookie on every request regardless of outcome). This is the test the
-// advisory-lock transaction in Provisioner.CreateFirstAdmin exists for.
-func TestWizard_ConcurrentSubmissionsCannotCreateTwoAdmins(t *testing.T) {
-	const n = 10
-	server, repo := newWizardServer(t)
+// concurrentSubmissionResult is one goroutine's outcome in
+// TestWizard_ConcurrentSubmissionsCannotCreateTwoAdmins.
+type concurrentSubmissionResult struct {
+	status  int
+	renewed bool
+}
 
-	var wg sync.WaitGroup
-	statuses := make([]int, n)
-	renewed := make([]bool, n)
-	for i := range n {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			client := newWizardClient(t)
-			csrf, err := csrfFromGET(client, server.URL)
-			if err != nil {
-				t.Errorf("goroutine %d: %v", i, err)
-				return
-			}
-			preToken := sessionCookieValue(client, server.URL)
-
-			resp, err := client.PostForm(server.URL+"/setup", url.Values{
-				"csrf_token":            {csrf},
-				"display_name":          {fmt.Sprintf("Admin %d", i)},
-				"email":                 {fmt.Sprintf("admin%d@example.com", i)},
-				"password":              {"correct-horse-battery-staple"},
-				"password_confirmation": {"correct-horse-battery-staple"},
-			})
-			if err != nil {
-				t.Errorf("goroutine %d: POST /setup: %v", i, err)
-				return
-			}
-			defer func() { _ = resp.Body.Close() }()
-			statuses[i] = resp.StatusCode
-			postToken := sessionCookieValue(client, server.URL)
-			renewed[i] = postToken != "" && postToken != preToken
-		}(i)
+// submitWizardEntry drives one independent client (its own cookie jar, its
+// own GET-then-POST) through the wizard with a unique display name/email,
+// and reports whether the submission actually signed a user in — its
+// session token rotated, which only RenewToken causes (see
+// sessionCookieValue's doc for why mere Set-Cookie presence cannot tell a
+// winner from a loser). Returns an error instead of calling t.Fatal so a
+// spawned goroutine can report it via t.Errorf.
+func submitWizardEntry(serverURL string, i int) (concurrentSubmissionResult, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return concurrentSubmissionResult{}, fmt.Errorf("cookiejar.New: %w", err)
 	}
-	wg.Wait()
+	client := &http.Client{
+		Jar: jar,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
-	for i, status := range statuses {
-		if status != http.StatusSeeOther {
-			t.Errorf("goroutine %d: POST /setup = %d, want 303", i, status)
+	csrf, err := csrfFromGET(client, serverURL)
+	if err != nil {
+		return concurrentSubmissionResult{}, err
+	}
+	preToken := sessionCookieValue(client, serverURL)
+
+	resp, err := client.PostForm(serverURL+"/setup", url.Values{
+		"csrf_token":            {csrf},
+		"display_name":          {fmt.Sprintf("Admin %d", i)},
+		"email":                 {fmt.Sprintf("admin%d@example.com", i)},
+		"password":              {"correct-horse-battery-staple"},
+		"password_confirmation": {"correct-horse-battery-staple"},
+	})
+	if err != nil {
+		return concurrentSubmissionResult{}, fmt.Errorf("POST /setup: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	postToken := sessionCookieValue(client, serverURL)
+	return concurrentSubmissionResult{
+		status:  resp.StatusCode,
+		renewed: postToken != "" && postToken != preToken,
+	}, nil
+}
+
+// assertAllRedirected checks that every concurrent submission got the
+// wizard's standard 303 (success and lost-race both redirect to /; the
+// difference is which one rotated its session — see assertExactlyOneWinner).
+func assertAllRedirected(t *testing.T, results []concurrentSubmissionResult) {
+	t.Helper()
+	for i, r := range results {
+		if r.status != http.StatusSeeOther {
+			t.Errorf("goroutine %d: POST /setup = %d, want 303", i, r.status)
 		}
 	}
+}
 
+// assertExactlyOneWinner checks that exactly one submission rotated its
+// session token — the signal that it, and only it, actually signed a user
+// in.
+func assertExactlyOneWinner(t *testing.T, results []concurrentSubmissionResult) {
+	t.Helper()
 	winners := 0
-	for _, ok := range renewed {
-		if ok {
+	for _, r := range results {
+		if r.renewed {
 			winners++
 		}
 	}
 	if winners != 1 {
-		t.Errorf("submissions that rotated their session token (signed in) = %d, want exactly 1 out of %d concurrent POSTs", winners, n)
+		t.Errorf("submissions that rotated their session token (signed in) = %d, want exactly 1 out of %d concurrent POSTs", winners, len(results))
 	}
+}
+
+// TestWizard_ConcurrentSubmissionsCannotCreateTwoAdmins fires N simultaneous
+// wizard submissions — each its own session, its own CSRF token, its own
+// client — at the handler over one real pool, and asserts exactly one
+// app_user row results and exactly one response actually signed a user in.
+// This is the test the advisory-lock transaction in
+// Provisioner.CreateFirstAdmin exists for.
+func TestWizard_ConcurrentSubmissionsCannotCreateTwoAdmins(t *testing.T) {
+	const n = 10
+	server, repo := newWizardServer(t)
+
+	results := make([]concurrentSubmissionResult, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			result, err := submitWizardEntry(server.URL, i)
+			if err != nil {
+				t.Errorf("goroutine %d: %v", i, err)
+				return
+			}
+			results[i] = result
+		}(i)
+	}
+	wg.Wait()
+
+	assertAllRedirected(t, results)
+	assertExactlyOneWinner(t, results)
 
 	got, err := repo.Count(testCtx(t))
 	if err != nil {
