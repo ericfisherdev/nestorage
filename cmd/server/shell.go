@@ -88,26 +88,43 @@ func (h *shellHandlers) Routes(mux *http.ServeMux) {
 // (create/view) and its /rotate and /revoke children without a redirect —
 // net/http.ServeMux picks the more specific match over the broader
 // "/settings/" registration either way.
-func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHandlers, login *identityadapter.Handlers, users *identityadapter.UsersWebHandlers, deviceTokenAPI *identityadapter.DeviceTokenAPIHandlers, deviceTokenWeb *identityadapter.DeviceTokenWebHandlers, apiKeyWeb *identityadapter.APIKeyWebHandlers, denier *identityadapter.Denier) func(mux *http.ServeMux) {
-	shell := newShellHandlers(logger)
-	adminGate := identityadapter.RequireAdmin(denier)
+//
+// appRouteDeps groups newAppRoutes' dependencies into one value instead of a
+// growing parameter list: NSTR-24 added Denier as the eighth, past
+// golangci-lint's function-length threshold. Each field is still injected
+// explicitly by the composition root (main.go) — this is a grouping of
+// constructor arguments, not a service locator.
+type appRouteDeps struct {
+	Logger         *slog.Logger
+	Onboarding     *identityadapter.OnboardingHandlers
+	Login          *identityadapter.Handlers
+	Users          *identityadapter.UsersWebHandlers
+	DeviceTokenAPI *identityadapter.DeviceTokenAPIHandlers
+	DeviceTokenWeb *identityadapter.DeviceTokenWebHandlers
+	APIKeyWeb      *identityadapter.APIKeyWebHandlers
+	Denier         *identityadapter.Denier
+}
+
+func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
+	shell := newShellHandlers(deps.Logger)
+	adminGate := identityadapter.RequireAdmin(deps.Denier)
 	userGate := identityadapter.RequireUser()
 	return func(mux *http.ServeMux) {
 		shell.Routes(mux)
-		onboarding.Routes(mux)
-		login.Routes(mux)
-		deviceTokenAPI.Routes(mux)
+		deps.Onboarding.Routes(mux)
+		deps.Login.Routes(mux)
+		deps.DeviceTokenAPI.Routes(mux)
 
 		adminMux := http.NewServeMux()
-		users.Routes(adminMux)
+		deps.Users.Routes(adminMux)
 		mux.Handle("/admin/", adminGate(adminMux))
 
 		settingsMux := http.NewServeMux()
-		deviceTokenWeb.Routes(settingsMux)
+		deps.DeviceTokenWeb.Routes(settingsMux)
 		mux.Handle("/settings/", userGate(settingsMux))
 
 		apiKeyMux := http.NewServeMux()
-		apiKeyWeb.Routes(apiKeyMux)
+		deps.APIKeyWeb.Routes(apiKeyMux)
 		gatedAPIKey := adminGate(apiKeyMux)
 		mux.Handle("/settings/api-key", gatedAPIKey)
 		mux.Handle("/settings/api-key/", gatedAPIKey)
