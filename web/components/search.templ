@@ -3,8 +3,12 @@ package components
 // SearchInput renders a labeled search box. The label is sr-only — the icon
 // and placeholder carry the visual meaning — but its for still matches the
 // input's id, so the association reaches assistive tech that ignores
-// placeholder text.
-templ SearchInput(id, label, placeholder string) {
+// placeholder text. attrs carries the caller's own wiring (a name attribute
+// plus, for the item search page's type-ahead box, the hx-* attributes —
+// see item_search.templ's itemSearchAttrs) so this component stays ignorant
+// of what it is searching, the same attrs-injection shape FilterPill uses.
+// The bins toolbar's own (still decorative, NSTR-31) box passes nil.
+templ SearchInput(id, label, placeholder string, attrs templ.Attributes) {
 	<div class="flex w-[250px] items-center gap-2 rounded-input border border-border-input bg-surface-raised px-[13px] py-[9px] text-text-faint">
 		@IconSearch("h-[17px] w-[17px] flex-none")
 		<label class="sr-only" for={ id }>{ label }</label>
@@ -13,6 +17,7 @@ templ SearchInput(id, label, placeholder string) {
 			type="search"
 			placeholder={ placeholder }
 			class="w-full border-none bg-transparent text-base text-text outline-none placeholder:text-text-faint"
+			{ attrs... }
 		/>
 	</div>
 }

@@ -1,0 +1,144 @@
+package components
+
+import "strconv"
+
+// BinOptionView is one <option> in the item detail page's return-to-bin
+// picker. Label carries a "CODE — Name" display string pre-formatted by the
+// web adapter, mirroring LocationOptionView's own "just enough to render"
+// shape.
+type BinOptionView struct {
+	ID    string
+	Label string
+}
+
+// ItemDetailView is the view-layer model for an item's detail page: its own
+// header (name, description, quantity), and — mutually exclusive, matching
+// Item's own exactly-one-of CurrentBinID/HeldBy invariant — either its
+// current bin/location (with a check-out control) or its holder and how
+// long they have held it (with a return-to-bin control). Not a domain type,
+// matching OwnerView/BinCardView's own doc for why.
+type ItemDetailView struct {
+	CSRFToken   string
+	ID          string
+	Name        string
+	Description string
+	Quantity    int
+	// InBin selects which of the two mutually exclusive panels below
+	// renders: the bin/location panel (true) or the holder panel (false).
+	InBin        bool
+	BinCode      string
+	LocationName string
+	// Holder is only populated (and only rendered) when InBin is false.
+	Holder OwnerView
+	// HeldSince is the AC's "since when", pre-formatted by the web adapter
+	// from the item's PlacementChangedAt — no time.Time reaches this
+	// presentation layer, mirroring formatStoredDate's own contract.
+	HeldSince string
+	// ReturnBins populates the return control's bin picker, only ever
+	// non-empty when InBin is false.
+	ReturnBins []BinOptionView
+	// FormError shows the mapped error from a rejected check-out/return
+	// (e.g. the item was already checked out by someone else). Empty means
+	// no error is shown.
+	FormError string
+}
+
+// itemDetailID is the DOM id the check-out/return controls target for
+// their HTMX outerHTML swap, mirroring binDetailID/locationDetailID.
+const itemDetailID = "item-detail"
+
+// ItemDetail renders one item's header, then its placement panel: bin
+// details and a check-out control when in a bin, or holder-and-since-when
+// and a return control when checked out.
+templ ItemDetail(view ItemDetailView) {
+	<div id={ itemDetailID } class="flex flex-col gap-4">
+		<div class="border-b border-border px-[26px] pb-4 pt-5">
+			<h2 class="text-xl font-extrabold text-text">{ view.Name }</h2>
+			if view.Description != "" {
+				<p class="mt-2 text-sm text-text-secondary">{ view.Description }</p>
+			}
+			<p class="mt-2 text-sm font-semibold text-text-faint">Quantity: { strconv.Itoa(view.Quantity) }</p>
+		</div>
+		if view.FormError != "" {
+			<p role="alert" class="mx-[26px] mt-4 rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+		}
+		if view.InBin {
+			@itemInBinPanel(view)
+		} else {
+			@itemCheckedOutPanel(view)
+		}
+	</div>
+}
+
+// itemInBinPanel renders where the item is sitting (its location and bin
+// code) plus the check-out control.
+templ itemInBinPanel(view ItemDetailView) {
+	<div class="flex flex-wrap items-center justify-between gap-3 px-[26px] pb-6">
+		<p class="flex items-center gap-2 text-sm text-text">
+			@IconPin("h-[14px] w-[14px] text-text-faint")
+			<a href={ templ.SafeURL("/b/" + view.BinCode) } class="hover:underline">{ view.LocationName }</a>
+			@BinCode(view.BinCode)
+		</p>
+		@checkOutForm(view)
+	</div>
+}
+
+// checkOutForm renders the item detail's check-out control, HTMX-posted to
+// NSTR-29's RemoveFromBin (via ItemsWebHandlers.CheckOut) and swapped into
+// this same detail fragment's own outerHTML.
+templ checkOutForm(view ItemDetailView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + view.ID + "/check-out") }
+		hx-post={ "/items/" + view.ID + "/check-out" }
+		hx-target={ "#" + itemDetailID }
+		hx-swap="outerHTML"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<button type="submit" class="min-h-[44px] rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+			Check out
+		</button>
+	</form>
+}
+
+// itemCheckedOutPanel renders the AC's headline — who holds this item and
+// since when — plus the return-to-bin control.
+templ itemCheckedOutPanel(view ItemDetailView) {
+	<div class="flex flex-col gap-3 px-[26px] pb-6">
+		<p class="flex items-center gap-2 text-sm text-text">
+			@OwnerAvatar(view.Holder)
+			<span>{ view.Holder.Name } has held this since { view.HeldSince }.</span>
+		</p>
+		@returnForm(view)
+	</div>
+}
+
+// returnForm renders the item detail's return-to-bin control: a bin
+// <select> plus submit, HTMX-posted to NSTR-29's ReturnToBin (via
+// ItemsWebHandlers.Return) and swapped into this same detail fragment's own
+// outerHTML — the same shape MoveBinForm's location picker uses.
+templ returnForm(view ItemDetailView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + view.ID + "/return") }
+		hx-post={ "/items/" + view.ID + "/return" }
+		hx-target={ "#" + itemDetailID }
+		hx-swap="outerHTML"
+		class="flex flex-wrap items-center gap-2"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<label class="sr-only" for="return-bin">Return { view.Name } to bin</label>
+		<select
+			id="return-bin"
+			name="bin_id"
+			class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text focus:border-primary focus:outline-none"
+		>
+			for _, b := range view.ReturnBins {
+				<option value={ b.ID }>{ b.Label }</option>
+			}
+		</select>
+		<button type="submit" class="min-h-[44px] rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+			Return to bin
+		</button>
+	</form>
+}
