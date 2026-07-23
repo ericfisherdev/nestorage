@@ -22,11 +22,19 @@
 -- revoked_at (nullable) marks a token invalidated by an explicit revoke or a
 -- user deactivation (NSTR-21's DeleteAllForUser); the row is kept, not
 -- deleted, as a record of which devices a user was ever issued a token for.
+-- The blank-rejecting CHECKs below use length(btrim(x)) > 0 rather than the
+-- btrim(x) <> '' idiom Nestova's own migrations use (e.g. 00026_kiosk_device.sql):
+-- both are correct and equivalent in Postgres, but Nestorage's SonarCloud
+-- profile flags <> '' as plsql:NullComparison — Oracle's dialect treats an
+-- empty string literal as NULL, so that rule assumes <> '' is a disguised
+-- (always-UNKNOWN) NULL comparison. Postgres has no such collapsing, so this
+-- is a dialect false positive, not a real bug — but length() > 0 sidesteps
+-- the rule entirely without changing behavior.
 CREATE TABLE device_token (
     id            uuid        PRIMARY KEY,
     user_id       uuid        NOT NULL REFERENCES app_user (id) ON DELETE CASCADE,
-    token_hash    text        NOT NULL CHECK (btrim(token_hash) <> ''),
-    name          text        NOT NULL CHECK (btrim(name) <> ''),
+    token_hash    text        NOT NULL CHECK (length(btrim(token_hash)) > 0),
+    name          text        NOT NULL CHECK (length(btrim(name)) > 0),
     created_at    timestamptz NOT NULL DEFAULT now(),
     last_used_at  timestamptz,
     revoked_at    timestamptz,

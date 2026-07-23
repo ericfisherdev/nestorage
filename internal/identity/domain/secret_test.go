@@ -41,7 +41,7 @@ func TestHash_NeverEqualsThePlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if hash := domain.Hash(secret); hash == secret {
+	if domain.Hash(secret) == secret {
 		t.Error("Hash(secret) == secret, want the digest to differ from the plaintext")
 	}
 }
