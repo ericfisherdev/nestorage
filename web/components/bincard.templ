@@ -1,0 +1,86 @@
+package components
+
+import "strconv"
+
+// BinCardView is the read-only projection of a bin the browse grid
+// (BinGrid) and a location's own bin list render — never a domain type
+// (see OwnerView's own doc for why). The web adapter builds one per
+// app.BinView plus the bin's location name, which BinService does not
+// carry: BinsWebHandlers/LocationsWebHandlers look it up once per request
+// from LocationService's own result rather than giving BinService a
+// location dependency it does not otherwise need.
+type BinCardView struct {
+	Code         string
+	Name         string
+	LocationName string
+	ItemCount    int
+	Owner        OwnerView
+	// Private renders the lock marker. The web adapter only ever sets this
+	// true for a bin the requester owns — a private bin's page never
+	// reaches this component for anyone else (see BinsWebHandlers'
+	// visibility contract).
+	Private bool
+	// StoredDate is pre-formatted ("Oct 2025") by the web adapter from the
+	// bin's CreatedAt — no time.Time reaches this presentation layer.
+	StoredDate string
+	// TintIndex cycles the placeholder media stripe's tint until the bin
+	// has a photo (not yet a NSTR-31 feature) — see binCardTintClass.
+	TintIndex int
+}
+
+// binCardTintColors cycles the placeholder media stripe through the four
+// member owner tints (never OwnerShared, which the reference reserves for
+// an actual Family avatar) — reusing tokens that already exist rather than
+// declaring a new one, per this ticket's "zero new design tokens" rule.
+var binCardTintColors = []OwnerColor{OwnerIndigo, OwnerSteel, OwnerTeal, OwnerPeri}
+
+// binCardTintClass returns the Tailwind tint class for tintIndex, cycling
+// through binCardTintColors regardless of sign (a card's own index is
+// always >= 0 in practice, but the modulo is normalized defensively).
+func binCardTintClass(tintIndex int) string {
+	n := len(binCardTintColors)
+	i := ((tintIndex % n) + n) % n
+	return "bg-owner-" + binCardTintColors[i].String() + "-tint"
+}
+
+// BinCard renders one bin card: a placeholder media stripe (item count,
+// owner avatar), name link, location line, tags-free footer (stored date,
+// bin code), and — only when Private — a lock marker.
+templ BinCard(view BinCardView) {
+	<li class="flex flex-col overflow-hidden rounded-card border border-border bg-surface-raised shadow-card">
+		<div class={ "relative flex h-[92px] items-center justify-center", binCardTintClass(view.TintIndex) }>
+			@IconBox("h-[30px] w-[30px] text-text-faint")
+			<p class="absolute bottom-2 left-3 flex items-center gap-1 text-xs font-bold text-text-secondary">
+				@IconCount("h-[13px] w-[13px]")
+				{ strconv.Itoa(view.ItemCount) } items
+			</p>
+			<span class="absolute right-3 top-3">
+				@OwnerAvatar(view.Owner)
+			</span>
+		</div>
+		<div class="flex flex-1 flex-col gap-3 p-4">
+			<div>
+				<h3 class="flex items-center gap-1.5 text-base font-bold text-text">
+					<a href={ templ.SafeURL("/b/" + view.Code) } class="hover:underline">{ view.Name }</a>
+					if view.Private {
+						<span class="text-text-faint">
+							@IconLock("h-3 w-3")
+							<span class="sr-only">Private</span>
+						</span>
+					}
+				</h3>
+				<p class="mt-1 flex items-center gap-1 text-sm text-text-faint">
+					@IconPin("h-[14px] w-[14px]")
+					{ view.LocationName }
+				</p>
+			</div>
+			<div class="mt-auto flex items-center justify-between">
+				<p class="flex items-center gap-1 text-xs font-semibold text-text-faint">
+					@IconCalendar("h-[13px] w-[13px]")
+					<span class="sr-only">Stored </span>{ view.StoredDate }
+				</p>
+				@BinCode(view.Code)
+			</div>
+		</div>
+	</li>
+}

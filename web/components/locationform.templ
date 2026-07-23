@@ -1,0 +1,62 @@
+package components
+
+// LocationFormView is the view-layer model for the location edit page. ID
+// empty would mean "create", but NSTR-31 only reaches this component for
+// edit — creation is the inline form on the index page (locations.templ's
+// own newLocationForm) — this field is kept anyway so a future ticket can
+// point a dedicated create page at the same component without reshaping it.
+type LocationFormView struct {
+	CSRFToken string
+	ID        string
+	Name      string
+	// FormError shows the mapped error from the last failed submission.
+	// Empty means no error is shown.
+	FormError string
+}
+
+// locationFormID is the DOM id the form's own outerHTML swap targets on a
+// rejected (422) submission; a successful edit redirects to the location's
+// detail page instead (see LocationsWebHandlers' own doc), so this id is
+// never a target for a success response.
+const locationFormID = "location-form"
+
+// LocationForm renders the location edit form: a hidden CSRF field, an
+// inline role="alert" error, and the name field — following users.templ's
+// pattern (see UsersTable's own doc). Description is set at creation only
+// (locations.templ's own inline create form) and not editable here,
+// matching domain.LocationRepository.Rename's exact capability — the only
+// location mutation this ticket wires beyond create/delete.
+templ LocationForm(view LocationFormView) {
+	<div id={ locationFormID } class="flex flex-col gap-4 p-[26px]">
+		<p class="text-sm"><a href={ templ.SafeURL("/locations/" + view.ID) } class="text-text-faint hover:underline">&larr; Back</a></p>
+		<h2 class="text-xl font-extrabold text-text">Edit location</h2>
+		if view.FormError != "" {
+			<p role="alert" class="rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+		}
+		<form
+			method="POST"
+			action={ templ.SafeURL("/locations/" + view.ID) }
+			hx-post={ "/locations/" + view.ID }
+			hx-target={ "#" + locationFormID }
+			hx-swap="outerHTML"
+			novalidate
+			class="flex max-w-lg flex-col gap-3"
+		>
+			<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+			<div>
+				<label class="mb-1 block text-sm font-bold text-text-secondary" for="location-name">Name</label>
+				<input
+					id="location-name"
+					type="text"
+					name="name"
+					value={ view.Name }
+					required
+					class="w-full rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+				/>
+			</div>
+			<button type="submit" class="self-start rounded-button bg-primary px-4 py-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep">
+				Save location
+			</button>
+		</form>
+	</div>
+}

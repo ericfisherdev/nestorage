@@ -1,0 +1,104 @@
+package components
+
+import "strconv"
+
+// LocationCardView is the read-only projection of a location the index
+// renders: a name, a link to its detail page, and how many bins
+// LocationService.List's viewer may see inside it.
+type LocationCardView struct {
+	ID       string
+	Name     string
+	BinCount int
+}
+
+// LocationsView is the view-layer model for the location index screen: the
+// household's locations plus the inline create form's pending state.
+type LocationsView struct {
+	CSRFToken string
+	Locations []LocationCardView
+	// FormError shows the mapped error from the last failed create
+	// submission. Empty means no error is shown.
+	FormError string
+	// NewName pre-fills the create form after a failed submission so the
+	// member does not have to retype it.
+	NewName string
+}
+
+// locationsListID is the DOM id the create form targets for its HTMX
+// outerHTML swap, so a successful (or rejected) submission re-renders the
+// whole screen — every location card and its current bin count — from one
+// response.
+const locationsListID = "location-list"
+
+// LocationIndex renders the location index: the create form and one card
+// per location, each linking to /locations/{id}.
+templ LocationIndex(view LocationsView) {
+	<div id={ locationsListID } class="flex flex-col gap-6 p-[26px]">
+		<div>
+			<h2 class="text-xl font-extrabold text-text">Locations</h2>
+			<p class="mt-1 text-[15px] text-text-faint">Where the household's bins live.</p>
+		</div>
+		if view.FormError != "" {
+			<p role="alert" class="rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+		}
+		@newLocationForm(view)
+		@locationCards(view)
+	</div>
+}
+
+// newLocationForm renders the inline create-location form, HTMX-posted and
+// swapped into the same outerHTML target as the rest of the screen.
+templ newLocationForm(view LocationsView) {
+	<form
+		method="POST"
+		action="/locations"
+		hx-post="/locations"
+		hx-target={ "#" + locationsListID }
+		hx-swap="outerHTML"
+		novalidate
+		class="flex flex-col gap-3 rounded-card bg-surface-raised p-4 sm:flex-row sm:items-end"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<div class="flex-1">
+			<label class="mb-1 block text-sm font-bold text-text-secondary" for="new-location-name">New location</label>
+			<input
+				id="new-location-name"
+				type="text"
+				name="name"
+				value={ view.NewName }
+				placeholder="e.g. Garage"
+				required
+				class="w-full rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+			/>
+		</div>
+		<button type="submit" class="rounded-button bg-primary px-4 py-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep">
+			Add location
+		</button>
+	</form>
+}
+
+// locationCards renders one card per location, or an empty-state message.
+templ locationCards(view LocationsView) {
+	<ul class="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
+		if len(view.Locations) == 0 {
+			<li class="text-sm text-text-faint">No locations yet.</li>
+		}
+		for _, l := range view.Locations {
+			@locationCard(l)
+		}
+	</ul>
+}
+
+// locationCard renders one location's name (linking to its detail page)
+// and bin count.
+templ locationCard(l LocationCardView) {
+	<li class="rounded-card border border-border bg-surface-raised p-4 shadow-card">
+		<h3 class="text-base font-bold text-text">
+			<a href={ templ.SafeURL("/locations/" + l.ID) } class="flex items-center gap-2 hover:underline">
+				@IconLocations("h-[18px] w-[18px] text-primary")
+				{ l.Name }
+			</a>
+		</h3>
+		<p class="mt-2 text-sm text-text-faint">{ strconv.Itoa(l.BinCount) } bins</p>
+	</li>
+}

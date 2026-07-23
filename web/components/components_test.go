@@ -30,6 +30,12 @@ func TestIcons_RenderDecorative(t *testing.T) {
 		{"IconList", components.IconList("h-5 w-5")},
 		{"IconCheck", components.IconCheck("h-5 w-5")},
 		{"IconUsers", components.IconUsers("h-5 w-5")},
+		{"IconCalendar", components.IconCalendar("h-5 w-5")},
+		{"IconCount", components.IconCount("h-5 w-5")},
+		{"IconLock", components.IconLock("h-5 w-5")},
+		{"IconMove", components.IconMove("h-5 w-5")},
+		{"IconPencil", components.IconPencil("h-5 w-5")},
+		{"IconTrash", components.IconTrash("h-5 w-5")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

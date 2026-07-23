@@ -84,13 +84,13 @@ templ sidebar(props ShellProps, nav []NavItem) {
 			@IconBin("h-7 w-7 flex-none text-primary")
 			Nestorage
 		</div>
-		<button
-			type="button"
+		<a
+			href="/bins/new"
 			class="flex items-center justify-center gap-[9px] rounded-button bg-primary p-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep"
 		>
 			@IconPlus("h-[19px] w-[19px]")
 			New bin
-		</button>
+		</a>
 		<nav class="flex flex-row gap-1 overflow-x-auto shell:flex-col shell:gap-0.5 shell:overflow-visible" aria-label="Primary">
 			for _, item := range nav {
 				@navLink(item)

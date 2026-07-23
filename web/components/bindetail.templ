@@ -1,0 +1,120 @@
+package components
+
+import "strconv"
+
+// ItemRowView is the read-only projection of an item BinDetail's contents
+// list renders — a name and quantity only; item CRUD is a later ticket's
+// work (NSTR-31 only reads a bin's contents, per the sprint-level
+// decision).
+type ItemRowView struct {
+	Name        string
+	Description string
+	Quantity    int
+}
+
+// BinDetailView is the view-layer model for a bin's detail page: its own
+// header (name, code, owner, location, private marker), the move-bin
+// control, and its read-only contents list.
+type BinDetailView struct {
+	CSRFToken    string
+	ID           string
+	Code         string
+	Name         string
+	Description  string
+	LocationName string
+	Owner        OwnerView
+	Private      bool
+	Items        []ItemRowView
+	// FormError shows the mapped error from a rejected delete (e.g. the
+	// bin still holds an item). Empty means no error is shown.
+	FormError string
+}
+
+// binDetailID is the DOM id the edit/delete/move controls target for their
+// HTMX outerHTML swap.
+const binDetailID = "bin-detail"
+
+// BinDetail renders one bin's header, its move control, and its contents.
+templ BinDetail(view BinDetailView, move MoveBinView) {
+	<div id={ binDetailID } class="flex flex-col gap-4">
+		<div class="flex flex-wrap items-start justify-between gap-3 border-b border-border px-[26px] pb-4 pt-5">
+			<div class="flex items-start gap-3">
+				@OwnerAvatar(view.Owner)
+				<div>
+					<h2 class="flex items-center gap-1.5 text-xl font-extrabold text-text">
+						{ view.Name }
+						if view.Private {
+							<span class="text-text-faint">
+								@IconLock("h-[15px] w-[15px]")
+								<span class="sr-only">Private</span>
+							</span>
+						}
+					</h2>
+					<p class="mt-1 flex items-center gap-1 text-sm text-text-faint">
+						@IconPin("h-[14px] w-[14px]")
+						{ view.LocationName }
+					</p>
+					<div class="mt-1">
+						@BinCode(view.Code)
+					</div>
+				</div>
+			</div>
+			<div class="flex items-center gap-2">
+				<a
+					href={ templ.SafeURL("/b/" + view.Code + "/edit") }
+					class="flex min-h-[44px] items-center gap-1.5 rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised"
+				>
+					@IconPencil("h-4 w-4")
+					<span class="sr-only">Edit </span>Edit
+				</a>
+				@deleteBinForm(view)
+			</div>
+		</div>
+		if view.FormError != "" {
+			<p role="alert" class="mx-[26px] rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+		}
+		@MoveBinForm(move)
+		@binItemsList(view.Items)
+	</div>
+}
+
+// deleteBinForm renders the bin detail's delete control. A successful
+// delete has nowhere left to swap back into (the bin is gone) —
+// BinsWebHandlers answers with an HX-Redirect to /bins instead, matching
+// LocationDetail's own deleteLocationForm doc for the same exception;
+// hx-target/hx-swap below only govern the rejected (still-has-items) case.
+templ deleteBinForm(view BinDetailView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/bins/" + view.ID + "/delete") }
+		hx-post={ "/bins/" + view.ID + "/delete" }
+		hx-target={ "#" + binDetailID }
+		hx-swap="outerHTML"
+		hx-confirm="Delete this bin?"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<button type="submit" class="flex min-h-[44px] items-center gap-1.5 rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+			@IconTrash("h-4 w-4")
+			<span class="sr-only">Delete </span>Delete
+		</button>
+	</form>
+}
+
+// binItemsList renders the bin's contents as a read-only row per item, or
+// an empty-state message.
+templ binItemsList(items []ItemRowView) {
+	<div class="px-[26px] pb-6">
+		<h3 class="mb-3 text-sm font-bold text-text-secondary">Contents</h3>
+		<ul class="flex flex-col gap-2">
+			if len(items) == 0 {
+				<li class="text-sm text-text-faint">This bin is empty.</li>
+			}
+			for _, it := range items {
+				<li class="flex items-center justify-between rounded-card border border-border px-3 py-2 text-sm">
+					<span class="font-semibold text-text">{ it.Name }</span>
+					<span class="text-text-faint">×{ strconv.Itoa(it.Quantity) }</span>
+				</li>
+			}
+		</ul>
+	</div>
+}

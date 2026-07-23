@@ -1,0 +1,57 @@
+package components
+
+// LocationOptionView is one <option> in the move-bin location picker.
+type LocationOptionView struct {
+	ID   string
+	Name string
+}
+
+// MoveBinView is the view-layer model for the move-bin control: a bin id,
+// its current location (pre-selected in the picker), every location it
+// could move to, and the pending form's error state.
+type MoveBinView struct {
+	CSRFToken         string
+	BinID             string
+	BinCode           string
+	CurrentLocationID string
+	Locations         []LocationOptionView
+	// FormError shows the mapped error from a rejected move (e.g. the bin
+	// is already in the selected location). Empty means no error is shown.
+	FormError string
+}
+
+// MoveBinForm renders the move-bin control: a location <select> plus a
+// submit button, HTMX-posted to NSTR-30's move route and swapped into the
+// bin-detail fragment — the same outerHTML target BinDetail's own edit/
+// delete controls use, so a move re-renders the whole detail page (new
+// location line, new "Contents" section) from one response. This wires the
+// existing app.BinMover; it does not reimplement moving.
+templ MoveBinForm(view MoveBinView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/bins/" + view.BinID + "/move") }
+		hx-post={ "/bins/" + view.BinID + "/move" }
+		hx-target={ "#" + binDetailID }
+		hx-swap="outerHTML"
+		class="flex flex-wrap items-center gap-2 border-b border-border px-[26px] pb-4"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		@IconMove("h-4 w-4 flex-none text-text-faint")
+		<label class="sr-only" for="move-bin-location">Move { view.BinCode } to location</label>
+		<select
+			id="move-bin-location"
+			name="location_id"
+			class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text focus:border-primary focus:outline-none"
+		>
+			for _, l := range view.Locations {
+				<option value={ l.ID } selected?={ l.ID == view.CurrentLocationID }>{ l.Name }</option>
+			}
+		</select>
+		<button type="submit" class="min-h-[44px] rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+			Move
+		</button>
+		if view.FormError != "" {
+			<span role="alert" class="text-sm text-red-600">{ view.FormError }</span>
+		}
+	</form>
+}

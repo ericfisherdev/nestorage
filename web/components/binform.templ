@@ -1,0 +1,173 @@
+package components
+
+// OwnerOptionView is one <option> in the bin form's owner picker. ID empty
+// is the shared/Family option (an unowned bin) — the same "empty means
+// unowned" contract domain.Bin.OwnerID follows.
+type OwnerOptionView struct {
+	ID   string
+	Name string
+}
+
+// binVisibilityOptions backs the visibility <select>, in the same order
+// every time.
+var binVisibilityOptions = []struct{ Value, Label string }{
+	{"public", "Public — visible to everyone"},
+	{"private", "Private — only me and admins"},
+}
+
+// BinFormView is the view-layer model for the bin create/edit form.
+// IsEdit selects which fields render: Code and Location are set once at
+// creation and never editable afterward here — code because a printed
+// label must keep resolving to the same bin (see domain.NormalizeBinCode's
+// own doc), location because moving a bin is MoveBinForm's job, not this
+// form's (see domain.BinRepository.Update's own doc for why Update itself
+// never touches either).
+type BinFormView struct {
+	CSRFToken   string
+	ID          string
+	Code        string
+	Name        string
+	Description string
+	LocationID  string
+	Locations   []LocationOptionView
+	OwnerID     string
+	Owners      []OwnerOptionView
+	Visibility  string
+	IsEdit      bool
+	// FormError shows the mapped error from the last failed submission.
+	// Empty means no error is shown.
+	FormError string
+}
+
+// binFormID is the DOM id the form's own outerHTML swap targets on a
+// rejected (422) submission; a successful submission redirects to the
+// bin's detail page instead (see BinsWebHandlers' own doc).
+const binFormID = "bin-form"
+
+// binFormAction returns the create or edit submission target.
+func binFormAction(view BinFormView) string {
+	if view.IsEdit {
+		return "/b/" + view.Code
+	}
+	return "/bins"
+}
+
+// binFormHeading names the form by its mode.
+func binFormHeading(view BinFormView) string {
+	if view.IsEdit {
+		return "Edit bin"
+	}
+	return "New bin"
+}
+
+// BinForm renders the bin create/edit form — following users.templ's
+// pattern (see UsersTable's own doc): a hidden CSRF field, an inline
+// role="alert" error, and pending values preserved on a re-render.
+templ BinForm(view BinFormView) {
+	<div id={ binFormID } class="flex flex-col gap-4 p-[26px]">
+		<h2 class="text-xl font-extrabold text-text">{ binFormHeading(view) }</h2>
+		if view.FormError != "" {
+			<p role="alert" class="rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+		}
+		<form
+			method="POST"
+			action={ templ.SafeURL(binFormAction(view)) }
+			hx-post={ binFormAction(view) }
+			hx-target={ "#" + binFormID }
+			hx-swap="outerHTML"
+			novalidate
+			class="flex max-w-lg flex-col gap-3"
+		>
+			<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+			if view.IsEdit {
+				<div>
+					<span class="mb-1 block text-sm font-bold text-text-secondary">Code</span>
+					@BinCode(view.Code)
+				</div>
+			} else {
+				<div>
+					<label class="mb-1 block text-sm font-bold text-text-secondary" for="bin-code">Code</label>
+					<input
+						id="bin-code"
+						type="text"
+						name="code"
+						value={ view.Code }
+						placeholder="e.g. BIN-A01"
+						required
+						class="w-full rounded-input border border-border-input bg-surface px-3 py-2 font-mono text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+					/>
+				</div>
+			}
+			<div>
+				<label class="mb-1 block text-sm font-bold text-text-secondary" for="bin-name">Name</label>
+				<input
+					id="bin-name"
+					type="text"
+					name="name"
+					value={ view.Name }
+					required
+					class="w-full rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+				/>
+			</div>
+			<div>
+				<label class="mb-1 block text-sm font-bold text-text-secondary" for="bin-description">Description</label>
+				<textarea
+					id="bin-description"
+					name="description"
+					rows="3"
+					class="w-full rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+				>{ view.Description }</textarea>
+			</div>
+			if !view.IsEdit {
+				<div>
+					<label class="mb-1 block text-sm font-bold text-text-secondary" for="bin-location">Location</label>
+					<select
+						id="bin-location"
+						name="location_id"
+						required
+						class="w-full rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+					>
+						for _, l := range view.Locations {
+							<option value={ l.ID } selected?={ l.ID == view.LocationID }>{ l.Name }</option>
+						}
+					</select>
+				</div>
+			}
+			<div>
+				<label class="mb-1 block text-sm font-bold text-text-secondary" for="bin-owner">Owner</label>
+				<select
+					id="bin-owner"
+					name="owner_id"
+					class="w-full rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+				>
+					for _, o := range view.Owners {
+						<option value={ o.ID } selected?={ o.ID == view.OwnerID }>{ o.Name }</option>
+					}
+				</select>
+			</div>
+			<div>
+				<label class="mb-1 block text-sm font-bold text-text-secondary" for="bin-visibility">Visibility</label>
+				<select
+					id="bin-visibility"
+					name="visibility"
+					class="w-full rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+				>
+					for _, opt := range binVisibilityOptions {
+						<option value={ opt.Value } selected?={ opt.Value == view.Visibility }>{ opt.Label }</option>
+					}
+				</select>
+			</div>
+			<button type="submit" class="self-start rounded-button bg-primary px-4 py-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep">
+				{ binFormSubmitLabel(view) }
+			</button>
+		</form>
+	</div>
+}
+
+// binFormSubmitLabel names the submit button by the form's mode.
+func binFormSubmitLabel(view BinFormView) string {
+	if view.IsEdit {
+		return "Save bin"
+	}
+	return "Create bin"
+}
