@@ -11,7 +11,7 @@ import (
 )
 
 // fakeItemStore is an in-memory app.ItemStore fake standing in for the
-// tx-bound ItemRepository a real unitOfWork constructs. GetForUpdate always
+// tx-bound ItemRepository a real transactor constructs. GetForUpdate always
 // returns a copy of the stored item, so a caller's domain transition
 // mutation (EnterBin/CheckOut/ReturnTo, which mutate the *domain.Item they
 // are given) can never corrupt the fake's own state ahead of Move — the
@@ -61,7 +61,7 @@ func (u *fakeUnitOfWork) WithinTx(_ context.Context, fn func(app.ItemStore) erro
 	return fn(u.store)
 }
 
-// fakeBinVisibility is an in-memory binVisibility fake: FindVisibleByID
+// fakeBinVisibility is an in-memory binFinder fake: FindVisibleByID
 // returns bin when its id matches, else notFoundErr.
 type fakeBinVisibility struct {
 	bin         *domain.Bin
@@ -104,8 +104,8 @@ func TestNewOperationService_PanicsOnNilDeps(t *testing.T) {
 		name  string
 		build func()
 	}{
-		{"nil unitOfWork", func() { app.NewOperationService(nil, bins, testLogger()) }},
-		{"nil binVisibility", func() { app.NewOperationService(uow, nil, testLogger()) }},
+		{"nil transactor", func() { app.NewOperationService(nil, bins, testLogger()) }},
+		{"nil binFinder", func() { app.NewOperationService(uow, nil, testLogger()) }},
 		{"nil logger", func() { app.NewOperationService(uow, bins, nil) }},
 	}
 	for _, tt := range tests {
