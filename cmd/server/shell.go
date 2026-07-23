@@ -52,12 +52,14 @@ func (h *shellHandlers) Routes(mux *http.ServeMux) {
 
 // newAppRoutes composes every route group into the one func value that
 // plugs into httpserver.Deps.Routes: the shell's demo pages and static
-// assets, plus the identity context's first-run onboarding wizard.
-func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHandlers) func(mux *http.ServeMux) {
+// assets, the identity context's first-run onboarding wizard, and its
+// login/logout routes.
+func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHandlers, login *identityadapter.Handlers) func(mux *http.ServeMux) {
 	shell := newShellHandlers(logger)
 	return func(mux *http.ServeMux) {
 		shell.Routes(mux)
 		onboarding.Routes(mux)
+		login.Routes(mux)
 	}
 }
 
