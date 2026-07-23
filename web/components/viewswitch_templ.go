@@ -21,7 +21,13 @@ const (
 
 // ViewSwitch renders the grid/list segmented control. Each option is a real
 // button carrying aria-pressed and an sr-only label, grouped under a single
-// accessible name.
+// accessible name. active sets the initial (pre-hydration) pressed state
+// and class; once Alpine mounts, the x-on:click/:aria-pressed/:class
+// bindings below take over reactively against the "view" variable an
+// ancestor x-data scope declares (BinsPage wraps this together with
+// BinGrid in exactly one such scope — see its own doc). This component has
+// no other caller, so it is safe to wire the bindings unconditionally
+// rather than behind an "interactive" flag the way BinGrid needs one.
 func ViewSwitch(active ViewStyle) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -59,7 +65,7 @@ func ViewSwitch(active ViewStyle) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(ariaBool(active == ViewGrid))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/components/viewswitch.templ`, Line: 19, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/components/viewswitch.templ`, Line: 27, Col: 46}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -78,7 +84,7 @@ func ViewSwitch(active ViewStyle) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\"><span class=\"sr-only\">Grid view</span>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" x-on:click=\"view = 'grid'\" x-bind:aria-pressed=\"view === 'grid'\" x-bind:class=\"view === 'grid' ? 'bg-surface-raised text-primary-deep shadow-raised' : 'text-text-muted'\"><span class=\"sr-only\">Grid view</span>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -102,7 +108,7 @@ func ViewSwitch(active ViewStyle) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(ariaBool(active == ViewList))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/components/viewswitch.templ`, Line: 23, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/components/viewswitch.templ`, Line: 38, Col: 46}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -121,7 +127,7 @@ func ViewSwitch(active ViewStyle) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\"><span class=\"sr-only\">List view</span>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\" x-on:click=\"view = 'list'\" x-bind:aria-pressed=\"view === 'list'\" x-bind:class=\"view === 'list' ? 'bg-surface-raised text-primary-deep shadow-raised' : 'text-text-muted'\"><span class=\"sr-only\">List view</span>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

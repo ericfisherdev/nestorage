@@ -139,7 +139,7 @@ func sidebar(props ShellProps, nav []NavItem) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "Nestorage</div><button type=\"button\" class=\"flex items-center justify-center gap-[9px] rounded-button bg-primary p-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "Nestorage</div><a href=\"/bins/new\" class=\"flex items-center justify-center gap-[9px] rounded-button bg-primary p-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -147,7 +147,7 @@ func sidebar(props ShellProps, nav []NavItem) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "New bin</button><nav class=\"flex flex-row gap-1 overflow-x-auto shell:flex-col shell:gap-0.5 shell:overflow-visible\" aria-label=\"Primary\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "New bin</a><nav class=\"flex flex-row gap-1 overflow-x-auto shell:flex-col shell:gap-0.5 shell:overflow-visible\" aria-label=\"Primary\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

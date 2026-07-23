@@ -1,0 +1,71 @@
+package components
+
+import "strconv"
+
+// LocationDetailView is the view-layer model for one location's detail
+// page: its own header plus the bins inside it (reusing BinGrid, per
+// bincard.templ's own doc, rather than a second card layout).
+type LocationDetailView struct {
+	CSRFToken string
+	ID        string
+	Name      string
+	Bins      []BinCardView
+	// FormError shows the mapped error from a rejected delete (e.g. the
+	// location still holds a bin). Empty means no error is shown.
+	FormError string
+}
+
+// locationDetailID is the DOM id the edit/delete controls target for their
+// HTMX outerHTML swap.
+const locationDetailID = "location-detail"
+
+// LocationDetail renders one location's header (a link back to the index,
+// its name, its bin count, and edit/delete controls) followed by its bins.
+templ LocationDetail(view LocationDetailView) {
+	<div id={ locationDetailID } class="flex flex-col gap-4">
+		<div class="flex flex-wrap items-start justify-between gap-3 border-b border-border px-[26px] pb-4 pt-5">
+			<div>
+				<p class="text-sm"><a href="/locations" class="text-text-faint hover:underline">&larr; Locations</a></p>
+				<h2 class="text-xl font-extrabold text-text">{ view.Name }</h2>
+				<p class="text-[15px] font-semibold text-text-faint">{ strconv.Itoa(len(view.Bins)) } bins</p>
+				if view.FormError != "" {
+					<p role="alert" class="mt-2 rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+				}
+			</div>
+			<div class="flex items-center gap-2">
+				<a
+					href={ templ.SafeURL("/locations/" + view.ID + "/edit") }
+					class="flex min-h-[44px] items-center gap-1.5 rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised"
+				>
+					@IconPencil("h-4 w-4")
+					<span class="sr-only">Edit </span>Edit
+				</a>
+				@deleteLocationForm(view)
+			</div>
+		</div>
+		@BinGrid(view.Bins, false)
+	</div>
+}
+
+// deleteLocationForm renders the location detail's delete control. A
+// successful delete has nowhere left to swap back into (the location is
+// gone) — LocationsWebHandlers answers with an HX-Redirect to /locations
+// instead, matching finishMutation's own doc for this one exception;
+// hx-target/hx-swap below only govern the rejected (still-has-bins) case,
+// which re-renders this same fragment with FormError set.
+templ deleteLocationForm(view LocationDetailView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/locations/" + view.ID + "/delete") }
+		hx-post={ "/locations/" + view.ID + "/delete" }
+		hx-target={ "#" + locationDetailID }
+		hx-swap="outerHTML"
+		hx-confirm="Delete this location?"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<button type="submit" class="flex min-h-[44px] items-center gap-1.5 rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+			@IconTrash("h-4 w-4")
+			<span class="sr-only">Delete </span>Delete
+		</button>
+	</form>
+}

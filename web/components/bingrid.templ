@@ -1,0 +1,27 @@
+package components
+
+// BinGrid renders bins as a card grid: a real <ul>/<li> list (not
+// div-soup), auto-filling minmax(240px, 1fr) columns and collapsing to one
+// column on a phone-width viewport. interactive controls whether the
+// grid/list Alpine binding is emitted: true only from BinsPage, which
+// establishes the x-data="{ view: 'grid' }" scope this binding reads
+// (see BinsPage's own doc); false everywhere else BinGrid is reused (e.g.
+// LocationDetail's own bin list), which always renders the grid layout
+// with no Alpine dependency — an unconditional binding there would
+// reference "view" outside any x-data scope.
+templ BinGrid(bins []BinCardView, interactive bool) {
+	<ul
+		id="bin-grid"
+		class="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4 p-[26px] max-sm:grid-cols-1"
+		if interactive {
+			x-bind:style="view === 'list' ? 'grid-template-columns: 1fr' : ''"
+		}
+	>
+		if len(bins) == 0 {
+			<li class="col-span-full py-8 text-center text-[15px] text-text-faint">No bins yet.</li>
+		}
+		for _, b := range bins {
+			@BinCard(b)
+		}
+	</ul>
+}

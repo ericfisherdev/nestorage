@@ -1,0 +1,19 @@
+package components
+
+// BinsPageView is the view-layer model for the /bins content fragment.
+type BinsPageView struct {
+	Toolbar ToolbarView
+	Bins    []BinCardView
+}
+
+// BinsPage renders the /bins content fragment: Toolbar over BinGrid,
+// wrapped in the one Alpine root ("view": "grid"|"list") the toolbar's
+// ViewSwitch buttons and the grid's own layout binding share — a
+// client-only presentation toggle, not a server round-trip (see
+// ViewSwitch/BinGrid's own docs).
+templ BinsPage(view BinsPageView) {
+	<div x-data="{ view: 'grid' }">
+		@Toolbar(view.Toolbar)
+		@BinGrid(view.Bins, true)
+	</div>
+}
