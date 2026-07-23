@@ -215,6 +215,46 @@ func (r *ItemRepository) ListByBin(ctx context.Context, viewer identity.Principa
 	return items, nil
 }
 
+// CountsByBin returns how many items viewer may see currently sit in each
+// bin, keyed by bin id, aggregated with GROUP BY in one round trip instead
+// of one ListByBin call per bin — the read BinService's grid and
+// location-detail item counts share. A held item (current_bin_id NULL) has
+// no bin to key on and is correctly excluded by the INNER JOIN below (unlike
+// itemVisibleColumns' LEFT JOIN, which exists only to keep a held item
+// selectable by Get/ListByBin — irrelevant here since a nil key could never
+// be grouped into any bin's count anyway).
+func (r *ItemRepository) CountsByBin(ctx context.Context, viewer identity.Principal) (map[domain.BinID]int, error) {
+	q := `
+		SELECT i.current_bin_id, COUNT(*)
+		FROM item i
+		JOIN bin b ON b.id = i.current_bin_id
+		WHERE ` + binVisibilityWhereJoined(0) + `
+		GROUP BY i.current_bin_id`
+	rows, err := r.dbtx.Query(ctx, q, viewerArgs(viewer)...)
+	if err != nil {
+		return nil, fmt.Errorf("count items by bin: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[domain.BinID]int)
+	for rows.Next() {
+		var binIDStr string
+		var count int
+		if err := rows.Scan(&binIDStr, &count); err != nil {
+			return nil, fmt.Errorf("count items by bin: scan: %w", err)
+		}
+		binID, err := domain.ParseBinID(binIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("count items by bin: bin id: %w", err)
+		}
+		counts[binID] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count items by bin: %w", err)
+	}
+	return counts, nil
+}
+
 // Delete removes the item. Returns domain.ErrItemNotFound when id is
 // unknown. Not visibility-scoped — see domain.ItemRepository.Delete's own
 // doc.
@@ -241,6 +281,18 @@ func itemVisibilityWhere(paramOffset int) string {
 		"(i.held_by IS NOT NULL OR b.visibility = 'public' OR b.created_by = $%d OR $%d)",
 		paramOffset+1, paramOffset+2,
 	)
+}
+
+// binVisibilityWhereJoined applies visibilityWhere's exact rule (bin.go's
+// own doc) to a query that joins item and bin under the aliases i/b —
+// CountsByBin's own shape. It cannot reuse bare visibilityWhere as-is: both
+// item and bin have a created_by column, so an unqualified "created_by"
+// would be ambiguous once both tables are in scope. Unlike
+// itemVisibilityWhere, there is no held-item exception here — CountsByBin's
+// INNER JOIN already excludes a held item (current_bin_id NULL) from ever
+// appearing.
+func binVisibilityWhereJoined(paramOffset int) string {
+	return fmt.Sprintf("(b.visibility = 'public' OR b.created_by = $%d OR $%d)", paramOffset+1, paramOffset+2)
 }
 
 // binIDParam converts a nullable *domain.BinID into a query parameter: nil

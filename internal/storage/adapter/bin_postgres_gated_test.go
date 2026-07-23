@@ -434,6 +434,143 @@ func TestLocationRepository_Delete_WithBinRejected(t *testing.T) {
 	}
 }
 
+// TestBinRepository_FindVisibleByCode_PrivateBin_NotFoundForNonOwner is
+// NSTR-31's headline visibility case at the code-lookup path: a non-owner
+// looking up another member's private bin by its printed code gets
+// ErrBinNotFound — the exact same "appears nowhere" masking
+// TestBinRepository_PrivateBin_ScopedToCreatorAndAdmin already proves for
+// FindVisibleByID — while the bin's own creator still resolves it.
+func TestBinRepository_FindVisibleByCode_PrivateBin_NotFoundForNonOwner(t *testing.T) {
+	f := newBinFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	other := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+	private := newBin("PRIVCODE1", loc, creator)
+	private.Visibility = domain.VisibilityPrivate
+	if err := f.repo.Create(testCtx(t), private); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+
+	if _, err := f.repo.FindVisibleByCode(testCtx(t), otherViewer, "PRIVCODE1"); !errors.Is(err, domain.ErrBinNotFound) {
+		t.Errorf("non-owner FindVisibleByCode(private bin's code) = %v, want ErrBinNotFound", err)
+	}
+	if _, err := f.repo.FindVisibleByCode(testCtx(t), creatorViewer, "PRIVCODE1"); err != nil {
+		t.Errorf("owner FindVisibleByCode(private bin's code) = %v, want nil", err)
+	}
+}
+
+// TestBinRepository_ListVisibleByLocation exercises the location filter
+// alongside the visibility predicate: a bin in a different location is
+// excluded even when visible, and a non-owner's private bin is excluded
+// from its own location's list exactly as it is from ListVisible's.
+func TestBinRepository_ListVisibleByLocation(t *testing.T) {
+	f := newBinFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	other := f.seedUser(t, identity.RoleMember)
+	locA := f.seedLocation(t, creator)
+	locB := domain.NewLocationID()
+	if err := f.locations.Create(testCtx(t), &domain.Location{ID: locB, Name: "Attic", CreatedBy: creator}); err != nil {
+		t.Fatalf("seed second location: %v", err)
+	}
+
+	public := newBin("LOCVIS1", locA, creator)
+	private := newBin("LOCVIS2", locA, creator)
+	private.Visibility = domain.VisibilityPrivate
+	elsewhere := newBin("LOCVIS3", locB, creator)
+	for _, b := range []*domain.Bin{public, private, elsewhere} {
+		if err := f.repo.Create(testCtx(t), b); err != nil {
+			t.Fatalf("Create(%s): %v", b.Code, err)
+		}
+	}
+
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+
+	creatorList, err := f.repo.ListVisibleByLocation(testCtx(t), creatorViewer, locA)
+	if err != nil {
+		t.Fatalf("ListVisibleByLocation(creator): %v", err)
+	}
+	if len(creatorList) != 2 {
+		t.Errorf("ListVisibleByLocation(creator, locA) = %d bins, want 2 (public + own private)", len(creatorList))
+	}
+
+	otherList, err := f.repo.ListVisibleByLocation(testCtx(t), otherViewer, locA)
+	if err != nil {
+		t.Fatalf("ListVisibleByLocation(other): %v", err)
+	}
+	if len(otherList) != 1 || otherList[0].Code != public.Code {
+		t.Errorf("ListVisibleByLocation(other, locA) = %+v, want only the public bin", otherList)
+	}
+}
+
+// TestBinRepository_Update exercises the mutate predicate the same way
+// TestBinRepository_UpdateVisibility does — see that test's own doc for why
+// a private fixture is what actually exercises CanMutateBin's scoping —
+// and confirms Update never touches code or location_id.
+func TestBinRepository_Update(t *testing.T) {
+	f := newBinFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	other := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+	bin := newBin("UPDFULL1", loc, creator)
+	bin.Visibility = domain.VisibilityPrivate
+	if err := f.repo.Create(testCtx(t), bin); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+
+	rejected := &domain.Bin{ID: bin.ID, Name: "Should not apply", Visibility: domain.VisibilityPublic}
+	if err := f.repo.Update(testCtx(t), otherViewer, rejected); !errors.Is(err, domain.ErrBinNotFound) {
+		t.Errorf("Update(non-creator, private bin) = %v, want ErrBinNotFound", err)
+	}
+
+	update := &domain.Bin{
+		ID: bin.ID, Code: "IGNORED", Name: "Renamed Bin", Description: "New description",
+		OwnerID: &other, Visibility: domain.VisibilityPublic, LocationID: domain.NewLocationID(),
+	}
+	if err := f.repo.Update(testCtx(t), creatorViewer, update); err != nil {
+		t.Fatalf("Update(creator): %v", err)
+	}
+
+	got, err := f.repo.FindVisibleByID(testCtx(t), creatorViewer, bin.ID)
+	if err != nil {
+		t.Fatalf("FindVisibleByID after Update: %v", err)
+	}
+	if got.Name != "Renamed Bin" || got.Description != "New description" || got.Visibility != domain.VisibilityPublic {
+		t.Errorf("Update did not apply name/description/visibility: %+v", got)
+	}
+	if got.OwnerID == nil || *got.OwnerID != other {
+		t.Errorf("Update did not apply owner_id: %+v", got.OwnerID)
+	}
+	if got.Code != "UPDFULL1" || got.LocationID != loc {
+		t.Errorf("Update must never touch code/location_id: %+v", got)
+	}
+}
+
+func TestBinRepository_Update_UnknownOwnerRejected(t *testing.T) {
+	f := newBinFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+	bin := newBin("UPDOWN1", loc, creator)
+	if err := f.repo.Create(testCtx(t), bin); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	unknownOwner := identity.NewUserID()
+	update := &domain.Bin{ID: bin.ID, Name: bin.Name, OwnerID: &unknownOwner, Visibility: domain.VisibilityPublic}
+
+	err := f.repo.Update(testCtx(t), viewer, update)
+	if !errors.Is(err, identity.ErrUserNotFound) {
+		t.Errorf("Update(unknown owner) = %v, want identity.ErrUserNotFound", err)
+	}
+}
+
 func TestNewBinRepository_NilExecutorPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {

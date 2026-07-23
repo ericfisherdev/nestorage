@@ -696,6 +696,68 @@ func TestItemRepository_GetForUpdate_LocksWithinTransaction(t *testing.T) {
 	}
 }
 
+// TestItemRepository_CountsByBin exercises the aggregate BinService's grid
+// and location-detail item counts share: two items in one bin, one in
+// another, and a held item (no current_bin_id) excluded from every bin's
+// count since it does not belong to any of them.
+func TestItemRepository_CountsByBin(t *testing.T) {
+	f := newItemFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
+	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
+
+	for _, name := range []string{"Stove", "Lantern"} {
+		if err := f.repo.Create(testCtx(t), newItem(name, binA, creator)); err != nil {
+			t.Fatalf("Create(%s): %v", name, err)
+		}
+	}
+	if err := f.repo.Create(testCtx(t), newItem("Tent", binB, creator)); err != nil {
+		t.Fatalf("Create(Tent): %v", err)
+	}
+	held := &domain.Item{ID: domain.NewItemID(), Name: "Held Flashlight", Quantity: 1, HeldBy: &creator, CreatedBy: creator}
+	if err := f.repo.Create(testCtx(t), held); err != nil {
+		t.Fatalf("Create(held): %v", err)
+	}
+
+	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	counts, err := f.repo.CountsByBin(testCtx(t), viewer)
+	if err != nil {
+		t.Fatalf("CountsByBin: %v", err)
+	}
+	if counts[binA] != 2 {
+		t.Errorf("CountsByBin()[binA] = %d, want 2", counts[binA])
+	}
+	if counts[binB] != 1 {
+		t.Errorf("CountsByBin()[binB] = %d, want 1", counts[binB])
+	}
+}
+
+// TestItemRepository_CountsByBin_ExcludesPrivateBinForNonOwner proves the
+// aggregate respects the same visibility predicate ListByBin applies per
+// bin: a non-owner's count never includes items sitting in another
+// member's private bin.
+func TestItemRepository_CountsByBin_ExcludesPrivateBinForNonOwner(t *testing.T) {
+	f := newItemFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	other := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
+
+	if err := f.repo.Create(testCtx(t), newItem("Secret", privateBin, creator)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	counts, err := f.repo.CountsByBin(testCtx(t), otherViewer)
+	if err != nil {
+		t.Fatalf("CountsByBin: %v", err)
+	}
+	if _, ok := counts[privateBin]; ok {
+		t.Errorf("CountsByBin(non-owner) = %v, must not include the private bin's count", counts)
+	}
+}
+
 func TestNewItemRepository_NilExecutorPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {

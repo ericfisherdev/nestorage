@@ -152,6 +152,65 @@ func (r *BinRepository) ListVisible(ctx context.Context, viewer identity.Princip
 	return bins, nil
 }
 
+// ListVisibleByLocation returns every bin in locationID viewer may see,
+// ordered by code — the same visibilityWhere predicate ListVisible applies,
+// additionally filtered to one location at the query level rather than in
+// memory, so a non-owner's private bin never crosses the wire at all.
+func (r *BinRepository) ListVisibleByLocation(ctx context.Context, viewer identity.Principal, locationID domain.LocationID) ([]domain.Bin, error) {
+	q := binColumns + ` WHERE location_id = $1 AND ` + visibilityWhere(1) + ` ORDER BY code`
+	args := append([]any{locationID.String()}, viewerArgs(viewer)...)
+
+	rows, err := r.dbtx.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list visible bins by location: %w", err)
+	}
+	defer rows.Close()
+
+	bins := make([]domain.Bin, 0)
+	for rows.Next() {
+		b, err := scanBin(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list visible bins by location: scan: %w", err)
+		}
+		bins = append(bins, *b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list visible bins by location: %w", err)
+	}
+	return bins, nil
+}
+
+// Update overwrites b.ID's name, description, owner_id, and visibility,
+// scoped to what viewer may mutate (see visibilityWhere — the same
+// predicate UpdateVisibility applies). b.Code and b.LocationID are never
+// read here (see domain.BinRepository.Update's own doc). Returns
+// domain.ErrBinNotFound when b.ID is unknown or not mutable by viewer, or
+// identity.ErrUserNotFound when b.OwnerID names an unknown user.
+func (r *BinRepository) Update(ctx context.Context, viewer identity.Principal, b *domain.Bin) error {
+	if b == nil {
+		return errors.New("storage/adapter: update bin: nil bin")
+	}
+	q := `
+		UPDATE bin SET name = $2, description = $3, owner_id = $4, visibility = $5, updated_at = now()
+		WHERE id = $1 AND ` + visibilityWhere(5)
+	args := append(
+		[]any{b.ID.String(), b.Name, b.Description, userIDParam(b.OwnerID), b.Visibility.String()},
+		viewerArgs(viewer)...,
+	)
+
+	tag, err := r.dbtx.Exec(ctx, q, args...)
+	if err != nil {
+		if isPgConstraint(err, foreignKeyViolation, binOwnerFKConstraint) {
+			return identity.ErrUserNotFound
+		}
+		return fmt.Errorf("update bin: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrBinNotFound
+	}
+	return nil
+}
+
 // UpdateVisibility overwrites id's visibility, scoped to what viewer may
 // mutate (see visibilityWhere — today the same predicate FindVisibleByID
 // reads with, mirroring CanMutateBin's own doc that it is the same rule as

@@ -158,10 +158,15 @@ var _ identity.BinSubject = (*Bin)(nil)
 //     (CanSeeBin), so a member cannot even confirm another member's private
 //     bin exists.
 //   - ListVisible returns every bin viewer may see, empty slice when none.
-//   - UpdateVisibility and Delete return ErrBinNotFound when the row is
-//     missing or viewer may not mutate it (CanMutateBin). Delete also
-//     returns ErrBinNotEmpty when an item (NSTR-28) still references the
-//     bin.
+//   - Update overwrites only name, description, owner_id, and visibility —
+//     never code (immutable once a physical label is printed; see
+//     NormalizeBinCode's own doc) or location_id (app.BinMover's Move is the
+//     only path that changes it).
+//   - Update, UpdateVisibility, and Delete return ErrBinNotFound when the
+//     row is missing or viewer may not mutate it (CanMutateBin); Update also
+//     returns identity.ErrUserNotFound when owner_id names an unknown user.
+//     Delete also returns ErrBinNotEmpty when an item (NSTR-28) still
+//     references the bin.
 //   - GetForUpdate returns ErrBinNotFound when id is unknown. Move returns
 //     ErrBinNotFound when id is unknown, or a wrapped ErrLocationNotFound
 //     when target's foreign key is violated (a backstop — app.BinMover's
@@ -174,6 +179,18 @@ type BinRepository interface {
 	// ListVisible returns every bin viewer may see, ordered by code, tie-
 	// broken by nothing further since code is unique.
 	ListVisible(ctx context.Context, viewer identity.Principal) ([]Bin, error)
+	// ListVisibleByLocation returns every bin in locationID viewer may see,
+	// ordered by code — the location-detail page's bin list, scoped by the
+	// same visibility predicate as ListVisible rather than a location filter
+	// applied after the fact, so a non-owner's private bin is absent from a
+	// location's bin list exactly as it is from the all-bins grid.
+	ListVisibleByLocation(ctx context.Context, viewer identity.Principal, locationID LocationID) ([]Bin, error)
+	// Update overwrites id's name, description, owner_id, and visibility from
+	// b, scoped to what viewer may mutate (see visibilityWhere/CanMutateBin —
+	// the same predicate UpdateVisibility applies). b.Code and b.LocationID
+	// are ignored: code is immutable after Create (see NormalizeBinCode's
+	// own doc) and location changes go through app.BinMover.Move only.
+	Update(ctx context.Context, viewer identity.Principal, b *Bin) error
 	UpdateVisibility(ctx context.Context, viewer identity.Principal, id BinID, visibility Visibility) error
 	Delete(ctx context.Context, viewer identity.Principal, id BinID) error
 	// GetForUpdate returns the bin locked FOR UPDATE within the caller's
