@@ -19,7 +19,7 @@ func ValidateLocationName(name string) (string, error) {
 	if trimmed == "" {
 		return "", ErrInvalidLocationName
 	}
-	if n := len([]rune(trimmed)); n > maxLocationNameRunes {
+	if len([]rune(trimmed)) > maxLocationNameRunes {
 		return "", ErrInvalidLocationName
 	}
 	return trimmed, nil
