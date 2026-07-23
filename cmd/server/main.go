@@ -120,10 +120,10 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 
 	shellData := newShellDataService(identityRepo, binService, locationService)
 
-	binsWeb := storageadapter.NewBinsWebHandlers(
-		binService, binMover, locationService, identityRepo, itemService,
-		sm, newStorageLayout(shellData, binsPageTitle, logger), logger,
-	)
+	binsWeb := storageadapter.NewBinsWebHandlers(storageadapter.BinsWebHandlersDeps{
+		Bins: binService, Mover: binMover, Locations: locationService, Members: identityRepo, Items: itemService,
+		SM: sm, Layout: newStorageLayout(shellData, binsPageTitle, logger), Logger: logger,
+	})
 	locationsWeb := storageadapter.NewLocationsWebHandlers(
 		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
 	)

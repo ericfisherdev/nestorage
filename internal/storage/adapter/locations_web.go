@@ -29,10 +29,13 @@ type locationQueryCommandService interface {
 	Delete(ctx context.Context, id domain.LocationID) error
 }
 
-// binsByLocation is the narrow port (ISP) LocationsWebHandlers depends on
-// to render a location's own bin list, satisfied by *app.BinService (a
-// superset, via ListVisibleByLocation).
-type binsByLocation interface {
+// locationBinLister is the narrow port (ISP) LocationsWebHandlers depends
+// on to render a location's own bin list, satisfied by *app.BinService (a
+// superset, via ListVisibleByLocation). Named for the single method it
+// exposes, per Go's single-method-interface naming convention (io.Reader,
+// fmt.Stringer, ...) — mirrors app.binFinder's own naming rationale
+// (operations.go).
+type locationBinLister interface {
 	ListVisibleByLocation(ctx context.Context, viewer identity.Principal, locationID domain.LocationID) ([]app.BinView, error)
 }
 
@@ -43,7 +46,7 @@ type binsByLocation interface {
 // (cmd/server/main.go).
 type LocationsWebHandlers struct {
 	locations locationQueryCommandService
-	bins      binsByLocation
+	bins      locationBinLister
 	sm        *scs.SessionManager
 	layout    requestLayoutFunc
 	logger    *slog.Logger
@@ -52,12 +55,12 @@ type LocationsWebHandlers struct {
 // NewLocationsWebHandlers constructs LocationsWebHandlers. All dependencies
 // are required; a missing one panics at construction time, matching every
 // other WebHandlers constructor in this codebase.
-func NewLocationsWebHandlers(locations locationQueryCommandService, bins binsByLocation, sm *scs.SessionManager, layout requestLayoutFunc, logger *slog.Logger) *LocationsWebHandlers {
+func NewLocationsWebHandlers(locations locationQueryCommandService, bins locationBinLister, sm *scs.SessionManager, layout requestLayoutFunc, logger *slog.Logger) *LocationsWebHandlers {
 	if locations == nil {
 		panic("storage/adapter: NewLocationsWebHandlers requires a non-nil locationQueryCommandService")
 	}
 	if bins == nil {
-		panic("storage/adapter: NewLocationsWebHandlers requires a non-nil binsByLocation")
+		panic("storage/adapter: NewLocationsWebHandlers requires a non-nil locationBinLister")
 	}
 	if sm == nil {
 		panic("storage/adapter: NewLocationsWebHandlers requires a non-nil session manager")

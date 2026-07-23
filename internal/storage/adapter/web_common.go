@@ -34,11 +34,13 @@ const errInternalServerError = "internal server error"
 // ShellProps/shellNav.
 type requestLayoutFunc func(r *http.Request, content templ.Component) templ.Component
 
-// memberDirectory is the narrow port (ISP) BinsWebHandlers depends on to
+// memberLister is the narrow port (ISP) BinsWebHandlers depends on to
 // populate the bin form's owner picker and to resolve a bin's owner
 // display, satisfied by identity's UserRepository (a superset, via List)
-// and by test fakes.
-type memberDirectory interface {
+// and by test fakes. Named for the single method it exposes, per Go's
+// single-method-interface naming convention (io.Reader, fmt.Stringer, ...)
+// — mirrors app.memberLister's own naming rationale (owner.go).
+type memberLister interface {
 	List(ctx context.Context) ([]identity.User, error)
 }
 

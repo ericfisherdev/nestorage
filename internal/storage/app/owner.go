@@ -7,12 +7,15 @@ import (
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 )
 
-// memberDirectory is the narrow port (ISP) BinService/LocationService depend
+// memberLister is the narrow port (ISP) BinService/LocationService depend
 // on to enrich a bin's OwnerID into a display name/initials/color, so the
 // web layer never reaches into the identity repository directly (NSTR-31's
 // sprint-level decision) — satisfied by identity/domain.UserRepository (a
-// superset, via List) and by test fakes.
-type memberDirectory interface {
+// superset, via List) and by test fakes. Named for the single method it
+// exposes, per Go's single-method-interface naming convention (io.Reader,
+// fmt.Stringer, ...) — mirrors app.binFinder's own naming rationale
+// (operations.go).
+type memberLister interface {
 	List(ctx context.Context) ([]identity.User, error)
 }
 
@@ -35,7 +38,7 @@ type memberIndex map[identity.UserID]identity.User
 
 // newMemberIndex loads every household member via dir and indexes them by
 // id.
-func newMemberIndex(ctx context.Context, dir memberDirectory) (memberIndex, error) {
+func newMemberIndex(ctx context.Context, dir memberLister) (memberIndex, error) {
 	members, err := dir.List(ctx)
 	if err != nil {
 		return nil, err
