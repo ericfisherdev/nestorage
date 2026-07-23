@@ -44,4 +44,10 @@ var (
 	// argon2id derivation (nestcore/crypto.Hash), not to discourage long
 	// passwords.
 	ErrPasswordTooLong = errors.New("identity: password must be at most 128 characters")
+
+	// ErrInvalidCredentials is returned by app.Authenticator.Login for every
+	// failure mode — unknown email, wrong password, and an inactive user
+	// alike — so the login handler cannot distinguish them and leak whether
+	// an email address has an account.
+	ErrInvalidCredentials = errors.New("identity: invalid email or password")
 )
