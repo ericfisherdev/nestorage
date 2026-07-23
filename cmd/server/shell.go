@@ -7,7 +7,6 @@ import (
 	"github.com/a-h/templ"
 
 	"github.com/ericfisherdev/nestcore/httpserver"
-	"github.com/ericfisherdev/nestcore/httpserver/middleware"
 	"github.com/ericfisherdev/nestcore/render"
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
@@ -68,17 +67,18 @@ func (h *shellHandlers) Routes(mux *http.ServeMux) {
 // user) routes.
 //
 // The admin routes are registered on their own mux, mounted at "/admin/"
-// behind RequireUser then RequireAdmin — the mount order the ticket
-// specifies, matching Authenticate (already global, see main.go) running
-// first. This is the one seam NSTR-24 changes when it re-homes RequireAdmin
-// onto the shared Principal model: everything registered on adminMux stays
-// untouched.
+// behind RequireAdmin alone — NSTR-24's Principal-based RequireAdmin already
+// answers 401 for an anonymous request (see its own doc), so it no longer
+// needs RequireUser chained in front of it the way the session-based version
+// did.
 //
 // The device self-service routes are registered on their own mux at
 // "/settings/", behind RequireUser only — unlike adminMux, no RequireAdmin:
-// any signed-in user manages their own devices. The exchange endpoint
-// (deviceTokenAPI) carries no session at all and is mounted at the top
-// level alongside login, matching its own doc.
+// any signed-in user manages their own devices. This gate is deliberately
+// left on the session-based RequireUser (not re-homed onto Principal) per
+// NSTR-24's own reconciliation, which only re-homes RequireAdmin. The
+// exchange endpoint (deviceTokenAPI) carries no session at all and is
+// mounted at the top level alongside login, matching its own doc.
 //
 // NSTR-23's account api key routes sit under the same "/settings/" path
 // prefix as the device screen but, unlike it, need RequireAdmin: the
@@ -88,9 +88,9 @@ func (h *shellHandlers) Routes(mux *http.ServeMux) {
 // (create/view) and its /rotate and /revoke children without a redirect —
 // net/http.ServeMux picks the more specific match over the broader
 // "/settings/" registration either way.
-func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHandlers, login *identityadapter.Handlers, users *identityadapter.UsersWebHandlers, deviceTokenAPI *identityadapter.DeviceTokenAPIHandlers, deviceTokenWeb *identityadapter.DeviceTokenWebHandlers, apiKeyWeb *identityadapter.APIKeyWebHandlers) func(mux *http.ServeMux) {
+func newAppRoutes(logger *slog.Logger, onboarding *identityadapter.OnboardingHandlers, login *identityadapter.Handlers, users *identityadapter.UsersWebHandlers, deviceTokenAPI *identityadapter.DeviceTokenAPIHandlers, deviceTokenWeb *identityadapter.DeviceTokenWebHandlers, apiKeyWeb *identityadapter.APIKeyWebHandlers, denier *identityadapter.Denier) func(mux *http.ServeMux) {
 	shell := newShellHandlers(logger)
-	adminGate := middleware.Chain(identityadapter.RequireUser(), identityadapter.RequireAdmin(logger))
+	adminGate := identityadapter.RequireAdmin(denier)
 	userGate := identityadapter.RequireUser()
 	return func(mux *http.ServeMux) {
 		shell.Routes(mux)
