@@ -30,6 +30,17 @@ func TestRoleIsAdmin(t *testing.T) {
 	}
 }
 
+func TestUserIsAdmin(t *testing.T) {
+	admin := domain.User{Role: domain.RoleAdmin}
+	if !admin.IsAdmin() {
+		t.Error("User{Role: RoleAdmin}.IsAdmin() = false, want true")
+	}
+	member := domain.User{Role: domain.RoleMember}
+	if member.IsAdmin() {
+		t.Error("User{Role: RoleMember}.IsAdmin() = true, want false")
+	}
+}
+
 func TestUserColorParse(t *testing.T) {
 	for _, s := range []string{"indigo", "steel", "teal", "peri"} {
 		if c, err := domain.ParseUserColor(s); err != nil || c.String() != s {
