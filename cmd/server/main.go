@@ -88,8 +88,8 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// every request that gets past the guard. Authenticate runs after
 	// LoadAndSave (it needs the session already loaded) and resolves the
 	// signed-in user into the request context for every later handler and
-	// middleware — including RequireAdmin, a later sprint's authorization
-	// gate — to read back via identityadapter.CurrentUser.
+	// middleware — including RequireAdmin, NSTR-21's authorization gate —
+	// to read back via identityadapter.CurrentUser.
 	sm := session.New(pool, cfg.Session)
 	identityRepo := identityadapter.NewUserRepository(pool)
 	provisioner := identityadapter.NewProvisioner(pool)
@@ -100,6 +100,14 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	authenticator := identityapp.NewAuthenticator(identityRepo, hasher)
 	login := identityadapter.NewHandlers(sm, authenticator, logger)
 	authenticate := identityadapter.Authenticate(sm, identityRepo, logger)
+
+	// NSTR-21's admin user management: Revokers is the open seam NSTR-22
+	// plugs a device-token revoker into (OCP) — today it holds only the
+	// session revoker, which invalidates a deactivated/reset user's
+	// server-side sessions.
+	revokers := identityapp.Revokers{identityadapter.NewSessionRevoker(sm)}
+	adminService := identityapp.NewAdminService(identityRepo, hasher, revokers, logger)
+	usersHandlers := identityadapter.NewUsersWebHandlers(adminService, sm, newAdminUsersLayout(), logger)
 
 	srv := httpserver.New(httpserver.Config{
 		Server: cfg.Server,
@@ -112,7 +120,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		// silently.
 		MetricsHandler: metrics.Handler(registry),
 		HTTPMetrics:    httpMetrics,
-		Routes:         newAppRoutes(logger, onboarding, login),
+		Routes:         newAppRoutes(logger, onboarding, login, usersHandlers),
 		Middleware:     []middleware.Middleware{setupGuard, sm.LoadAndSave, authenticate},
 	})
 

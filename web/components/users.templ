@@ -1,0 +1,253 @@
+package components
+
+// UserRowView is the view-layer model for one row in the admin
+// user-management table — not a domain type, matching the rationale already
+// written on OwnerView (this package's other view model layered over the
+// identity domain).
+type UserRowView struct {
+	ID          string
+	DisplayName string
+	Email       string
+	// Role is the user's current role value ("admin" or "member"), used to
+	// pre-select the role dropdown's current option.
+	Role   string
+	Active bool
+	Owner  OwnerView
+}
+
+// UsersView is the view-layer model for the admin user-management screen.
+type UsersView struct {
+	CSRFToken string
+	Users     []UserRowView
+	// FormError shows the mapped error from the last failed submission — a
+	// validation failure on the add-user form, or a rejected row action
+	// (e.g. domain.ErrLastActiveAdmin). Empty means no error is shown.
+	FormError string
+	// NewDisplayName/NewEmail pre-fill the add-user form after a failed
+	// submission so the admin does not have to retype them. The password
+	// fields are never carried back.
+	NewDisplayName string
+	NewEmail       string
+}
+
+// usersTableID is the DOM id the add-user form and every row action target
+// for their HTMX outerHTML swap, so any mutation re-renders the whole
+// screen — including every row's own state — from the /admin/users
+// fragment response.
+const usersTableID = "user-list"
+
+// userRoles/userColors back the role and color <select> options, in the
+// same order every time.
+var userRoles = []string{"member", "admin"}
+
+var userColors = []string{"indigo", "steel", "teal", "peri"}
+
+// UsersTable renders the admin user-management screen: the add-user form
+// and the household's user list, each row carrying its own role form,
+// deactivate/reactivate button, and reset-password form.
+templ UsersTable(view UsersView) {
+	<div id={ usersTableID } class="flex flex-col gap-6 p-[26px]">
+		<div>
+			<h2 class="text-xl font-extrabold text-text">Users</h2>
+			<p class="mt-1 text-[15px] text-text-faint">Manage who can sign in to this household's Nestorage.</p>
+		</div>
+		if view.FormError != "" {
+			<p role="alert" class="rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+		}
+		@newUserForm(view)
+		@userList(view)
+	</div>
+}
+
+// newUserForm renders the add-user form, HTMX-posted and swapped into the
+// same outerHTML target as every row action, so a successful (or rejected)
+// submission re-renders the whole screen from one response.
+templ newUserForm(view UsersView) {
+	<form
+		method="POST"
+		action="/admin/users"
+		hx-post="/admin/users"
+		hx-target={ "#" + usersTableID }
+		hx-swap="outerHTML"
+		novalidate
+		class="flex flex-col gap-3 rounded-card bg-surface-raised p-4"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<h3 class="text-sm font-bold text-text-secondary">Add a user</h3>
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+			<input
+				type="text"
+				name="display_name"
+				value={ view.NewDisplayName }
+				placeholder="Name"
+				autocomplete="name"
+				required
+				class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+			/>
+			<input
+				type="email"
+				name="email"
+				value={ view.NewEmail }
+				placeholder="Email"
+				autocomplete="email"
+				required
+				class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+			/>
+			<input
+				type="password"
+				name="password"
+				placeholder="Password"
+				autocomplete="new-password"
+				required
+				class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+			/>
+			<input
+				type="password"
+				name="password_confirmation"
+				placeholder="Confirm password"
+				autocomplete="new-password"
+				required
+				class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+			/>
+			@roleSelect("role", "member")
+			@colorSelect("color", "indigo")
+		</div>
+		<button
+			type="submit"
+			class="self-start rounded-button bg-primary px-4 py-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep"
+		>
+			Add user
+		</button>
+	</form>
+}
+
+// userList renders one row per user, or an empty-state message.
+templ userList(view UsersView) {
+	<ul class="flex flex-col gap-2">
+		if len(view.Users) == 0 {
+			<li class="text-sm text-text-faint">No users yet.</li>
+		}
+		for _, u := range view.Users {
+			@userRow(view.CSRFToken, u)
+		}
+	</ul>
+}
+
+// userRow renders one user: avatar, name/email, a role form, and either a
+// deactivate button (active user) or a muted "Deactivated" badge with a
+// reactivate button — the display name and avatar render identically either
+// way, which is what keeps a deactivated user's history entries resolvable
+// to a real name.
+templ userRow(csrfToken string, u UserRowView) {
+	<li class={ "flex flex-col gap-3 rounded-card border border-border p-4 sm:flex-row sm:items-center", userRowClass(u.Active) }>
+		<div class="flex flex-1 items-center gap-3">
+			@OwnerAvatar(u.Owner)
+			<div>
+				<p class="text-base font-semibold text-text">{ u.DisplayName }</p>
+				<p class="text-sm text-text-faint">{ u.Email }</p>
+			</div>
+			if !u.Active {
+				<span class="rounded-pill bg-surface-raised px-2 py-1 text-xs font-bold text-text-faint">Deactivated</span>
+			}
+		</div>
+		@userActionForm(csrfToken, userActionURL(u.ID, "role")) {
+			@roleSelect("role", u.Role)
+			<button type="submit" class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+				Update role
+			</button>
+		}
+		@userActionForm(csrfToken, userActionURL(u.ID, activationAction(u.Active))) {
+			<button type="submit" class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+				{ activationLabel(u.Active) }
+			</button>
+		}
+		@userActionForm(csrfToken, userActionURL(u.ID, "password")) {
+			<input
+				type="password"
+				name="password"
+				placeholder="New password"
+				autocomplete="new-password"
+				required
+				class="w-32 rounded-input border border-border-input bg-surface px-2 py-1 text-sm text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+			/>
+			<input
+				type="password"
+				name="password_confirmation"
+				placeholder="Confirm"
+				autocomplete="new-password"
+				required
+				class="w-32 rounded-input border border-border-input bg-surface px-2 py-1 text-sm text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+			/>
+			<button type="submit" class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+				Reset password
+			</button>
+		}
+	</li>
+}
+
+// userActionForm wraps one row action's controls in the HTMX-posted form
+// every row action shares: CSRF field, swapped into the same outerHTML
+// target as the add-user form, so any mutation re-renders the whole screen.
+templ userActionForm(csrfToken, action string) {
+	<form
+		method="POST"
+		action={ templ.SafeURL(action) }
+		hx-post={ action }
+		hx-target={ "#" + usersTableID }
+		hx-swap="outerHTML"
+		class="flex items-center gap-2"
+	>
+		<input type="hidden" name="csrf_token" value={ csrfToken }/>
+		{ children... }
+	</form>
+}
+
+// userActionURL builds one row's action route: /admin/users/{id}/{action}.
+func userActionURL(id, action string) string {
+	return "/admin/users/" + id + "/" + action
+}
+
+// userRowClass mutes a deactivated row without hiding it — the row keeps
+// rendering the same name and avatar either way.
+func userRowClass(active bool) string {
+	if active {
+		return ""
+	}
+	return "opacity-60"
+}
+
+// activationAction/activationLabel pick the one route and one label that
+// flip a row's active flag: deactivate for an active user, reactivate for a
+// deactivated one.
+func activationAction(active bool) string {
+	if active {
+		return "deactivate"
+	}
+	return "reactivate"
+}
+
+func activationLabel(active bool) string {
+	if active {
+		return "Deactivate"
+	}
+	return "Reactivate"
+}
+
+// roleSelect renders a role <select> pre-set to selected — shared by the
+// add-user form and each row's own role-change form.
+templ roleSelect(name string, selected string) {
+	<select name={ name } class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text focus:border-primary focus:outline-none">
+		for _, role := range userRoles {
+			<option value={ role } selected?={ role == selected }>{ role }</option>
+		}
+	</select>
+}
+
+// colorSelect renders the add-user form's owner-color <select>.
+templ colorSelect(name string, selected string) {
+	<select name={ name } class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text focus:border-primary focus:outline-none">
+		for _, color := range userColors {
+			<option value={ color } selected?={ color == selected }>{ color }</option>
+		}
+	</select>
+}
