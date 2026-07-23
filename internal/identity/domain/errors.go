@@ -71,4 +71,39 @@ var (
 	// ErrInvalidDeviceToken is returned (wrapped) by DeviceToken.Validate
 	// for a malformed token.
 	ErrInvalidDeviceToken = errors.New("identity: invalid device token")
+
+	// ErrAPIKeyNotFound is returned by APIKeyRepository methods that look
+	// up or mutate a specific key (GetBySecretHash, Revoke, Rotate's
+	// incumbent) when no matching row exists.
+	ErrAPIKeyNotFound = errors.New("identity: api key not found")
+
+	// ErrAPIKeyRevoked marks a key that exists but has been revoked
+	// (revoked_at is set). Returned by APIKeyService.Authenticate, not by
+	// the repository — GetBySecretHash returns a revoked row rather than
+	// this error, so the caller can log/react to "known but revoked"
+	// differently from "unknown key".
+	ErrAPIKeyRevoked = errors.New("identity: api key revoked")
+
+	// ErrAPIKeyExpired marks a key that exists, is not revoked, but has
+	// passed its expires_at (the end of a rotation's overlap window).
+	// Returned by APIKeyService.Authenticate, for the same "distinguish
+	// from unknown/revoked" reason as ErrAPIKeyRevoked.
+	ErrAPIKeyExpired = errors.New("identity: api key expired")
+
+	// ErrInvalidAPIKey is returned (wrapped) by APIKey.Validate for a
+	// malformed key, and by APIKeyService.Create/Rotate for a blank or
+	// over-long label.
+	ErrInvalidAPIKey = errors.New("identity: invalid api key")
+
+	// ErrAPIKeyExists is returned by APIKeyRepository.Create when a current
+	// key (revoked_at and expires_at both nil) already exists — enforced by
+	// the api_key_current_uniq partial unique index, not only by this
+	// check. Create is unambiguous ("there is no key yet"); replacing an
+	// existing one is Rotate.
+	ErrAPIKeyExists = errors.New("identity: a current api key already exists")
+
+	// ErrInvalidOverlapWindow is returned (wrapped, with the offending
+	// value) by ParseOverlapWindow when given a string that is not a known
+	// OverlapWindow.
+	ErrInvalidOverlapWindow = errors.New("identity: invalid overlap window")
 )
