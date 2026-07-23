@@ -15,7 +15,7 @@ func TestLoginAttemptLimiter_AllowsUpToThreshold(t *testing.T) {
 		if l.locked(email, now) {
 			t.Fatalf("locked after %d failures, want not locked until the (threshold+1)th", i)
 		}
-		if lockedOut := l.recordFailure(email, now); lockedOut {
+		if l.recordFailure(email, now) {
 			t.Fatalf("recordFailure #%d reported lockedOut=true, want false (threshold not yet crossed)", i+1)
 		}
 	}
@@ -49,10 +49,10 @@ func TestLoginAttemptLimiter_ReportsLockedOutExactlyOnce(t *testing.T) {
 	for range loginAttemptThreshold {
 		l.recordFailure(email, now)
 	}
-	if lockedOut := l.recordFailure(email, now); !lockedOut {
+	if !l.recordFailure(email, now) {
 		t.Fatal("the crossing attempt must report lockedOut=true")
 	}
-	if lockedOut := l.recordFailure(email, now); lockedOut {
+	if l.recordFailure(email, now) {
 		t.Error("a SUBSEQUENT failure while already locked must not report lockedOut=true again")
 	}
 }
@@ -88,10 +88,31 @@ func TestLoginAttemptLimiter_RecordSuccessClearsState(t *testing.T) {
 	// to lock out again — the prior near-threshold count must not carry
 	// over.
 	for i := range loginAttemptThreshold {
-		if lockedOut := l.recordFailure(email, now); lockedOut {
+		if l.recordFailure(email, now) {
 			t.Fatalf("recordFailure #%d after a reset reported lockedOut=true too early", i+1)
 		}
 	}
+}
+
+// lockUntilThresholdCrossed drives email into its first lockout at now via
+// threshold+1 failures, failing the test if that lockout did not take.
+func lockUntilThresholdCrossed(t *testing.T, l *loginAttemptLimiter, email string, now time.Time) {
+	t.Helper()
+	for i := 0; i <= loginAttemptThreshold; i++ {
+		l.recordFailure(email, now)
+	}
+	if !l.locked(email, now) {
+		t.Fatal("setup: expected email to be locked after crossing the threshold")
+	}
+}
+
+// recordFreshFailures records n failures for email at ts, returning the
+// LAST call's lockedOut result.
+func recordFreshFailures(l *loginAttemptLimiter, email string, ts time.Time, n int) (lastLockedOut bool) {
+	for range n {
+		lastLockedOut = l.recordFailure(email, ts)
+	}
+	return lastLockedOut
 }
 
 // TestLoginAttemptLimiter_ExpiredLockoutResetsStrikeCount covers a strike
@@ -117,13 +138,7 @@ func TestLoginAttemptLimiter_ExpiredLockoutResetsStrikeCount(t *testing.T) {
 			now := time.Now()
 			const email = "alice@example.com"
 
-			// Drive the email into a FIRST lockout.
-			for i := 0; i <= loginAttemptThreshold; i++ {
-				l.recordFailure(email, now)
-			}
-			if !l.locked(email, now) {
-				t.Fatal("setup: expected email to be locked after crossing the threshold")
-			}
+			lockUntilThresholdCrossed(t, l, email, now)
 
 			// Wait out the lockout window entirely.
 			afterWindow := now.Add(loginLockoutWindow + time.Second)
@@ -134,10 +149,7 @@ func TestLoginAttemptLimiter_ExpiredLockoutResetsStrikeCount(t *testing.T) {
 			// Record tt.freshFailures wrong passwords post-expiry; the LAST
 			// call's lockedOut result and the final locked() state must
 			// reflect a FRESH count, not one carried over from before expiry.
-			var lastLockedOut bool
-			for range tt.freshFailures {
-				lastLockedOut = l.recordFailure(email, afterWindow)
-			}
+			lastLockedOut := recordFreshFailures(l, email, afterWindow, tt.freshFailures)
 			if got := l.locked(email, afterWindow); got != tt.wantFinalLocked {
 				t.Errorf("locked() after %d fresh failures post-expiry = %v, want %v (strike count did not reset on expiry)", tt.freshFailures, got, tt.wantFinalLocked)
 			}
