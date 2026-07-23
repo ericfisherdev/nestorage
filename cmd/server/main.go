@@ -87,9 +87,11 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// wraps the routes so the session is loaded and Set-Cookie written for
 	// every request that gets past the guard. Authenticate runs after
 	// LoadAndSave (it needs the session already loaded) and resolves the
-	// signed-in user into the request context for every later handler and
-	// middleware — including RequireAdmin, NSTR-21's authorization gate —
-	// to read back via identityadapter.CurrentUser.
+	// signed-in user into the request context for the settings/devices
+	// screen and shellNav to read back via identityadapter.CurrentUser.
+	// NSTR-24's resolve (built further down, once its dependencies exist)
+	// runs the same session lookup through the Principal model instead,
+	// which is what RequireAdmin reads back via CurrentPrincipal.
 	sm := session.New(pool, cfg.Session)
 	identityRepo := identityadapter.NewUserRepository(pool)
 	provisioner := identityadapter.NewProvisioner(pool)
@@ -138,6 +140,19 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	adminService := identityapp.NewAdminService(identityRepo, hasher, revokers, logger)
 	usersHandlers := identityadapter.NewUsersWebHandlers(adminService, sm, newAdminUsersLayout(), logger)
 
+	// NSTR-24's principal resolution: one Chain dispatching a request's
+	// credential — the session cookie, a device token, or the account api
+	// key — to the Resolver that wraps it into a domain.Principal, and one
+	// Denier every denial (Resolve, RequireAdmin) answers through so no
+	// handler invents its own 401/403 shape.
+	denier := identityadapter.NewDenier(logger)
+	principals := identityadapter.NewChain(
+		identityadapter.NewSessionResolver(sm, identityRepo, logger),
+		identityadapter.NewDeviceTokenResolver(deviceTokenService),
+		identityadapter.NewAPIKeyResolver(apiKeyService),
+	)
+	resolve := identityadapter.Resolve(principals, denier, logger)
+
 	srv := httpserver.New(httpserver.Config{
 		Server: cfg.Server,
 		HSTS:   cfg.HSTS,
@@ -149,8 +164,12 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		// silently.
 		MetricsHandler: metrics.Handler(registry),
 		HTTPMetrics:    httpMetrics,
-		Routes:         newAppRoutes(logger, onboarding, login, usersHandlers, deviceTokenAPI, deviceTokenWeb, apiKeyWeb),
-		Middleware:     []middleware.Middleware{setupGuard, sm.LoadAndSave, authenticate},
+		Routes:         newAppRoutes(logger, onboarding, login, usersHandlers, deviceTokenAPI, deviceTokenWeb, apiKeyWeb, denier),
+		// sm.LoadAndSave loads the session before authenticate (NSTR-20's
+		// session-based CurrentUser, still consumed by settingsMux and
+		// shellNav) and resolve (NSTR-24's Principal, consumed by
+		// RequireAdmin) each read it.
+		Middleware: []middleware.Middleware{setupGuard, sm.LoadAndSave, authenticate, resolve},
 	})
 
 	// Surface listen errors from the background goroutine to the main flow.

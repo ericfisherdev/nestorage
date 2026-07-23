@@ -106,4 +106,9 @@ var (
 	// value) by ParseOverlapWindow when given a string that is not a known
 	// OverlapWindow.
 	ErrInvalidOverlapWindow = errors.New("identity: invalid overlap window")
+
+	// ErrInvalidKind is returned (wrapped, with the offending value) by
+	// ParseKind when given a string that is not a known Kind — the same
+	// naming convention as ErrInvalidRole and ErrInvalidColor.
+	ErrInvalidKind = errors.New("identity: invalid principal kind")
 )
