@@ -73,4 +73,30 @@ var (
 	// blank (or whitespace-only) name — the domain mirror of item's own
 	// blank-name CHECK.
 	ErrItemNameRequired = errors.New("storage: item name is required")
+
+	// ErrItemAlreadyInBin is returned by Item.EnterBin when the item is
+	// already sitting in a bin (see Item.InBin) — NSTR-29's
+	// app.OperationService.AddToBin surfaces this so "add to bin" cannot
+	// silently re-home an already-binned item; that is a move, a later
+	// ticket's operation, not this one's.
+	ErrItemAlreadyInBin = errors.New("storage: item is already in a bin")
+
+	// ErrItemAlreadyCheckedOut is returned by Item.CheckOut when the item is
+	// already held by a user (see Item.CheckedOut) — NSTR-29's
+	// app.OperationService.RemoveFromBin surfaces this so a second,
+	// lost-race check-out attempt on the same item fails cleanly instead of
+	// silently overwriting the first holder.
+	ErrItemAlreadyCheckedOut = errors.New("storage: item is already checked out")
+
+	// ErrItemNotCheckedOut is returned by Item.ReturnTo when the item is not
+	// currently held — NSTR-29's app.OperationService.ReturnToBin surfaces
+	// this for a return attempt on an item that is already sitting in a
+	// bin.
+	ErrItemNotCheckedOut = errors.New("storage: item is not checked out")
+
+	// ErrHolderRequired is returned by app.OperationService.RemoveFromBin
+	// when the acting principal is not a real person (identity.KindUser) —
+	// the Nestova integration's account api key principal has no person
+	// behind it to attribute a checked-out item's hold to.
+	ErrHolderRequired = errors.New("storage: only a user principal may check out an item")
 )
