@@ -551,15 +551,24 @@ func TestItemRepository_VisibilityMatrix(t *testing.T) {
 		for _, pr := range principals {
 			t.Run(c.itemName+"/"+pr.name, func(t *testing.T) {
 				_, err := f.repo.Get(testCtx(t), pr.p, c.item.ID)
-				wantVisible := c.visible(pr.name)
-				if wantVisible && err != nil {
-					t.Errorf("Get(%s, %s) = %v, want nil (visible)", pr.name, c.itemName, err)
-				}
-				if !wantVisible && !errors.Is(err, domain.ErrItemNotFound) {
-					t.Errorf("Get(%s, %s) = %v, want ErrItemNotFound (not visible)", pr.name, c.itemName, err)
-				}
+				assertItemVisibility(t, err, c.visible(pr.name), pr.name, c.itemName)
 			})
 		}
+	}
+}
+
+// assertItemVisibility asserts that a Get result matches whether
+// principalName should see itemName: nil error when visible,
+// domain.ErrItemNotFound when not. Factored out of
+// TestItemRepository_VisibilityMatrix's nested case/principal loop so the
+// loop body itself stays flat.
+func assertItemVisibility(t *testing.T, err error, wantVisible bool, principalName, itemName string) {
+	t.Helper()
+	if wantVisible && err != nil {
+		t.Errorf("Get(%s, %s) = %v, want nil (visible)", principalName, itemName, err)
+	}
+	if !wantVisible && !errors.Is(err, domain.ErrItemNotFound) {
+		t.Errorf("Get(%s, %s) = %v, want ErrItemNotFound (not visible)", principalName, itemName, err)
 	}
 }
 
