@@ -117,6 +117,46 @@ func TestNewAdminService_NilDependenciesPanic(t *testing.T) {
 	}
 }
 
+func TestAdminService_List_Succeeds(t *testing.T) {
+	t.Parallel()
+	repo := newFakeAdminRepo()
+	repo.users[domain.NewUserID()] = &domain.User{DisplayName: "Maya"}
+	repo.users[domain.NewUserID()] = &domain.User{DisplayName: "Daniel"}
+	svc := newAdminService(repo, &fakeRevoker{})
+
+	got, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("List returned %d users, want 2", len(got))
+	}
+}
+
+// fakeAdminRepoListErr wraps fakeAdminRepo to force List to fail, since
+// fakeAdminRepo itself has no listErr field — List's only failure mode is a
+// repository error, which this thin wrapper is the simplest way to inject.
+type fakeAdminRepoListErr struct {
+	*fakeAdminRepo
+	err error
+}
+
+func (f *fakeAdminRepoListErr) List(context.Context) ([]domain.User, error) {
+	return nil, f.err
+}
+
+func TestAdminService_List_RepositoryErrorWrapped(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("list boom")
+	repo := &fakeAdminRepoListErr{fakeAdminRepo: newFakeAdminRepo(), err: wantErr}
+	svc := app.NewAdminService(repo, cryptotest.Hasher(), &fakeRevoker{}, testLogger())
+
+	_, err := svc.List(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Errorf("List error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
 func TestAdminService_Create_Succeeds(t *testing.T) {
 	t.Parallel()
 	repo := newFakeAdminRepo()
@@ -207,6 +247,21 @@ func TestAdminService_Deactivate_LastActiveAdminPropagatesUnchanged(t *testing.T
 	}
 	if len(revoker.calls) != 0 {
 		t.Error("Deactivate must not revoke credentials when the flag flip itself was rejected")
+	}
+}
+
+func TestAdminService_ChangeRole_Succeeds(t *testing.T) {
+	t.Parallel()
+	id := domain.NewUserID()
+	repo := newFakeAdminRepo()
+	repo.users[id] = &domain.User{ID: id, Role: domain.RoleMember, Active: true}
+	svc := newAdminService(repo, &fakeRevoker{})
+
+	if err := svc.ChangeRole(context.Background(), id, domain.RoleAdmin); err != nil {
+		t.Fatalf("ChangeRole: %v", err)
+	}
+	if repo.users[id].Role != domain.RoleAdmin {
+		t.Errorf("Role after ChangeRole = %v, want RoleAdmin", repo.users[id].Role)
 	}
 }
 

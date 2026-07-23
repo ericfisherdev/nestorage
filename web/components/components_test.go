@@ -29,6 +29,7 @@ func TestIcons_RenderDecorative(t *testing.T) {
 		{"IconGrid", components.IconGrid("h-5 w-5")},
 		{"IconList", components.IconList("h-5 w-5")},
 		{"IconCheck", components.IconCheck("h-5 w-5")},
+		{"IconUsers", components.IconUsers("h-5 w-5")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

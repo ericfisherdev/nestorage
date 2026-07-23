@@ -2,6 +2,7 @@ package adapter_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -333,5 +334,106 @@ func TestUsersWebHandlers_ResetPassword_UserNotFound_MapsTo404(t *testing.T) {
 	}, false)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404:\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestUsersWebHandlers_ResetPassword_Mismatch_UnprocessableEntity(t *testing.T) {
+	admin := &fakeAdminService{}
+	h := newUsersWebHarness(t, admin)
+	csrf := h.getCSRF(t)
+
+	path := "/admin/users/" + domain.NewUserID().String() + "/password"
+	resp, body := h.postForm(t, path, url.Values{
+		"csrf_token":            {csrf},
+		"password":              {"correct-horse-battery-staple"},
+		"password_confirmation": {"does-not-match"},
+	}, false)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "do not match") {
+		t.Errorf("body missing the mismatch message:\n%s", body)
+	}
+}
+
+func TestUsersWebHandlers_Reactivate_Success_FullNavigation_Redirects(t *testing.T) {
+	admin := &fakeAdminService{}
+	h := newUsersWebHarness(t, admin)
+	csrf := h.getCSRF(t)
+
+	path := "/admin/users/" + domain.NewUserID().String() + "/reactivate"
+	resp, body := h.postForm(t, path, url.Values{"csrf_token": {csrf}}, false)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303:\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestUsersWebHandlers_ChangeRole_InvalidRole_UnprocessableEntity(t *testing.T) {
+	admin := &fakeAdminService{}
+	h := newUsersWebHarness(t, admin)
+	csrf := h.getCSRF(t)
+
+	path := "/admin/users/" + domain.NewUserID().String() + "/role"
+	resp, body := h.postForm(t, path, url.Values{"csrf_token": {csrf}, "role": {"superuser"}}, false)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "valid role") {
+		t.Errorf("body missing the invalid-role message:\n%s", body)
+	}
+}
+
+func TestUsersWebHandlers_ChangeRole_MalformedID_BadRequest(t *testing.T) {
+	admin := &fakeAdminService{}
+	h := newUsersWebHarness(t, admin)
+
+	resp, body := h.postForm(t, "/admin/users/not-a-uuid/role", url.Values{"role": {"admin"}}, false)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400:\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestUsersWebHandlers_Create_DuplicateEmail_MapsTo422(t *testing.T) {
+	admin := &fakeAdminService{createErr: domain.ErrDuplicateEmail}
+	h := newUsersWebHarness(t, admin)
+	csrf := h.getCSRF(t)
+
+	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "member", "indigo"), false)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "already in use") {
+		t.Errorf("body missing the duplicate-email message:\n%s", body)
+	}
+}
+
+func TestUsersWebHandlers_Create_PasswordTooShort_MapsTo422(t *testing.T) {
+	admin := &fakeAdminService{createErr: domain.ErrPasswordTooShort}
+	h := newUsersWebHarness(t, admin)
+	csrf := h.getCSRF(t)
+
+	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "short-but-matching", "member", "indigo"), false)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "at least 12 characters") {
+		t.Errorf("body missing the too-short message:\n%s", body)
+	}
+}
+
+// TestUsersWebHandlers_Create_UnrecognizedError_MapsTo500 asserts an error
+// mapAdminError does not recognize is logged and answered generically,
+// rather than leaking internal detail to the response body.
+func TestUsersWebHandlers_Create_UnrecognizedError_MapsTo500(t *testing.T) {
+	admin := &fakeAdminService{createErr: errors.New("unexpected database explosion")}
+	h := newUsersWebHarness(t, admin)
+	csrf := h.getCSRF(t)
+
+	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "member", "indigo"), false)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500:\n%s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, "database explosion") {
+		t.Error("the unrecognized error's detail must not leak into the response body")
 	}
 }
