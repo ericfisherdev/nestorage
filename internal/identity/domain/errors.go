@@ -55,4 +55,20 @@ var (
 	// when the operation would leave the household with zero active admins —
 	// demoting or deactivating its only remaining one.
 	ErrLastActiveAdmin = errors.New("identity: cannot remove the last active admin")
+
+	// ErrDeviceTokenNotFound is returned by DeviceTokenRepository methods
+	// that look up or mutate a specific token (GetByTokenHash, Revoke) when
+	// no matching row exists.
+	ErrDeviceTokenNotFound = errors.New("identity: device token not found")
+
+	// ErrDeviceTokenRevoked marks a token that exists but has been revoked
+	// (revoked_at is set). Returned by DeviceTokenService.Authenticate, not
+	// by the repository — GetByTokenHash returns a revoked row rather than
+	// this error, so the caller can log/react to "known but revoked"
+	// differently from "unknown token".
+	ErrDeviceTokenRevoked = errors.New("identity: device token revoked")
+
+	// ErrInvalidDeviceToken is returned (wrapped) by DeviceToken.Validate
+	// for a malformed token.
+	ErrInvalidDeviceToken = errors.New("identity: invalid device token")
 )

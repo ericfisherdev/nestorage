@@ -71,7 +71,7 @@ type loginHarness struct {
 func newLoginHarness(t *testing.T, authn *fakeAuthenticator) *loginHarness {
 	t.Helper()
 	sm := scs.New()
-	handlers := adapter.NewHandlers(sm, authn, testLogger())
+	handlers := adapter.NewHandlers(sm, authn, adapter.NewLoginAttemptLimiter(), testLogger())
 
 	mux := http.NewServeMux()
 	handlers.Routes(mux)
@@ -133,26 +133,34 @@ func TestNewHandlers_NilDependenciesPanic(t *testing.T) {
 	t.Run("nil session manager", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewHandlers(nil, authn, logger) did not panic")
+				t.Error("NewHandlers(nil, authn, limiter, logger) did not panic")
 			}
 		}()
-		adapter.NewHandlers(nil, authn, testLogger())
+		adapter.NewHandlers(nil, authn, adapter.NewLoginAttemptLimiter(), testLogger())
 	})
 	t.Run("nil authenticator", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewHandlers(sm, nil, logger) did not panic")
+				t.Error("NewHandlers(sm, nil, limiter, logger) did not panic")
 			}
 		}()
-		adapter.NewHandlers(scs.New(), nil, testLogger())
+		adapter.NewHandlers(scs.New(), nil, adapter.NewLoginAttemptLimiter(), testLogger())
+	})
+	t.Run("nil limiter", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Error("NewHandlers(sm, authn, nil, logger) did not panic")
+			}
+		}()
+		adapter.NewHandlers(scs.New(), authn, nil, testLogger())
 	})
 	t.Run("nil logger", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewHandlers(sm, authn, nil) did not panic")
+				t.Error("NewHandlers(sm, authn, limiter, nil) did not panic")
 			}
 		}()
-		adapter.NewHandlers(scs.New(), authn, nil)
+		adapter.NewHandlers(scs.New(), authn, adapter.NewLoginAttemptLimiter(), nil)
 	})
 }
 

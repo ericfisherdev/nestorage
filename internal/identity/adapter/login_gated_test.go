@@ -55,7 +55,7 @@ func newLoginGatedFixture(t *testing.T, email, password string) *loginGatedFixtu
 
 	authn := app.NewAuthenticator(repo, cryptotest.Hasher())
 	sm := session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour})
-	handlers := adapter.NewHandlers(sm, authn, testLogger())
+	handlers := adapter.NewHandlers(sm, authn, adapter.NewLoginAttemptLimiter(), testLogger())
 
 	mux := http.NewServeMux()
 	handlers.Routes(mux)

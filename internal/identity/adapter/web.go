@@ -34,24 +34,30 @@ type loginAuthenticator interface {
 type Handlers struct {
 	sm      *scs.SessionManager
 	authn   loginAuthenticator
-	limiter *loginAttemptLimiter
+	limiter *LoginAttemptLimiter
 	logger  *slog.Logger
 }
 
-// NewHandlers constructs Handlers. All dependencies are required; a missing
-// one panics at construction time, matching every other WebHandlers
-// constructor in this codebase.
-func NewHandlers(sm *scs.SessionManager, authn loginAuthenticator, logger *slog.Logger) *Handlers {
+// NewHandlers constructs Handlers. limiter is injected rather than
+// constructed internally so the composition root can share one
+// LoginAttemptLimiter with NSTR-22's device-token exchange endpoint — see
+// LoginAttemptLimiter's own doc for why that sharing matters. All
+// dependencies are required; a missing one panics at construction time,
+// matching every other WebHandlers constructor in this codebase.
+func NewHandlers(sm *scs.SessionManager, authn loginAuthenticator, limiter *LoginAttemptLimiter, logger *slog.Logger) *Handlers {
 	if sm == nil {
 		panic("identity/adapter: NewHandlers requires a non-nil session manager")
 	}
 	if authn == nil {
 		panic("identity/adapter: NewHandlers requires a non-nil loginAuthenticator")
 	}
+	if limiter == nil {
+		panic("identity/adapter: NewHandlers requires a non-nil LoginAttemptLimiter")
+	}
 	if logger == nil {
 		panic("identity/adapter: NewHandlers requires a non-nil logger")
 	}
-	return &Handlers{sm: sm, authn: authn, limiter: newLoginAttemptLimiter(), logger: logger}
+	return &Handlers{sm: sm, authn: authn, limiter: limiter, logger: logger}
 }
 
 // Routes registers the login and logout routes on mux.
@@ -87,7 +93,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	next := sanitizeNext(r.FormValue("next"))
 
-	if h.limiter.locked(email, time.Now()) {
+	if h.limiter.Locked(email, time.Now()) {
 		h.renderInvalidCredentials(w, r, email, next)
 		return
 	}
@@ -95,7 +101,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	userID, err := h.authn.Login(r.Context(), email, password)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidCredentials) {
-			if h.limiter.recordFailure(email, time.Now()) {
+			if h.limiter.RecordFailure(email, time.Now()) {
 				h.logger.WarnContext(r.Context(), "login: account locked out after repeated failures")
 			}
 			h.renderInvalidCredentials(w, r, email, next)
@@ -105,7 +111,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
-	h.limiter.recordSuccess(email)
+	h.limiter.RecordSuccess(email)
 
 	// Session-fixation defense: renew the token before storing any
 	// privilege in the session.

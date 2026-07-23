@@ -98,14 +98,31 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 
 	hasher := crypto.NewHasher(crypto.DefaultParams())
 	authenticator := identityapp.NewAuthenticator(identityRepo, hasher)
-	login := identityadapter.NewHandlers(sm, authenticator, logger)
+	// loginLimiter is shared between the session-cookie login handler and
+	// NSTR-22's device-token exchange endpoint below: both verify a
+	// password against the same credential store, so an attacker locked
+	// out of one must not get a fresh run of attempts against the other
+	// (see LoginAttemptLimiter's own doc).
+	loginLimiter := identityadapter.NewLoginAttemptLimiter()
+	login := identityadapter.NewHandlers(sm, authenticator, loginLimiter, logger)
 	authenticate := identityadapter.Authenticate(sm, identityRepo, logger)
 
+	// NSTR-22's device tokens: DeviceTokenService implements
+	// identityapp.CredentialRevoker directly (RevokeAll), so it is registered
+	// into the Revokers slice below without any adapter-side wrapper type —
+	// the OCP seam NSTR-21's own comment reserves this for. time.Now is
+	// injected as the clock so LastUsedAt throttling and revocation
+	// timestamps are real wall-clock time in production.
+	deviceTokenRepo := identityadapter.NewDeviceTokenRepository(pool)
+	deviceTokenService := identityapp.NewDeviceTokenService(deviceTokenRepo, identityRepo, authenticator, loginLimiter, time.Now, logger)
+	deviceTokenAPI := identityadapter.NewDeviceTokenAPIHandlers(deviceTokenService, logger)
+	deviceTokenWeb := identityadapter.NewDeviceTokenWebHandlers(deviceTokenService, sm, newDeviceSettingsLayout(), logger)
+
 	// NSTR-21's admin user management: Revokers is the open seam NSTR-22
-	// plugs a device-token revoker into (OCP) — today it holds only the
-	// session revoker, which invalidates a deactivated/reset user's
-	// server-side sessions.
-	revokers := identityapp.Revokers{identityadapter.NewSessionRevoker(sm)}
+	// plugs its device-token revoker into (OCP) — session revocation and
+	// device-token revocation, so deactivating (or resetting the password
+	// of) a user invalidates both.
+	revokers := identityapp.Revokers{identityadapter.NewSessionRevoker(sm), deviceTokenService}
 	adminService := identityapp.NewAdminService(identityRepo, hasher, revokers, logger)
 	usersHandlers := identityadapter.NewUsersWebHandlers(adminService, sm, newAdminUsersLayout(), logger)
 
@@ -120,7 +137,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		// silently.
 		MetricsHandler: metrics.Handler(registry),
 		HTTPMetrics:    httpMetrics,
-		Routes:         newAppRoutes(logger, onboarding, login, usersHandlers),
+		Routes:         newAppRoutes(logger, onboarding, login, usersHandlers, deviceTokenAPI, deviceTokenWeb),
 		Middleware:     []middleware.Middleware{setupGuard, sm.LoadAndSave, authenticate},
 	})
 

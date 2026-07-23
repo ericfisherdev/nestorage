@@ -1,0 +1,76 @@
+package components
+
+// DeviceView is the view-layer model for one row in the self-service device
+// list — not a domain type, matching the rationale already written on
+// OwnerView/UserRowView (this package's other domain-adjacent view models).
+// CreatedAt/LastUsedAt are pre-formatted strings: the handler formats every
+// timestamp, never this template.
+type DeviceView struct {
+	ID         string
+	Name       string
+	CreatedAt  string
+	LastUsedAt string
+}
+
+// DevicesView is the view-layer model for the device self-service screen.
+type DevicesView struct {
+	CSRFToken string
+	Devices   []DeviceView
+}
+
+// deviceListID is the DOM id the revoke form targets for its HTMX outerHTML
+// swap, so a revocation re-renders the whole list from the
+// /settings/devices fragment response — the same pattern usersTableID uses.
+const deviceListID = "device-list"
+
+// DeviceList renders the signed-in user's own devices, each with a revoke
+// button. There is no add-device form here: a device token is only ever
+// minted by the Android client through the POST /api/v1/auth/device-tokens
+// exchange, never from this screen.
+templ DeviceList(view DevicesView) {
+	<div id={ deviceListID } class="flex flex-col gap-6 p-[26px]">
+		<div>
+			<h2 class="text-xl font-extrabold text-text">Devices</h2>
+			<p class="mt-1 text-[15px] text-text-faint">Devices signed in to your account. Revoking one signs it out immediately.</p>
+		</div>
+		<ul class="flex flex-col gap-2">
+			if len(view.Devices) == 0 {
+				<li class="text-sm text-text-faint">No devices yet.</li>
+			}
+			for _, d := range view.Devices {
+				@deviceRow(view.CSRFToken, d)
+			}
+		</ul>
+	</div>
+}
+
+// deviceRow renders one device: name, created/last-used dates, and a revoke
+// button posted via HTMX to the same outerHTML target as every other row.
+templ deviceRow(csrfToken string, d DeviceView) {
+	<li class="flex flex-col gap-3 rounded-card border border-border p-4 sm:flex-row sm:items-center">
+		<div class="flex-1">
+			<p class="text-base font-semibold text-text">{ d.Name }</p>
+			<p class="text-sm text-text-faint">Added { d.CreatedAt } · Last used { d.LastUsedAt }</p>
+		</div>
+		<form
+			method="POST"
+			action={ templ.SafeURL(deviceRevokeURL(d.ID)) }
+			hx-post={ deviceRevokeURL(d.ID) }
+			hx-target={ "#" + deviceListID }
+			hx-swap="outerHTML"
+		>
+			<input type="hidden" name="csrf_token" value={ csrfToken }/>
+			<button
+				type="submit"
+				class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised"
+			>
+				Revoke
+			</button>
+		</form>
+	</li>
+}
+
+// deviceRevokeURL builds one row's revoke route: /settings/devices/{id}/revoke.
+func deviceRevokeURL(id string) string {
+	return "/settings/devices/" + id + "/revoke"
+}
