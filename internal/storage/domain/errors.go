@@ -20,4 +20,26 @@ var (
 	// ErrInvalidLocationName is returned (wrapped) by ValidateLocationName
 	// for a blank, whitespace-only, or over-long name.
 	ErrInvalidLocationName = errors.New("storage: invalid location name")
+
+	// ErrBinNotFound is returned by BinRepository methods that look up or
+	// mutate a specific bin (FindVisibleByID, FindVisibleByCode,
+	// UpdateVisibility, Delete) when no matching row exists, or exists but
+	// is not visible/mutable to the requesting viewer — the same "not
+	// found" masking CanSeeBin's own doc requires, so a member cannot even
+	// confirm another member's private bin exists.
+	ErrBinNotFound = errors.New("storage: bin not found")
+
+	// ErrDuplicateBinCode is returned by BinRepository.Create when code is
+	// already assigned to another bin — enforced by the bin_code_uniq
+	// unique constraint.
+	ErrDuplicateBinCode = errors.New("storage: bin code already in use")
+
+	// ErrInvalidBin is returned (wrapped) by Bin.Validate for a malformed
+	// bin.
+	ErrInvalidBin = errors.New("storage: invalid bin")
+
+	// ErrInvalidVisibility is returned (wrapped, with the offending value)
+	// by ParseVisibility when given a string that is not a known
+	// Visibility.
+	ErrInvalidVisibility = errors.New("storage: invalid bin visibility")
 )
