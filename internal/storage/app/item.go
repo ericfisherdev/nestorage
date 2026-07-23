@@ -4,7 +4,11 @@
 // infrastructure package directly. NSTR-29 adds OperationService
 // (operations.go): the transactional add/remove/return placement
 // operations, over the same domain.ItemRepository/domain.BinRepository
-// shape but through its own narrower ports.
+// shape but through its own narrower ports. NSTR-30 adds BinMover
+// (mover.go): the transactional bin-relocation operation. NSTR-31 adds
+// LocationService (location.go) and BinService (bin.go): the read-oriented
+// services the browse UI's web handlers consume, so a handler never reaches
+// into a domain.*Repository (or identity's) directly.
 package app
 
 import (
