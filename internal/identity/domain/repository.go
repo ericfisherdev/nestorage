@@ -22,7 +22,13 @@ import "context"
 //     touch the password hash or the active flag, so a profile edit can
 //     never blank a credential. Returns ErrUserNotFound or ErrDuplicateEmail.
 //   - SetActive returns ErrUserNotFound when id is unknown. One method covers
-//     both deactivating and reactivating a user.
+//     both deactivating and reactivating a user. Deactivating the household's
+//     only active admin returns ErrLastActiveAdmin instead, and leaves the
+//     row untouched.
+//   - SetRole returns ErrUserNotFound when id is unknown. Demoting the
+//     household's only active admin away from RoleAdmin returns
+//     ErrLastActiveAdmin instead, and leaves the row untouched.
+//   - SetPasswordHash returns ErrUserNotFound when id is unknown.
 //   - List returns an empty slice (not an error) when no users exist.
 //   - Count and HasAnyUser never return a sentinel error.
 type UserRepository interface {
@@ -33,8 +39,19 @@ type UserRepository interface {
 	List(ctx context.Context) ([]User, error)
 	Update(ctx context.Context, u *User) error
 	// SetActive sets id's active flag. Passing false deactivates the user;
-	// passing true reactivates it.
+	// passing true reactivates it. Reactivation can never violate the
+	// last-active-admin invariant, so only deactivation can return
+	// ErrLastActiveAdmin.
 	SetActive(ctx context.Context, id UserID, active bool) error
+	// SetRole changes id's role. Promoting to RoleAdmin can never violate the
+	// last-active-admin invariant, so only a demotion away from it can
+	// return ErrLastActiveAdmin.
+	SetRole(ctx context.Context, id UserID, role Role) error
+	// SetPasswordHash overwrites id's stored password hash. Unlike Update, it
+	// touches nothing else — used by NSTR-20/21's password-change and
+	// admin-reset flows so a profile edit can never blank a credential and a
+	// credential change can never touch the profile.
+	SetPasswordHash(ctx context.Context, id UserID, hash string) error
 	// Count returns the total number of users.
 	Count(ctx context.Context) (int, error)
 	// HasAnyUser reports whether at least one user row exists. It is used by

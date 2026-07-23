@@ -50,4 +50,9 @@ var (
 	// alike — so the login handler cannot distinguish them and leak whether
 	// an email address has an account.
 	ErrInvalidCredentials = errors.New("identity: invalid email or password")
+
+	// ErrLastActiveAdmin is returned by UserRepository.SetRole and SetActive
+	// when the operation would leave the household with zero active admins —
+	// demoting or deactivating its only remaining one.
+	ErrLastActiveAdmin = errors.New("identity: cannot remove the last active admin")
 )

@@ -49,6 +49,20 @@ func seedUser(t *testing.T, repo *adapter.UserRepository, email string) *domain.
 	return u
 }
 
+// seedAdmin is seedUser's admin-role twin, used by tests that need an
+// active admin already present so a later mutation on a DIFFERENT user
+// never trips the last-active-admin guard (see postgres_admin_test.go for
+// the tests that deliberately DO trip it).
+func seedAdmin(t *testing.T, repo *adapter.UserRepository, email string) *domain.User {
+	t.Helper()
+	u := newUser(email)
+	u.Role = domain.RoleAdmin
+	if err := repo.Create(testCtx(t), u); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return u
+}
+
 func TestCreateAndFindByID(t *testing.T) {
 	repo := newTestRepo(t)
 	u := seedUser(t, repo, "maya@example.com")
@@ -211,6 +225,71 @@ func TestSetActiveNotFound(t *testing.T) {
 	err := repo.SetActive(testCtx(t), domain.NewUserID(), false)
 	if !errors.Is(err, domain.ErrUserNotFound) {
 		t.Errorf("SetActive(unknown id) = %v, want ErrUserNotFound", err)
+	}
+}
+
+// TestSetRolePromotesAndDemotes seeds a second admin first so demoting the
+// member-under-test back to member never trips the last-active-admin guard
+// — that guard's rejection path is covered separately in
+// postgres_admin_test.go.
+func TestSetRolePromotesAndDemotes(t *testing.T) {
+	repo := newTestRepo(t)
+	seedAdmin(t, repo, "admin@example.com")
+	member := seedUser(t, repo, "maya@example.com")
+
+	if err := repo.SetRole(testCtx(t), member.ID, domain.RoleAdmin); err != nil {
+		t.Fatalf("SetRole(admin): %v", err)
+	}
+	got, err := repo.FindByID(testCtx(t), member.ID)
+	if err != nil {
+		t.Fatalf("FindByID after promote: %v", err)
+	}
+	if got.Role != domain.RoleAdmin {
+		t.Errorf("Role after promote = %v, want RoleAdmin", got.Role)
+	}
+
+	if err := repo.SetRole(testCtx(t), member.ID, domain.RoleMember); err != nil {
+		t.Fatalf("SetRole(member): %v", err)
+	}
+	got, err = repo.FindByID(testCtx(t), member.ID)
+	if err != nil {
+		t.Fatalf("FindByID after demote: %v", err)
+	}
+	if got.Role != domain.RoleMember {
+		t.Errorf("Role after demote = %v, want RoleMember", got.Role)
+	}
+}
+
+func TestSetRoleNotFound(t *testing.T) {
+	repo := newTestRepo(t)
+	err := repo.SetRole(testCtx(t), domain.NewUserID(), domain.RoleAdmin)
+	if !errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("SetRole(unknown id) = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestSetPasswordHash(t *testing.T) {
+	repo := newTestRepo(t)
+	u := seedUser(t, repo, "maya@example.com")
+
+	const newHash = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$bmV3aGFzaA"
+	if err := repo.SetPasswordHash(testCtx(t), u.ID, newHash); err != nil {
+		t.Fatalf("SetPasswordHash: %v", err)
+	}
+	got, err := repo.FindByID(testCtx(t), u.ID)
+	if err != nil {
+		t.Fatalf("FindByID after SetPasswordHash: %v", err)
+	}
+	if got.PasswordHash != newHash {
+		t.Errorf("PasswordHash after SetPasswordHash = %q, want %q", got.PasswordHash, newHash)
+	}
+}
+
+func TestSetPasswordHashNotFound(t *testing.T) {
+	repo := newTestRepo(t)
+	err := repo.SetPasswordHash(testCtx(t), domain.NewUserID(), "hash")
+	if !errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("SetPasswordHash(unknown id) = %v, want ErrUserNotFound", err)
 	}
 }
 

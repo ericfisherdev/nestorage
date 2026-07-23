@@ -19,3 +19,7 @@ type User struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
+
+// IsAdmin reports whether u carries administrative privileges. Delegates to
+// Role.IsAdmin so the one rule stays defined in one place.
+func (u User) IsAdmin() bool { return u.Role.IsAdmin() }

@@ -151,16 +151,143 @@ func (r *UserRepository) Update(ctx context.Context, u *domain.User) error {
 }
 
 // SetActive sets id's active flag, covering both deactivation (active=false)
-// and NSTR-21's reactivation (active=true) with one method. Returns
-// domain.ErrUserNotFound for an unknown id.
+// and NSTR-21's reactivation (active=true) with one method. Reactivation can
+// never violate the last-active-admin invariant, so it runs a plain UPDATE;
+// deactivation runs inside lastAdminGuardedUpdate, which rejects with
+// domain.ErrLastActiveAdmin when id is the household's only active admin.
+// Returns domain.ErrUserNotFound for an unknown id.
 func (r *UserRepository) SetActive(ctx context.Context, id domain.UserID, active bool) error {
 	const q = `UPDATE app_user SET active = $2, updated_at = now() WHERE id = $1`
-	tag, err := r.dbtx.Exec(ctx, q, id.String(), active)
+	if active {
+		return execUserUpdate(ctx, r.dbtx, q, id, active)
+	}
+	return r.lastAdminGuardedUpdate(ctx, id, "set active", func(tx pgx.Tx) error {
+		return execUserUpdate(ctx, tx, q, id, active)
+	})
+}
+
+// SetRole changes id's role. Promoting to domain.RoleAdmin can never violate
+// the last-active-admin invariant, so it runs a plain UPDATE; any other role
+// runs inside lastAdminGuardedUpdate, which rejects with
+// domain.ErrLastActiveAdmin when id is the household's only active admin —
+// covering both an explicit demotion and a no-op "set member to member".
+// Returns domain.ErrUserNotFound for an unknown id.
+func (r *UserRepository) SetRole(ctx context.Context, id domain.UserID, role domain.Role) error {
+	const q = `UPDATE app_user SET role = $2, updated_at = now() WHERE id = $1`
+	if role == domain.RoleAdmin {
+		return execUserUpdate(ctx, r.dbtx, q, id, role.String())
+	}
+	return r.lastAdminGuardedUpdate(ctx, id, "set role", func(tx pgx.Tx) error {
+		return execUserUpdate(ctx, tx, q, id, role.String())
+	})
+}
+
+// SetPasswordHash overwrites id's stored password hash. Unlike Update, it
+// touches nothing else, so a credential change can never blank or leak into
+// the profile fields. Never risks the last-active-admin invariant, so it
+// runs a plain UPDATE. Returns domain.ErrUserNotFound for an unknown id.
+func (r *UserRepository) SetPasswordHash(ctx context.Context, id domain.UserID, hash string) error {
+	const q = `UPDATE app_user SET password_hash = $2, updated_at = now() WHERE id = $1`
+	return execUserUpdate(ctx, r.dbtx, q, id, hash)
+}
+
+// execUserUpdate runs a single-row UPDATE keyed by id against dbtx (either
+// r.dbtx or an open transaction) — the id/value UPDATE shape shared by
+// SetActive, SetRole, and SetPasswordHash. Returns domain.ErrUserNotFound
+// when no row matched id.
+func execUserUpdate(ctx context.Context, dbtx db.TX, q string, id domain.UserID, value any) error {
+	tag, err := dbtx.Exec(ctx, q, id.String(), value)
 	if err != nil {
-		return fmt.Errorf("set active: %w", err)
+		return fmt.Errorf("update user: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrUserNotFound
+	}
+	return nil
+}
+
+// userTxBeginner is the slice of a pgx executor lastAdminGuardedUpdate needs
+// to open its own transaction, satisfied by both *pgxpool.Pool and pgx.Tx
+// (mirroring Nestova's mfaTxBeginner and this codebase's own Provisioner).
+type userTxBeginner interface {
+	Begin(context.Context) (pgx.Tx, error)
+}
+
+// lockActiveAdminIDsQuery locks every currently active admin row for the
+// duration of the caller's transaction. Postgres rejects FOR UPDATE
+// alongside an aggregate, so wouldRemoveLastActiveAdmin counts the rows in
+// Go rather than via SQL count().
+//
+// The lock is the whole point, not an optimization: a second transaction's
+// own SELECT ... FOR UPDATE over this same row set blocks until the first
+// commits or rolls back, which is what serializes two concurrent demotions
+// (or deactivations) of two DIFFERENT admins — the second one sees the
+// first's committed result before deciding whether it would leave zero
+// active admins.
+const lockActiveAdminIDsQuery = `SELECT id FROM app_user WHERE role = 'admin' AND active = true FOR UPDATE`
+
+// lockActiveAdminIDs returns the ids of every currently active admin, row-locked
+// for the duration of tx.
+func lockActiveAdminIDs(ctx context.Context, tx pgx.Tx) ([]string, error) {
+	rows, err := tx.Query(ctx, lockActiveAdminIDsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("lock active admin ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("lock active admin ids: scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lock active admin ids: %w", err)
+	}
+	return ids, nil
+}
+
+// wouldRemoveLastActiveAdmin reports whether id is the one and only id in
+// activeAdminIDs — i.e. whether taking id out of the active-admin set would
+// leave the household with zero. A user who is not currently an active
+// admin at all is never "the last one", regardless of what operation is
+// being attempted on them.
+func wouldRemoveLastActiveAdmin(activeAdminIDs []string, id string) bool {
+	return len(activeAdminIDs) == 1 && activeAdminIDs[0] == id
+}
+
+// lastAdminGuardedUpdate runs update inside a transaction that first locks
+// every active admin row (lockActiveAdminIDs) and rejects with
+// domain.ErrLastActiveAdmin when id is the household's only one — shared by
+// SetActive's deactivation branch and SetRole's demotion branch, the two
+// mutations that can take an admin out of the active-admin set. op names the
+// caller for error-wrapping context.
+func (r *UserRepository) lastAdminGuardedUpdate(ctx context.Context, id domain.UserID, op string, update func(tx pgx.Tx) error) error {
+	beginner, ok := r.dbtx.(userTxBeginner)
+	if !ok {
+		return fmt.Errorf("%s: executor does not support transactions", op)
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: begin tx: %w", op, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	activeAdminIDs, err := lockActiveAdminIDs(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if wouldRemoveLastActiveAdmin(activeAdminIDs, id.String()) {
+		return domain.ErrLastActiveAdmin
+	}
+
+	if err := update(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("%s: commit: %w", op, err)
 	}
 	return nil
 }

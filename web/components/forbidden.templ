@@ -1,0 +1,32 @@
+package components
+
+// ForbiddenPage renders a minimal, self-contained 403 page for a full
+// navigation blocked by an authorization gate (e.g. RequireAdmin) — not
+// wrapped in Layout, so the gate has no dependency on the app shell's
+// nav/owner state. Emits its own doctype/head and links only
+// /static/css/app.css and /static/favicon.svg, matching every other
+// self-contained page in this codebase.
+templ ForbiddenPage() {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>Forbidden · Nestorage</title>
+			<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
+			<link rel="stylesheet" href="/static/css/app.css"/>
+		</head>
+		<body class="flex min-h-screen items-center justify-center bg-canvas p-4 font-sans text-text">
+			<div class="w-full max-w-sm text-center">
+				<h1 class="text-xl font-extrabold text-text">Access denied</h1>
+				<p class="mt-2 text-sm text-text-muted">You don't have permission to view this page.</p>
+				<a
+					href="/"
+					class="mt-6 inline-block rounded-button bg-primary px-4 py-[13px] text-md font-semibold text-white shadow-primary hover:bg-primary-deep"
+				>
+					Back to Nestorage
+				</a>
+			</div>
+		</body>
+	</html>
+}
