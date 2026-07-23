@@ -163,6 +163,17 @@ func TestLocationService_List_RepositoryErrorWrapped(t *testing.T) {
 	}
 }
 
+func TestLocationService_List_BinListerErrorWrapped(t *testing.T) {
+	bins := &fakeBinLister{err: errors.New("boom")}
+	svc := app.NewLocationService(newFakeLocationRepo(), bins, testLogger())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	_, err := svc.List(context.Background(), viewer)
+	if err == nil {
+		t.Fatal("List() error = nil, want a wrapped error when the bin lister fails")
+	}
+}
+
 func TestLocationService_Get_NotFoundWrapped(t *testing.T) {
 	svc := app.NewLocationService(newFakeLocationRepo(), &fakeBinLister{}, testLogger())
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
@@ -170,6 +181,56 @@ func TestLocationService_Get_NotFoundWrapped(t *testing.T) {
 	_, err := svc.Get(context.Background(), viewer, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotFound) {
 		t.Errorf("Get(unknown) error = %v, want wrapped ErrLocationNotFound", err)
+	}
+}
+
+func TestLocationService_Get_Success(t *testing.T) {
+	locs := newFakeLocationRepo()
+	garage := &domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	if err := locs.Create(context.Background(), garage); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	got, err := svc.Get(context.Background(), viewer, garage.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ID != garage.ID || got.Name != "Garage" {
+		t.Errorf("Get() = %+v, want it to match the seeded location", got)
+	}
+}
+
+func TestLocationService_Rename_Success(t *testing.T) {
+	locs := newFakeLocationRepo()
+	garage := &domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	if err := locs.Create(context.Background(), garage); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
+
+	if err := svc.Rename(context.Background(), garage.ID, "  Attic  "); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if locs.locations[garage.ID].Name != "Attic" {
+		t.Errorf("Rename() Name = %q, want trimmed %q", locs.locations[garage.ID].Name, "Attic")
+	}
+}
+
+func TestLocationService_Delete_Success(t *testing.T) {
+	locs := newFakeLocationRepo()
+	garage := &domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
+	if err := locs.Create(context.Background(), garage); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
+
+	if err := svc.Delete(context.Background(), garage.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, ok := locs.locations[garage.ID]; ok {
+		t.Error("Delete did not remove the location via the repository")
 	}
 }
 
@@ -196,6 +257,17 @@ func TestLocationService_Create_ValidationRejected(t *testing.T) {
 	_, err := svc.Create(context.Background(), "   ", "", nil, identity.NewUserID())
 	if !errors.Is(err, domain.ErrInvalidLocationName) {
 		t.Errorf("Create(blank name) error = %v, want ErrInvalidLocationName", err)
+	}
+}
+
+func TestLocationService_Create_RepositoryErrorWrapped(t *testing.T) {
+	locs := newFakeLocationRepo()
+	locs.createErr = domain.ErrLocationNotFound
+	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
+
+	_, err := svc.Create(context.Background(), "Garage", "", nil, identity.NewUserID())
+	if !errors.Is(err, domain.ErrLocationNotFound) {
+		t.Errorf("Create() error = %v, want wrapped ErrLocationNotFound", err)
 	}
 }
 
