@@ -48,14 +48,14 @@ type apiKeyWebService interface {
 type APIKeyWebHandlers struct {
 	keys   apiKeyWebService
 	sm     *scs.SessionManager
-	layout layoutFunc
+	layout requestLayoutFunc
 	logger *slog.Logger
 }
 
 // NewAPIKeyWebHandlers constructs APIKeyWebHandlers. All dependencies are
 // required; a missing one panics at construction time, matching every other
 // WebHandlers constructor in this codebase.
-func NewAPIKeyWebHandlers(keys apiKeyWebService, sm *scs.SessionManager, layout layoutFunc, logger *slog.Logger) *APIKeyWebHandlers {
+func NewAPIKeyWebHandlers(keys apiKeyWebService, sm *scs.SessionManager, layout requestLayoutFunc, logger *slog.Logger) *APIKeyWebHandlers {
 	if keys == nil {
 		panic("identity/adapter: NewAPIKeyWebHandlers requires a non-nil apiKeyWebService")
 	}
@@ -200,7 +200,7 @@ func (h *APIKeyWebHandlers) renderPage(w http.ResponseWriter, r *http.Request, s
 	content := components.APIKeySettingsSection(view)
 	c := content
 	if !render.IsHTMX(r) {
-		c = h.layout(content)
+		c = h.layout(r, content)
 	}
 	if err := render.Render(r.Context(), w, status, c); err != nil {
 		h.logger.ErrorContext(r.Context(), "api key: render", "error", err)
