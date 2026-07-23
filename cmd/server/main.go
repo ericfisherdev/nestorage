@@ -100,14 +100,16 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	onboarding := identityadapter.NewOnboardingHandlers(identityRepo, provisioner, sm, logger)
 	setupGuard := identityadapter.SetupGuard(identityRepo, logger)
 
-	// NSTR-31's storage composition: the location/bin/item Postgres
+	// NSTR-31/32's storage composition: the location/bin/item Postgres
 	// adapters (NSTR-26/27/28), the query/command services built over them
-	// (NSTR-29/30's own ItemService/BinMover, plus NSTR-31's
-	// LocationService/BinService), and the web handlers that serve the
-	// browse/CRUD/move screens. shellData composes the sidebar's real
-	// Owners/Stats from identityRepo and these same services, so every
-	// layout closure below — including identity's own admin/device/api-key
-	// screens — renders real household data instead of a demo value.
+	// (NSTR-29/30's own ItemService/BinMover, NSTR-31's
+	// LocationService/BinService, and NSTR-32's own
+	// OperationService/ItemQueryService), and the web handlers that serve
+	// the browse/CRUD/move/detail/search screens. shellData composes the
+	// sidebar's real Owners/Stats from identityRepo and these same
+	// services, so every layout closure below — including identity's own
+	// admin/device/api-key screens — renders real household data instead of
+	// a demo value.
 	locationRepo := storageadapter.NewLocationRepository(pool)
 	binRepo := storageadapter.NewBinRepository(pool)
 	itemRepo := storageadapter.NewItemRepository(pool)
@@ -117,6 +119,14 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	binService := storageapp.NewBinService(binRepo, identityRepo, itemRepo, logger)
 	itemService := storageapp.NewItemService(itemRepo, logger)
 	binMover := storageapp.NewBinMover(storageUOW, binRepo, locationRepo, time.Now, logger)
+	// NSTR-32's item detail/search composition: OperationService (NSTR-29)
+	// backs the detail page's check-out/return controls, over the same
+	// storageUOW/binRepo BinMover already shares (PostgresUnitOfWork
+	// satisfies both WithinTx and WithinBinTx); ItemQueryService (NSTR-32)
+	// backs the visibility-scoped detail/search reads, over the same
+	// itemRepo every other item-adjacent service shares.
+	operationService := storageapp.NewOperationService(storageUOW, binRepo, logger)
+	itemQueryService := storageapp.NewItemQueryService(itemRepo, logger)
 
 	shellData := newShellDataService(identityRepo, binService, locationService)
 
@@ -127,6 +137,10 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	locationsWeb := storageadapter.NewLocationsWebHandlers(
 		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
 	)
+	itemsWeb := storageadapter.NewItemsWebHandlers(storageadapter.ItemsWebHandlersDeps{
+		Items: itemQueryService, Operations: operationService, Bins: binService,
+		SM: sm, Layout: newStorageLayout(shellData, searchPageTitle, logger), Logger: logger,
+	})
 
 	hasher := crypto.NewHasher(crypto.DefaultParams())
 	authenticator := identityapp.NewAuthenticator(identityRepo, hasher)
@@ -204,6 +218,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			APIKeyWeb:      apiKeyWeb,
 			Bins:           binsWeb,
 			Locations:      locationsWeb,
+			Items:          itemsWeb,
 			Denier:         denier,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's

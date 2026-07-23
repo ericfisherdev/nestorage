@@ -29,6 +29,12 @@ const binsPageTitle = "All bins"
 // locationsPageTitle names NSTR-31's location index/detail pages.
 const locationsPageTitle = "Locations"
 
+// searchPageTitle names NSTR-32's item search page and detail page — see
+// newStorageLayout's own doc for why a single fixed title covers every
+// route a handler group serves, the same convention binsPageTitle already
+// follows for both /bins and a specific bin's own /b/{code} detail page.
+const searchPageTitle = "Search & find"
+
 // usersPageTitle names NSTR-21's admin user-management page.
 const usersPageTitle = "Users"
 
@@ -195,7 +201,8 @@ func shellInitials(name string) string {
 // net/http.ServeMux picks the more specific match over the broader
 // "/settings/" registration either way.
 //
-// NSTR-31's bin/location routes (/bins, /b/{code}, /locations, ...) share no
+// NSTR-31's bin/location routes (/bins, /b/{code}, /locations, ...), plus
+// NSTR-32's item detail/search routes (/search, /items/{id}, ...), share no
 // common path prefix to mount a submux under, so they are registered on
 // their own mux mounted at the bare "/" catch-all instead, behind
 // RequireAuthenticated — every already-registered exact/prefix pattern on
@@ -218,6 +225,7 @@ type appRouteDeps struct {
 	APIKeyWeb      *identityadapter.APIKeyWebHandlers
 	Bins           *storageadapter.BinsWebHandlers
 	Locations      *storageadapter.LocationsWebHandlers
+	Items          *storageadapter.ItemsWebHandlers
 	Denier         *identityadapter.Denier
 }
 
@@ -249,6 +257,7 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		storageMux := http.NewServeMux()
 		deps.Bins.Routes(storageMux)
 		deps.Locations.Routes(storageMux)
+		deps.Items.Routes(storageMux)
 		mux.Handle("/", authGate(storageMux))
 	}
 }
@@ -356,7 +365,7 @@ func newStorageLayout(data *shellDataService, title string, logger *slog.Logger)
 func shellNav(path string, isAdmin bool) []components.NavItem {
 	nav := []components.NavItem{
 		{Label: binsPageTitle, Href: "/bins", Active: navActive(path, "/bins") || navActive(path, "/b"), Icon: components.IconBin(shellIconClass)},
-		{Label: "Search & find", Href: "/search", Active: navActive(path, "/search"), Icon: components.IconSearch(shellIconClass)},
+		{Label: searchPageTitle, Href: "/search", Active: navActive(path, "/search"), Icon: components.IconSearch(shellIconClass)},
 		{Label: "Categories", Href: "/categories", Active: navActive(path, "/categories"), Icon: components.IconCategories(shellIconClass)},
 		{Label: locationsPageTitle, Href: "/locations", Active: navActive(path, "/locations"), Icon: components.IconLocations(shellIconClass)},
 		{Label: "Labels & codes", Href: "/labels", Active: navActive(path, "/labels"), Icon: components.IconLabels(shellIconClass)},
