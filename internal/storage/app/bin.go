@@ -46,7 +46,7 @@ type BinView struct {
 // and this service must not reimplement it.
 type BinService struct {
 	bins    binReadWriter
-	members memberDirectory
+	members memberLister
 	items   itemCounter
 	logger  *slog.Logger
 }
@@ -54,12 +54,12 @@ type BinService struct {
 // NewBinService constructs BinService. Every dependency is required; a
 // missing one panics at construction time, matching every other constructor
 // in this codebase (see NewLocationService).
-func NewBinService(bins binReadWriter, members memberDirectory, items itemCounter, logger *slog.Logger) *BinService {
+func NewBinService(bins binReadWriter, members memberLister, items itemCounter, logger *slog.Logger) *BinService {
 	if bins == nil {
 		panic("storage/app: NewBinService requires a non-nil binReadWriter")
 	}
 	if members == nil {
-		panic("storage/app: NewBinService requires a non-nil memberDirectory")
+		panic("storage/app: NewBinService requires a non-nil memberLister")
 	}
 	if items == nil {
 		panic("storage/app: NewBinService requires a non-nil itemCounter")
@@ -126,29 +126,39 @@ func (s *BinService) GetByCode(ctx context.Context, viewer identity.Principal, c
 	return &views[0], nil
 }
 
+// CreateBinInput carries Create's arguments as one value instead of a
+// growing parameter list — SonarCloud flagged the seven-parameter method
+// (go:S107). Mirrors cmd/server/shell.go's appRouteDeps grouping (see its
+// doc for the identical rationale); the web adapter's binQueryCommandService
+// port (bins_web.go) takes this exact type too, so a rejected form's pending
+// values and a successful create's arguments never drift into two shapes.
+type CreateBinInput struct {
+	Code        string
+	Name        string
+	Description string
+	LocationID  domain.LocationID
+	OwnerID     *identity.UserID
+	Visibility  domain.Visibility
+	CreatedBy   identity.UserID
+}
+
 // Create validates and persists a new bin, normalizing code first (see
 // domain.NormalizeBinCode) so a scanned label and a typed one always
 // resolve the same way. Returns a wrapped domain.ErrInvalidBin from
 // validation, domain.ErrDuplicateBinCode when code is already in use,
-// domain.ErrLocationNotFound when locationID is unknown, or
-// identity.ErrUserNotFound when ownerID or createdBy is unknown.
-func (s *BinService) Create(
-	ctx context.Context,
-	code, name, description string,
-	locationID domain.LocationID,
-	ownerID *identity.UserID,
-	visibility domain.Visibility,
-	createdBy identity.UserID,
-) (*domain.Bin, error) {
+// domain.ErrLocationNotFound when input.LocationID is unknown, or
+// identity.ErrUserNotFound when input.OwnerID or input.CreatedBy is
+// unknown.
+func (s *BinService) Create(ctx context.Context, input CreateBinInput) (*domain.Bin, error) {
 	b := &domain.Bin{
 		ID:          domain.NewBinID(),
-		Code:        domain.NormalizeBinCode(code),
-		Name:        name,
-		Description: description,
-		LocationID:  locationID,
-		OwnerID:     ownerID,
-		Visibility:  visibility,
-		CreatedBy:   createdBy,
+		Code:        domain.NormalizeBinCode(input.Code),
+		Name:        input.Name,
+		Description: input.Description,
+		LocationID:  input.LocationID,
+		OwnerID:     input.OwnerID,
+		Visibility:  input.Visibility,
+		CreatedBy:   input.CreatedBy,
 	}
 	if err := b.Validate(); err != nil {
 		return nil, err
@@ -191,7 +201,7 @@ func (s *BinService) Delete(ctx context.Context, viewer identity.Principal, id d
 	return nil
 }
 
-// enrich projects bins into BinViews: one memberDirectory load and one
+// enrich projects bins into BinViews: one memberLister load and one
 // CountsByBin aggregate, shared across every bin in the slice rather than
 // queried once per bin.
 func (s *BinService) enrich(ctx context.Context, viewer identity.Principal, bins []domain.Bin) ([]BinView, error) {

@@ -20,13 +20,23 @@ import (
 	"github.com/ericfisherdev/nestorage/web/components"
 )
 
+// Bin create/edit form validation messages, named once instead of repeated
+// literals — parseBinForm, Update, and mapBinError all answer the same text
+// for the same failure (SonarCloud flagged the owner message's own
+// duplication, go:S1192).
+const (
+	msgInvalidLocation   = "Please choose a valid location."
+	msgInvalidOwner      = "Please choose a valid owner."
+	msgInvalidVisibility = "Please choose a valid visibility."
+)
+
 // binQueryCommandService is the narrow port (ISP) BinsWebHandlers depends
 // on, satisfied by *app.BinService.
 type binQueryCommandService interface {
 	ListVisible(ctx context.Context, viewer identity.Principal) ([]app.BinView, error)
 	GetByID(ctx context.Context, viewer identity.Principal, id domain.BinID) (*app.BinView, error)
 	GetByCode(ctx context.Context, viewer identity.Principal, code string) (*app.BinView, error)
-	Create(ctx context.Context, code, name, description string, locationID domain.LocationID, ownerID *identity.UserID, visibility domain.Visibility, createdBy identity.UserID) (*domain.Bin, error)
+	Create(ctx context.Context, input app.CreateBinInput) (*domain.Bin, error)
 	Edit(ctx context.Context, viewer identity.Principal, id domain.BinID, name, description string, ownerID *identity.UserID, visibility domain.Visibility) error
 	Delete(ctx context.Context, viewer identity.Principal, id domain.BinID) error
 }
@@ -56,53 +66,62 @@ type BinsWebHandlers struct {
 	bins      binQueryCommandService
 	mover     binMover
 	locations locationLister
-	members   memberDirectory
+	members   memberLister
 	items     itemLister
 	sm        *scs.SessionManager
 	layout    requestLayoutFunc
 	logger    *slog.Logger
 }
 
+// BinsWebHandlersDeps groups NewBinsWebHandlers' dependencies into one value
+// instead of a growing parameter list — SonarCloud flagged the eight-
+// parameter constructor (go:S107). Mirrors cmd/server/shell.go's own
+// appRouteDeps grouping (see its doc for the identical rationale). Every
+// field is still injected explicitly by the composition root
+// (cmd/server/main.go); this is a grouping of constructor arguments, not a
+// service locator.
+type BinsWebHandlersDeps struct {
+	Bins      binQueryCommandService
+	Mover     binMover
+	Locations locationLister
+	Members   memberLister
+	Items     itemLister
+	SM        *scs.SessionManager
+	Layout    requestLayoutFunc
+	Logger    *slog.Logger
+}
+
 // NewBinsWebHandlers constructs BinsWebHandlers. All dependencies are
 // required; a missing one panics at construction time, matching every
 // other WebHandlers constructor in this codebase.
-func NewBinsWebHandlers(
-	bins binQueryCommandService,
-	mover binMover,
-	locations locationLister,
-	members memberDirectory,
-	items itemLister,
-	sm *scs.SessionManager,
-	layout requestLayoutFunc,
-	logger *slog.Logger,
-) *BinsWebHandlers {
-	if bins == nil {
+func NewBinsWebHandlers(deps BinsWebHandlersDeps) *BinsWebHandlers {
+	if deps.Bins == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil binQueryCommandService")
 	}
-	if mover == nil {
+	if deps.Mover == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil binMover")
 	}
-	if locations == nil {
+	if deps.Locations == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil locationLister")
 	}
-	if members == nil {
-		panic("storage/adapter: NewBinsWebHandlers requires a non-nil memberDirectory")
+	if deps.Members == nil {
+		panic("storage/adapter: NewBinsWebHandlers requires a non-nil memberLister")
 	}
-	if items == nil {
+	if deps.Items == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil itemLister")
 	}
-	if sm == nil {
+	if deps.SM == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil session manager")
 	}
-	if layout == nil {
+	if deps.Layout == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil layout func")
 	}
-	if logger == nil {
+	if deps.Logger == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil logger")
 	}
 	return &BinsWebHandlers{
-		bins: bins, mover: mover, locations: locations, members: members, items: items,
-		sm: sm, layout: layout, logger: logger,
+		bins: deps.Bins, mover: deps.Mover, locations: deps.Locations, members: deps.Members, items: deps.Items,
+		sm: deps.SM, layout: deps.Layout, logger: deps.Logger,
 	}
 }
 
@@ -157,7 +176,7 @@ func (h *BinsWebHandlers) List(w http.ResponseWriter, r *http.Request) {
 // NewForm handles GET /bins/new: the blank create form.
 func (h *BinsWebHandlers) NewForm(w http.ResponseWriter, r *http.Request) {
 	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
-	view, err := h.buildBinFormView(r.Context(), viewer, "", "", "", "", "", "public", false, "")
+	view, err := h.buildBinFormView(r.Context(), viewer, binFormState{Visibility: "public"})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "bins: new form", "error", err)
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)
@@ -183,11 +202,17 @@ func (h *BinsWebHandlers) Create(w http.ResponseWriter, r *http.Request) {
 
 	locationID, ownerID, visibility, msg := parseBinForm(locationIDStr, ownerIDStr, visibilityStr)
 	if msg != "" {
-		h.renderRejectedForm(w, r, viewer, http.StatusUnprocessableEntity, msg, "", code, name, description, locationIDStr, ownerIDStr, visibilityStr, false)
+		h.renderRejectedForm(w, r, viewer, http.StatusUnprocessableEntity, binFormState{
+			Code: code, Name: name, Description: description, LocationID: locationIDStr,
+			OwnerID: ownerIDStr, Visibility: visibilityStr, FormError: msg,
+		})
 		return
 	}
 
-	b, err := h.bins.Create(r.Context(), code, name, description, locationID, ownerID, visibility, viewer.UserID)
+	b, err := h.bins.Create(r.Context(), app.CreateBinInput{
+		Code: code, Name: name, Description: description, LocationID: locationID,
+		OwnerID: ownerID, Visibility: visibility, CreatedBy: viewer.UserID,
+	})
 	if err != nil {
 		status, mapped, ok := mapBinError(err)
 		if !ok {
@@ -195,7 +220,10 @@ func (h *BinsWebHandlers) Create(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, errInternalServerError, http.StatusInternalServerError)
 			return
 		}
-		h.renderRejectedForm(w, r, viewer, status, mapped, "", code, name, description, locationIDStr, ownerIDStr, visibilityStr, false)
+		h.renderRejectedForm(w, r, viewer, status, binFormState{
+			Code: code, Name: name, Description: description, LocationID: locationIDStr,
+			OwnerID: ownerIDStr, Visibility: visibilityStr, FormError: mapped,
+		})
 		return
 	}
 	redirectTo(w, r, "/b/"+b.Code)
@@ -219,11 +247,10 @@ func (h *BinsWebHandlers) EditForm(w http.ResponseWriter, r *http.Request) {
 		h.handleGetError(w, r, err, "bins: edit form")
 		return
 	}
-	formView, err := h.buildBinFormView(
-		r.Context(), viewer,
-		view.Bin.ID.String(), view.Bin.Code, view.Bin.Name, view.Bin.Description,
-		ownerIDValue(view.Owner), view.Bin.Visibility.String(), true, "",
-	)
+	formView, err := h.buildBinFormView(r.Context(), viewer, binFormState{
+		ID: view.Bin.ID.String(), Code: view.Bin.Code, Name: view.Bin.Name, Description: view.Bin.Description,
+		OwnerID: ownerIDValue(view.Owner), Visibility: view.Bin.Visibility.String(), IsEdit: true,
+	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "bins: edit form", "error", err)
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)
@@ -254,12 +281,18 @@ func (h *BinsWebHandlers) Update(w http.ResponseWriter, r *http.Request) {
 
 	ownerID, err := parseOwnerID(ownerIDStr)
 	if err != nil {
-		h.renderRejectedForm(w, r, viewer, http.StatusUnprocessableEntity, "Please choose a valid owner.", existing.Bin.ID.String(), existing.Bin.Code, name, description, "", ownerIDStr, visibilityStr, true)
+		h.renderRejectedForm(w, r, viewer, http.StatusUnprocessableEntity, binFormState{
+			ID: existing.Bin.ID.String(), Code: existing.Bin.Code, Name: name, Description: description,
+			OwnerID: ownerIDStr, Visibility: visibilityStr, IsEdit: true, FormError: msgInvalidOwner,
+		})
 		return
 	}
 	visibility, err := domain.ParseVisibility(visibilityStr)
 	if err != nil {
-		h.renderRejectedForm(w, r, viewer, http.StatusUnprocessableEntity, "Please choose a valid visibility.", existing.Bin.ID.String(), existing.Bin.Code, name, description, "", ownerIDStr, visibilityStr, true)
+		h.renderRejectedForm(w, r, viewer, http.StatusUnprocessableEntity, binFormState{
+			ID: existing.Bin.ID.String(), Code: existing.Bin.Code, Name: name, Description: description,
+			OwnerID: ownerIDStr, Visibility: visibilityStr, IsEdit: true, FormError: msgInvalidVisibility,
+		})
 		return
 	}
 
@@ -270,7 +303,10 @@ func (h *BinsWebHandlers) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, errInternalServerError, http.StatusInternalServerError)
 			return
 		}
-		h.renderRejectedForm(w, r, viewer, status, mapped, existing.Bin.ID.String(), existing.Bin.Code, name, description, "", ownerIDStr, visibilityStr, true)
+		h.renderRejectedForm(w, r, viewer, status, binFormState{
+			ID: existing.Bin.ID.String(), Code: existing.Bin.Code, Name: name, Description: description,
+			OwnerID: ownerIDStr, Visibility: visibilityStr, IsEdit: true, FormError: mapped,
+		})
 		return
 	}
 	redirectTo(w, r, "/b/"+code)
@@ -319,7 +355,7 @@ func (h *BinsWebHandlers) Move(w http.ResponseWriter, r *http.Request) {
 
 	target, err := domain.ParseLocationID(r.FormValue("location_id"))
 	if err != nil {
-		h.renderDetailByID(w, r, viewer, id, http.StatusUnprocessableEntity, "Please choose a valid location.")
+		h.renderDetailByID(w, r, viewer, id, http.StatusUnprocessableEntity, msgInvalidLocation)
 		return
 	}
 	if _, err := h.mover.Move(r.Context(), viewer, id, target); err != nil {
@@ -430,13 +466,32 @@ func (h *BinsWebHandlers) renderDetailView(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// binFormState carries the bin create/edit form's pending field values
+// (every value a rejected submission must echo back) as one value instead
+// of a growing parameter list — SonarCloud flagged both buildBinFormView's
+// (go:S107) and renderRejectedForm's own arity. LocationID is only
+// meaningful to renderRejectedForm: buildBinFormView never sets it on the
+// returned view itself (see its own doc for why).
+type binFormState struct {
+	ID          string
+	Code        string
+	Name        string
+	Description string
+	LocationID  string
+	OwnerID     string
+	Visibility  string
+	IsEdit      bool
+	FormError   string
+}
+
 // buildBinFormView loads the location/owner options every bin form needs
 // and assembles the view — shared by NewForm, EditForm, and every rejected
-// Create/Update re-render.
-func (h *BinsWebHandlers) buildBinFormView(
-	ctx context.Context, viewer identity.Principal,
-	id, code, name, description, ownerID, visibility string, isEdit bool, formError string,
-) (components.BinFormView, error) {
+// Create/Update re-render. It never sets the returned view's LocationID:
+// NewForm/EditForm have no pending location to preserve (a bin's location
+// only ever changes via Move, never this form), so only
+// renderRejectedForm's caller — which does have one, from the rejected
+// create form — sets it, on the value this returns.
+func (h *BinsWebHandlers) buildBinFormView(ctx context.Context, viewer identity.Principal, state binFormState) (components.BinFormView, error) {
 	locations, err := h.locations.List(ctx, viewer)
 	if err != nil {
 		return components.BinFormView{}, err
@@ -447,26 +502,23 @@ func (h *BinsWebHandlers) buildBinFormView(
 	}
 	return components.BinFormView{
 		CSRFToken: session.CSRFToken(ctx, h.sm),
-		ID:        id, Code: code, Name: name, Description: description,
-		Locations: locationOptions(locations), OwnerID: ownerID, Owners: ownerOptions(members),
-		Visibility: visibility, IsEdit: isEdit, FormError: formError,
+		ID:        state.ID, Code: state.Code, Name: state.Name, Description: state.Description,
+		Locations: locationOptions(locations), OwnerID: state.OwnerID, Owners: ownerOptions(members),
+		Visibility: state.Visibility, IsEdit: state.IsEdit, FormError: state.FormError,
 	}, nil
 }
 
 // renderRejectedForm re-renders the bin form (create or edit) with
-// formError and every pending value preserved — the create/update
+// state.FormError and every pending value preserved — the create/update
 // validation-failure tail.
-func (h *BinsWebHandlers) renderRejectedForm(
-	w http.ResponseWriter, r *http.Request, viewer identity.Principal,
-	status int, formError, id, code, name, description, locationID, ownerID, visibility string, isEdit bool,
-) {
-	view, err := h.buildBinFormView(r.Context(), viewer, id, code, name, description, ownerID, visibility, isEdit, formError)
+func (h *BinsWebHandlers) renderRejectedForm(w http.ResponseWriter, r *http.Request, viewer identity.Principal, status int, state binFormState) {
+	view, err := h.buildBinFormView(r.Context(), viewer, state)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "bins: rejected form", "error", err)
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
-	view.LocationID = locationID
+	view.LocationID = state.LocationID
 	h.renderFormPage(w, r, status, view)
 }
 
@@ -527,11 +579,11 @@ func parseBinForm(locationIDStr, ownerIDStr, visibilityStr string) (locationID d
 	}
 	ownerID, err = parseOwnerID(ownerIDStr)
 	if err != nil {
-		return domain.LocationID{}, nil, "", "Please choose a valid owner."
+		return domain.LocationID{}, nil, "", msgInvalidOwner
 	}
 	visibility, err = domain.ParseVisibility(visibilityStr)
 	if err != nil {
-		return domain.LocationID{}, nil, "", "Please choose a valid visibility."
+		return domain.LocationID{}, nil, "", msgInvalidVisibility
 	}
 	return locationID, ownerID, visibility, ""
 }
@@ -560,9 +612,9 @@ func mapBinError(err error) (status int, message string, ok bool) {
 	case errors.Is(err, domain.ErrDuplicateBinCode):
 		return http.StatusUnprocessableEntity, "That code is already in use.", true
 	case errors.Is(err, domain.ErrLocationNotFound):
-		return http.StatusUnprocessableEntity, "Please choose a valid location.", true
+		return http.StatusUnprocessableEntity, msgInvalidLocation, true
 	case errors.Is(err, identity.ErrUserNotFound):
-		return http.StatusUnprocessableEntity, "Please choose a valid owner.", true
+		return http.StatusUnprocessableEntity, msgInvalidOwner, true
 	case errors.Is(err, domain.ErrBinNotEmpty):
 		return http.StatusConflict, "This bin still has items in it — remove them first.", true
 	case errors.Is(err, domain.ErrBinAlreadyInLocation):
