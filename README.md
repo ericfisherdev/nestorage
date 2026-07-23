@@ -134,6 +134,29 @@ has something to compile — NSTR-15 fills in config loading and the HTTP
 server bootstrap. There is intentionally no way to run the app yet, even
 though the database it will use is already migratable.
 
+## Device tokens
+
+The native Android client (Sprint 10) logs in as a real user and trades that
+email/password for a long-lived, per-device bearer token, rather than
+carrying a shared account credential — so a lost phone is a one-token
+revocation, and every action it takes is attributable to the person who
+signed in.
+
+```sh
+curl -X POST https://<host>/api/v1/auth/device-tokens \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"maya@example.com","password":"correct-horse-battery-staple","device_name":"Maya'"'"'s phone"}'
+```
+
+The `201` response's `token` field is the plaintext device token — it is
+returned exactly once, at creation, and is not recoverable afterward. Device
+tokens are prefixed `nsd_` (NSTR-23's account API key is `ns_`), so a future
+credential resolver can tell the two kinds apart from the prefix alone
+before ever touching the database.
+
+A signed-in user lists and revokes their own devices at
+`/settings/devices`; revoking one signs it out immediately.
+
 ## License
 
 [AGPL-3.0](LICENSE), matching Nestova and nestcore.

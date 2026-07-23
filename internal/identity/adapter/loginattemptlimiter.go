@@ -31,9 +31,16 @@ type loginAttemptState struct {
 	lastActivity time.Time
 }
 
-// loginAttemptLimiter tracks consecutive wrong passwords per (lowercased)
+// LoginAttemptLimiter tracks consecutive wrong passwords per (lowercased)
 // email and enforces a lockout window after loginAttemptThreshold
 // consecutive failures.
+//
+// Exported, and constructed exactly once by the composition root (see
+// cmd/server/main.go), so the same instance can be injected into both
+// Handlers (the session-cookie /login endpoint) and NSTR-22's
+// DeviceTokenService (the POST /api/v1/auth/device-tokens exchange): both
+// verify a password against the same credential store, so an attacker
+// locked out of one must not get a fresh run of attempts against the other.
 //
 // State is in-memory and process-lifetime — matching Nestova's accepted
 // tradeoff for this deployment shape: a single-household, local-first
@@ -42,25 +49,25 @@ type loginAttemptState struct {
 // map is bounded (see maxTrackedAccounts) unlike Nestova's member-keyed one.
 //
 // Once locked, an email stays locked until lockedUntil regardless of
-// further attempts — the caller (Handlers.Login) checks locked() BEFORE
-// touching the Authenticator at all and never reaches recordFailure again
-// until the window has passed. Once it HAS passed, recordFailure resets the
-// strike count before counting the new failure, so an email that waited out
-// a lockout gets a full fresh run of loginAttemptThreshold attempts rather
+// further attempts — every caller checks Locked() BEFORE touching the
+// Authenticator at all and never reaches RecordFailure again until the
+// window has passed. Once it HAS passed, RecordFailure resets the strike
+// count before counting the new failure, so an email that waited out a
+// lockout gets a full fresh run of loginAttemptThreshold attempts rather
 // than the counter continuing to climb from where the expired lockout left
 // it.
-type loginAttemptLimiter struct {
+type LoginAttemptLimiter struct {
 	mu    sync.Mutex
 	state map[string]*loginAttemptState
 }
 
-// newLoginAttemptLimiter constructs an empty limiter.
-func newLoginAttemptLimiter() *loginAttemptLimiter {
-	return &loginAttemptLimiter{state: make(map[string]*loginAttemptState)}
+// NewLoginAttemptLimiter constructs an empty limiter.
+func NewLoginAttemptLimiter() *LoginAttemptLimiter {
+	return &LoginAttemptLimiter{state: make(map[string]*loginAttemptState)}
 }
 
-// locked reports whether email is currently in a lockout window as of now.
-func (l *loginAttemptLimiter) locked(email string, now time.Time) bool {
+// Locked reports whether email is currently in a lockout window as of now.
+func (l *LoginAttemptLimiter) Locked(email string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	st, ok := l.state[email]
@@ -70,7 +77,7 @@ func (l *loginAttemptLimiter) locked(email string, now time.Time) bool {
 	return now.Before(st.lockedUntil)
 }
 
-// recordFailure records a wrong password for email as of now, returning
+// RecordFailure records a wrong password for email as of now, returning
 // lockedOut=true exactly once — on the attempt that CROSSES the threshold —
 // so the caller logs exactly one lockout line per lockout rather than one
 // per subsequent attempt.
@@ -80,7 +87,7 @@ func (l *loginAttemptLimiter) locked(email string, now time.Time) bool {
 // that waits out a lockout and then enters one more wrong password would
 // never be locked out again (failures would climb past
 // loginAttemptThreshold+1 without ever landing on it exactly).
-func (l *loginAttemptLimiter) recordFailure(email string, now time.Time) (lockedOut bool) {
+func (l *LoginAttemptLimiter) RecordFailure(email string, now time.Time) (lockedOut bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	st, ok := l.state[email]
@@ -105,8 +112,8 @@ func (l *loginAttemptLimiter) recordFailure(email string, now time.Time) (locked
 	return false
 }
 
-// recordSuccess clears email's strike state after a successful login.
-func (l *loginAttemptLimiter) recordSuccess(email string) {
+// RecordSuccess clears email's strike state after a successful login.
+func (l *LoginAttemptLimiter) RecordSuccess(email string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.state, email)
@@ -115,7 +122,7 @@ func (l *loginAttemptLimiter) recordSuccess(email string) {
 // evictStaleLocked sweeps entries whose last activity predates the lockout
 // window, bounding the map even under an attacker spraying many distinct
 // emails. Callers must hold l.mu.
-func (l *loginAttemptLimiter) evictStaleLocked(now time.Time) {
+func (l *LoginAttemptLimiter) evictStaleLocked(now time.Time) {
 	cutoff := now.Add(-loginLockoutWindow)
 	for email, st := range l.state {
 		if st.lastActivity.Before(cutoff) {
