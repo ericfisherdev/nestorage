@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/a-h/templ"
 
 	"github.com/ericfisherdev/nestcore/httpserver"
-	"github.com/ericfisherdev/nestcore/render"
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
+	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
+	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
+	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 	"github.com/ericfisherdev/nestorage/web"
 	"github.com/ericfisherdev/nestorage/web/components"
 )
@@ -17,10 +21,13 @@ import (
 // shellIconClass sizes every sidebar nav icon uniformly.
 const shellIconClass = "h-[21px] w-[21px] flex-none"
 
-// binsPageTitle names the one page this ticket's demo route serves: the
-// "All bins" nav entry, page title, and toolbar heading all have to agree,
-// so it is named once rather than repeated as three separate literals.
+// binsPageTitle names the "All bins" nav entry, page title, and toolbar
+// heading, which all have to agree, so it is named once rather than
+// repeated as three separate literals.
 const binsPageTitle = "All bins"
+
+// locationsPageTitle names NSTR-31's location index/detail pages.
+const locationsPageTitle = "Locations"
 
 // usersPageTitle names NSTR-21's admin user-management page.
 const usersPageTitle = "Users"
@@ -31,11 +38,11 @@ const devicesPageTitle = "Devices"
 // apiKeySettingsPageTitle names NSTR-23's account api key management page.
 const apiKeySettingsPageTitle = "API key"
 
-// shellHandlers serves the application shell: the embedded static assets and
-// a demo /bins page proving the Hearth shell renders and HTMX fragment swaps
-// work. Owners, stats, and the bin toolbar are hard-coded here — Sprint 3
-// (identity) and Sprint 4 (bins & items) replace them with real queries;
-// this ticket only has to prove the shell around them.
+// shellHandlers serves the application shell: the embedded static assets
+// and the root redirect. NSTR-31 removed this type's own demo /bins route
+// (handleBins) and its hard-coded Owners/Stats — BinsWebHandlers now owns
+// /bins for real, and shellDataService (below) computes real Owners/Stats
+// for every page's layout closure.
 type shellHandlers struct {
 	logger *slog.Logger
 }
@@ -51,20 +58,119 @@ func newShellHandlers(logger *slog.Logger) *shellHandlers {
 	return &shellHandlers{logger: logger}
 }
 
-// Routes registers the shell's routes on mux: the embedded static assets,
-// the root redirect, and the demo bins page.
+// Routes registers the shell's routes on mux: the embedded static assets
+// and the root redirect.
 func (h *shellHandlers) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", httpserver.StaticFileServer(web.StaticFS())))
 	mux.HandleFunc("GET /{$}", h.handleRoot)
-	mux.HandleFunc("GET /bins", h.handleBins)
+}
+
+// shellMemberLister is the narrow port (ISP) shellDataService depends on
+// for the sidebar's real Owners list, satisfied by identity's
+// UserRepository (a superset, via List).
+type shellMemberLister interface {
+	List(ctx context.Context) ([]identity.User, error)
+}
+
+// shellBinLister is the narrow port (ISP) shellDataService depends on for
+// the sidebar's real bin/item counts, satisfied by *storageapp.BinService
+// (a superset, via ListVisible).
+type shellBinLister interface {
+	ListVisible(ctx context.Context, viewer identity.Principal) ([]storageapp.BinView, error)
+}
+
+// shellLocationLister is the narrow port (ISP) shellDataService depends on
+// for the sidebar's real room count, satisfied by
+// *storageapp.LocationService (a superset, via List).
+type shellLocationLister interface {
+	List(ctx context.Context, viewer identity.Principal) ([]storageapp.LocationSummary, error)
+}
+
+// shellDataService computes ShellProps' real Owners/Stats per request,
+// replacing the removed shellOwners()/hard-coded ShellStats demo data.
+// Stats is scoped by viewer through the same ListVisible/List calls the
+// bin grid and location index themselves use, so the sidebar summary can
+// never hint at a private bin a non-owner cannot otherwise see.
+type shellDataService struct {
+	members   shellMemberLister
+	bins      shellBinLister
+	locations shellLocationLister
+}
+
+// newShellDataService constructs shellDataService. All dependencies are
+// required; a missing one panics at construction time, matching every other
+// constructor in this codebase.
+func newShellDataService(members shellMemberLister, bins shellBinLister, locations shellLocationLister) *shellDataService {
+	if members == nil {
+		panic("main: newShellDataService requires a non-nil shellMemberLister")
+	}
+	if bins == nil {
+		panic("main: newShellDataService requires a non-nil shellBinLister")
+	}
+	if locations == nil {
+		panic("main: newShellDataService requires a non-nil shellLocationLister")
+	}
+	return &shellDataService{members: members, bins: bins, locations: locations}
+}
+
+// Owners returns the sidebar's real Owners list: one entry per household
+// member plus the shared/Family entry every bin without an owner wears.
+func (s *shellDataService) Owners(ctx context.Context) ([]components.OwnerView, error) {
+	members, err := s.members.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owners := make([]components.OwnerView, 0, len(members)+1)
+	for _, m := range members {
+		owners = append(owners, components.OwnerView{
+			Name:     m.DisplayName,
+			Initials: shellInitials(m.DisplayName),
+			Color:    components.ParseOwnerColor(m.Color.String()),
+		})
+	}
+	owners = append(owners, components.OwnerView{Name: "Family", Initials: "F", Color: components.OwnerShared})
+	return owners, nil
+}
+
+// Stats returns the sidebar's real "Storage at a glance" counts, scoped to
+// what viewer may see. Items sums each visible bin's own ItemCount rather
+// than querying every item directly — a checked-out (held) item is
+// deliberately left out of this sidebar summary, a reasonable
+// simplification for a glance figure that undercounts rather than leaks.
+func (s *shellDataService) Stats(ctx context.Context, viewer identity.Principal) (components.ShellStats, error) {
+	bins, err := s.bins.ListVisible(ctx, viewer)
+	if err != nil {
+		return components.ShellStats{}, err
+	}
+	locations, err := s.locations.List(ctx, viewer)
+	if err != nil {
+		return components.ShellStats{}, err
+	}
+	items := 0
+	for _, b := range bins {
+		items += b.ItemCount
+	}
+	return components.ShellStats{Bins: len(bins), Items: items, Rooms: len(locations)}, nil
+}
+
+// shellInitials returns the first letter of name, uppercased, matching
+// identity/adapter's own initials helper (users_web.go) so an owner's
+// initial always agrees with the admin user-management screen's. A rune
+// slice is used so a multi-byte first character is not split.
+func shellInitials(name string) string {
+	r := []rune(strings.TrimSpace(name))
+	if len(r) == 0 {
+		return "?"
+	}
+	return strings.ToUpper(string(r[0]))
 }
 
 // newAppRoutes composes every route group into the one func value that
-// plugs into httpserver.Deps.Routes: the shell's demo pages and static
-// assets, the identity context's first-run onboarding wizard, its
-// login/logout routes, NSTR-21's admin user-management routes, and
-// NSTR-22's device-token exchange (public) and self-service (any signed-in
-// user) routes.
+// plugs into httpserver.Deps.Routes: the shell's static assets and root
+// redirect, the identity context's first-run onboarding wizard, its
+// login/logout routes, NSTR-21's admin user-management routes, NSTR-22's
+// device-token exchange (public) and self-service (any signed-in user)
+// routes, and NSTR-31's bin/location browse-and-manage routes.
 //
 // The admin routes are registered on their own mux, mounted at "/admin/"
 // behind RequireAdmin alone — NSTR-24's Principal-based RequireAdmin already
@@ -89,6 +195,14 @@ func (h *shellHandlers) Routes(mux *http.ServeMux) {
 // net/http.ServeMux picks the more specific match over the broader
 // "/settings/" registration either way.
 //
+// NSTR-31's bin/location routes (/bins, /b/{code}, /locations, ...) share no
+// common path prefix to mount a submux under, so they are registered on
+// their own mux mounted at the bare "/" catch-all instead, behind
+// RequireAuthenticated — every already-registered exact/prefix pattern on
+// the outer mux (the root redirect, static assets, login, admin, settings)
+// still wins over that catch-all, so this only ever gates a request no more
+// specific pattern claimed.
+//
 // appRouteDeps groups newAppRoutes' dependencies into one value instead of a
 // growing parameter list: NSTR-24 added Denier as the eighth, past
 // golangci-lint's function-length threshold. Each field is still injected
@@ -102,6 +216,8 @@ type appRouteDeps struct {
 	DeviceTokenAPI *identityadapter.DeviceTokenAPIHandlers
 	DeviceTokenWeb *identityadapter.DeviceTokenWebHandlers
 	APIKeyWeb      *identityadapter.APIKeyWebHandlers
+	Bins           *storageadapter.BinsWebHandlers
+	Locations      *storageadapter.LocationsWebHandlers
 	Denier         *identityadapter.Denier
 }
 
@@ -109,6 +225,7 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 	shell := newShellHandlers(deps.Logger)
 	adminGate := identityadapter.RequireAdmin(deps.Denier)
 	userGate := identityadapter.RequireUser()
+	authGate := identityadapter.RequireAuthenticated(deps.Denier)
 	return func(mux *http.ServeMux) {
 		shell.Routes(mux)
 		deps.Onboarding.Routes(mux)
@@ -128,6 +245,11 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		gatedAPIKey := adminGate(apiKeyMux)
 		mux.Handle("/settings/api-key", gatedAPIKey)
 		mux.Handle("/settings/api-key/", gatedAPIKey)
+
+		storageMux := http.NewServeMux()
+		deps.Bins.Routes(storageMux)
+		deps.Locations.Routes(storageMux)
+		mux.Handle("/", authGate(storageMux))
 	}
 }
 
@@ -135,20 +257,6 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 // than one page to land on.
 func (h *shellHandlers) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/bins", http.StatusSeeOther)
-}
-
-// handleBins renders the shell around a demo toolbar. render.Page returns
-// the bare content fragment for an HX-Request, which is what proves the
-// filter pills' hx-get/hx-target/hx-swap wiring (web/components/toolbar.templ)
-// works end to end without a second endpoint.
-func (h *shellHandlers) handleBins(w http.ResponseWriter, r *http.Request) {
-	layout := func(content templ.Component) templ.Component {
-		return components.Layout(shellProps(binsPageTitle), shellNav(isCurrentUserAdmin(r)), content)
-	}
-	content := components.Toolbar(binsToolbarView())
-	if err := render.Page(r.Context(), w, r, layout, content); err != nil {
-		h.logger.ErrorContext(r.Context(), "shell: render bins page", "error", err)
-	}
 }
 
 // isCurrentUserAdmin reports whether Authenticate resolved an admin user
@@ -159,87 +267,110 @@ func isCurrentUserAdmin(r *http.Request) bool {
 	return ok && u.IsAdmin()
 }
 
-// newAdminUsersLayout returns the layout func injected into
-// identityadapter.NewUsersWebHandlers. isAdmin is unconditionally true here
-// (shellNav(true), not isCurrentUserAdmin): every request that reaches this
-// layout already passed RequireAdmin (see newAppRoutes), so the nav's Users
-// entry is always shown on this one page.
-func newAdminUsersLayout() func(templ.Component) templ.Component {
-	return func(content templ.Component) templ.Component {
-		return components.Layout(shellProps(usersPageTitle), shellNav(true), content)
+// shellProps assembles ShellProps for title from data's real Owners/Stats,
+// scoped by ctx's resolved Principal (anonymous if none resolved).
+func shellProps(ctx context.Context, data *shellDataService, title string) (components.ShellProps, error) {
+	viewer, _ := identityadapter.CurrentPrincipal(ctx)
+	owners, err := data.Owners(ctx)
+	if err != nil {
+		return components.ShellProps{Title: title}, err
 	}
+	stats, err := data.Stats(ctx, viewer)
+	if err != nil {
+		return components.ShellProps{Title: title, Owners: owners}, err
+	}
+	return components.ShellProps{Title: title, Owners: owners, Stats: stats}, nil
+}
+
+// newShellLayout returns the request-aware layout func a page whose nav's
+// Users entry (and thus shellNav's isAdmin) is fixed for every request
+// reaching it shares — NSTR-21's admin screen and NSTR-23's api key
+// settings, both already mounted behind RequireAdmin (see newAppRoutes), so
+// isAdmin is unconditionally true rather than read per request.
+func newShellLayout(data *shellDataService, title string, isAdmin bool, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return func(r *http.Request, content templ.Component) templ.Component {
+		props, err := shellProps(r.Context(), data, title)
+		if err != nil {
+			// Owners/Stats failed to load — log and fall back to whatever
+			// shellProps could still assemble rather than failing the whole
+			// page: the content the user actually asked for still renders.
+			logger.ErrorContext(r.Context(), "shell: load props", "error", err)
+		}
+		return components.Layout(props, shellNav(r.URL.Path, isAdmin), content)
+	}
+}
+
+// newAdminUsersLayout returns the layout func injected into
+// identityadapter.NewUsersWebHandlers (see newShellLayout's own doc for why
+// isAdmin is fixed true here).
+func newAdminUsersLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return newShellLayout(data, usersPageTitle, true, logger)
 }
 
 // newAPIKeySettingsLayout returns the layout func injected into
-// identityadapter.NewAPIKeyWebHandlers. isAdmin is unconditionally true
-// here, the same rationale as newAdminUsersLayout: every request that
-// reaches this layout already passed RequireAdmin (see newAppRoutes).
-func newAPIKeySettingsLayout() func(templ.Component) templ.Component {
-	return func(content templ.Component) templ.Component {
-		return components.Layout(shellProps(apiKeySettingsPageTitle), shellNav(true), content)
-	}
+// identityadapter.NewAPIKeyWebHandlers (see newShellLayout's own doc).
+func newAPIKeySettingsLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return newShellLayout(data, apiKeySettingsPageTitle, true, logger)
 }
 
-// newDeviceSettingsLayout returns the request-aware layout func injected
-// into identityadapter.NewDeviceTokenWebHandlers. Unlike
-// newAdminUsersLayout, isAdmin is NOT hardcoded true: NSTR-22's device
-// self-service screen is reachable by any signed-in user, not only an
-// admin, so shellNav's Users entry has to reflect the ACTUAL request's
-// signed-in user — the same isCurrentUserAdmin(r) check handleBins uses.
-func newDeviceSettingsLayout() func(r *http.Request, content templ.Component) templ.Component {
+// newRequestAdminAwareLayout returns the layout func shared by pages
+// reachable by any signed-in user (not only an admin), where shellNav's
+// Users entry must reflect the ACTUAL request's signed-in user —
+// NSTR-22's device self-service screen and NSTR-31's bin/location pages
+// alike.
+func newRequestAdminAwareLayout(data *shellDataService, title string, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
 	return func(r *http.Request, content templ.Component) templ.Component {
-		return components.Layout(shellProps(devicesPageTitle), shellNav(isCurrentUserAdmin(r)), content)
+		props, err := shellProps(r.Context(), data, title)
+		if err != nil {
+			logger.ErrorContext(r.Context(), "shell: load props", "error", err)
+		}
+		return components.Layout(props, shellNav(r.URL.Path, isCurrentUserAdmin(r)), content)
 	}
 }
 
-// shellNav is the sidebar's primary navigation. The four not-yet-built pages
-// link out now so the full nav renders and is reachable per the AC; each
-// gets a real handler alongside the feature it belongs to. The Users entry
-// (NSTR-21) only renders for an admin.
-func shellNav(isAdmin bool) []components.NavItem {
+// newDeviceSettingsLayout returns the layout func injected into
+// identityadapter.NewDeviceTokenWebHandlers (see
+// newRequestAdminAwareLayout's own doc).
+func newDeviceSettingsLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return newRequestAdminAwareLayout(data, devicesPageTitle, logger)
+}
+
+// newStorageLayout returns the layout func injected into
+// storageadapter.NewBinsWebHandlers/NewLocationsWebHandlers (see
+// newRequestAdminAwareLayout's own doc). title is fixed per handler group
+// (BinsWebHandlers' own routes always render "All bins" as the shell
+// title, LocationsWebHandlers' own "Locations") since neither varies it
+// per specific bin/location the way, say, a per-item title would.
+func newStorageLayout(data *shellDataService, title string, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return newRequestAdminAwareLayout(data, title, logger)
+}
+
+// shellNav is the sidebar's primary navigation, active-highlighted by path
+// (NSTR-31): "All bins" for /bins and every bin detail page (/b/{code}...),
+// "Locations" for /locations and its own detail/edit pages, an exact/
+// prefix match for everything else. The three not-yet-built pages
+// (Search & find, Categories, Labels & codes) still link out so the full
+// nav renders and is reachable per the AC; each gets a real handler
+// alongside the feature it belongs to. The Users entry (NSTR-21) only
+// renders for an admin.
+func shellNav(path string, isAdmin bool) []components.NavItem {
 	nav := []components.NavItem{
-		{Label: binsPageTitle, Href: "/bins", Active: true, Icon: components.IconBin(shellIconClass)},
-		{Label: "Search & find", Href: "/search", Icon: components.IconSearch(shellIconClass)},
-		{Label: "Categories", Href: "/categories", Icon: components.IconCategories(shellIconClass)},
-		{Label: "Locations", Href: "/locations", Icon: components.IconLocations(shellIconClass)},
-		{Label: "Labels & codes", Href: "/labels", Icon: components.IconLabels(shellIconClass)},
+		{Label: binsPageTitle, Href: "/bins", Active: navActive(path, "/bins") || navActive(path, "/b"), Icon: components.IconBin(shellIconClass)},
+		{Label: "Search & find", Href: "/search", Active: navActive(path, "/search"), Icon: components.IconSearch(shellIconClass)},
+		{Label: "Categories", Href: "/categories", Active: navActive(path, "/categories"), Icon: components.IconCategories(shellIconClass)},
+		{Label: locationsPageTitle, Href: "/locations", Active: navActive(path, "/locations"), Icon: components.IconLocations(shellIconClass)},
+		{Label: "Labels & codes", Href: "/labels", Active: navActive(path, "/labels"), Icon: components.IconLabels(shellIconClass)},
 	}
 	if isAdmin {
-		nav = append(nav, components.NavItem{Label: usersPageTitle, Href: "/admin/users", Icon: components.IconUsers(shellIconClass)})
+		nav = append(nav, components.NavItem{Label: usersPageTitle, Href: "/admin/users", Active: navActive(path, "/admin/users"), Icon: components.IconUsers(shellIconClass)})
 	}
 	return nav
 }
 
-// shellOwners is the demo Owners list. Sprint 3 (identity) replaces this
-// with the household's real members.
-func shellOwners() []components.OwnerView {
-	return []components.OwnerView{
-		{Name: "Maya", Initials: "M", Color: components.OwnerIndigo},
-		{Name: "Daniel", Initials: "D", Color: components.OwnerSteel},
-		{Name: "Ivy", Initials: "I", Color: components.OwnerTeal},
-		{Name: "Leo", Initials: "L", Color: components.OwnerPeri},
-		{Name: "Family", Initials: "F", Color: components.OwnerShared},
-	}
-}
-
-// shellProps is the demo ShellProps for the page titled title. Sprint 4
-// (bins & items) replaces the hard-coded stats with a real query.
-func shellProps(title string) components.ShellProps {
-	return components.ShellProps{
-		Title:  title,
-		Owners: shellOwners(),
-		Stats:  components.ShellStats{Bins: 8, Items: 201, Rooms: 5},
-	}
-}
-
-// binsToolbarView is the demo ToolbarView. Sprint 4 replaces the hard-coded
-// count and category set with values derived from the household's actual
-// bins.
-func binsToolbarView() components.ToolbarView {
-	return components.ToolbarView{
-		Heading:    binsPageTitle,
-		Count:      "8 containers",
-		Categories: []string{"All", "Seasonal", "Tools", "Keepsakes", "Outdoor", "Toys", "Food"},
-		Active:     "All",
-	}
+// navActive reports whether path belongs under href: an exact match, or a
+// path nested under it (href followed by "/"). "/b" is passed as href for a
+// bin detail page (/b/{code}, /b/{code}/edit), which does not sit under
+// "/bins" itself.
+func navActive(path, href string) bool {
+	return path == href || strings.HasPrefix(path, href+"/")
 }

@@ -65,8 +65,12 @@ func (f *fakeAdminService) ResetPassword(_ context.Context, _ domain.UserID, _ s
 
 // testUsersLayout wraps content in an identifiable marker so tests can
 // assert a full navigation was wrapped by it and an HTMX request was not,
-// without depending on cmd/server's real shell layout.
-func testUsersLayout(content templ.Component) templ.Component {
+// without depending on cmd/server's real shell layout. It takes an unused
+// *http.Request to satisfy requestLayoutFunc — every WebHandlers layout in
+// this package needs r now that ShellProps carries real, per-request data
+// (see cmd/server/shell.go's own shellProps) — shared by both
+// UsersWebHandlers and APIKeyWebHandlers' own tests.
+func testUsersLayout(_ *http.Request, content templ.Component) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
 		if _, err := io.WriteString(w, "<layout>"); err != nil {
 			return err

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
@@ -43,48 +42,11 @@ func TestShellHandlers_Root_RedirectsToBins(t *testing.T) {
 	}
 }
 
-func TestShellHandlers_Bins_FullNavigation(t *testing.T) {
-	mux := testShellMux(t)
-	req := httptest.NewRequest(http.MethodGet, "/bins", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /bins = %d, want %d", rec.Code, http.StatusOK)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `id="sidebar"`) {
-		t.Error("full-navigation response missing the sidebar — should be wrapped in the shell")
-	}
-	if !strings.Contains(strings.ToLower(body), "<!doctype html>") {
-		t.Error("full-navigation response missing the doctype")
-	}
-	if got := rec.Header().Get("Vary"); got != "HX-Request" {
-		t.Errorf("Vary = %q, want %q", got, "HX-Request")
-	}
-}
-
-func TestShellHandlers_Bins_HTMXFragment(t *testing.T) {
-	mux := testShellMux(t)
-	req := httptest.NewRequest(http.MethodGet, "/bins", nil)
-	req.Header.Set("HX-Request", "true")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /bins (HTMX) = %d, want %d", rec.Code, http.StatusOK)
-	}
-	body := rec.Body.String()
-	if strings.Contains(body, "<!DOCTYPE") || strings.Contains(body, "<html") {
-		t.Error("HTMX fragment response was wrapped in the full shell")
-	}
-	if strings.Contains(body, `id="sidebar"`) {
-		t.Error("HTMX fragment response includes the sidebar — should be the bare toolbar")
-	}
-	if got := rec.Header().Get("Vary"); got != "HX-Request" {
-		t.Errorf("Vary = %q, want %q", got, "HX-Request")
-	}
-}
+// /bins itself is no longer served by shellHandlers (NSTR-31 moved it to
+// storageadapter.BinsWebHandlers, gated behind RequireAuthenticated and
+// requiring real query services) — its full-navigation-vs-HTMX-fragment
+// split is covered by BinsWebHandlers' own hermetic tests
+// (internal/storage/adapter/bins_web_test.go) instead of here.
 
 // TestGuardedRoute_UnauthenticatedRequest_IdenticalRegardlessOfPathParamExistence
 // covers NSTR-24's no-leak acceptance criterion at the mount point NSTR-21's

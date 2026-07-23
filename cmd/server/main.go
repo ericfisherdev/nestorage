@@ -28,6 +28,8 @@ import (
 	identityapp "github.com/ericfisherdev/nestorage/internal/identity/app"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
+	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
+	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 )
 
 // shutdownTimeout bounds how long in-flight requests have to drain on
@@ -98,6 +100,34 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	onboarding := identityadapter.NewOnboardingHandlers(identityRepo, provisioner, sm, logger)
 	setupGuard := identityadapter.SetupGuard(identityRepo, logger)
 
+	// NSTR-31's storage composition: the location/bin/item Postgres
+	// adapters (NSTR-26/27/28), the query/command services built over them
+	// (NSTR-29/30's own ItemService/BinMover, plus NSTR-31's
+	// LocationService/BinService), and the web handlers that serve the
+	// browse/CRUD/move screens. shellData composes the sidebar's real
+	// Owners/Stats from identityRepo and these same services, so every
+	// layout closure below — including identity's own admin/device/api-key
+	// screens — renders real household data instead of a demo value.
+	locationRepo := storageadapter.NewLocationRepository(pool)
+	binRepo := storageadapter.NewBinRepository(pool)
+	itemRepo := storageadapter.NewItemRepository(pool)
+	storageUOW := storageadapter.NewPostgresUnitOfWork(pool)
+
+	locationService := storageapp.NewLocationService(locationRepo, binRepo, logger)
+	binService := storageapp.NewBinService(binRepo, identityRepo, itemRepo, logger)
+	itemService := storageapp.NewItemService(itemRepo, logger)
+	binMover := storageapp.NewBinMover(storageUOW, binRepo, locationRepo, time.Now, logger)
+
+	shellData := newShellDataService(identityRepo, binService, locationService)
+
+	binsWeb := storageadapter.NewBinsWebHandlers(
+		binService, binMover, locationService, identityRepo, itemService,
+		sm, newStorageLayout(shellData, binsPageTitle, logger), logger,
+	)
+	locationsWeb := storageadapter.NewLocationsWebHandlers(
+		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
+	)
+
 	hasher := crypto.NewHasher(crypto.DefaultParams())
 	authenticator := identityapp.NewAuthenticator(identityRepo, hasher)
 	// loginLimiter is shared between the session-cookie login handler and
@@ -118,7 +148,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	deviceTokenRepo := identityadapter.NewDeviceTokenRepository(pool)
 	deviceTokenService := identityapp.NewDeviceTokenService(deviceTokenRepo, identityRepo, authenticator, loginLimiter, time.Now, logger)
 	deviceTokenAPI := identityadapter.NewDeviceTokenAPIHandlers(deviceTokenService, logger)
-	deviceTokenWeb := identityadapter.NewDeviceTokenWebHandlers(deviceTokenService, sm, newDeviceSettingsLayout(), logger)
+	deviceTokenWeb := identityadapter.NewDeviceTokenWebHandlers(deviceTokenService, sm, newDeviceSettingsLayout(shellData, logger), logger)
 
 	// NSTR-23's account api key: the single credential the Nestova
 	// integration authenticates with. NewAPIKeyService returns an error
@@ -130,7 +160,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	apiKeyWeb := identityadapter.NewAPIKeyWebHandlers(apiKeyService, sm, newAPIKeySettingsLayout(), logger)
+	apiKeyWeb := identityadapter.NewAPIKeyWebHandlers(apiKeyService, sm, newAPIKeySettingsLayout(shellData, logger), logger)
 
 	// NSTR-21's admin user management: Revokers is the open seam NSTR-22
 	// plugs its device-token revoker into (OCP) — session revocation and
@@ -138,7 +168,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// of) a user invalidates both.
 	revokers := identityapp.Revokers{identityadapter.NewSessionRevoker(sm), deviceTokenService}
 	adminService := identityapp.NewAdminService(identityRepo, hasher, revokers, logger)
-	usersHandlers := identityadapter.NewUsersWebHandlers(adminService, sm, newAdminUsersLayout(), logger)
+	usersHandlers := identityadapter.NewUsersWebHandlers(adminService, sm, newAdminUsersLayout(shellData, logger), logger)
 
 	// NSTR-24's principal resolution: one Chain dispatching a request's
 	// credential — the session cookie, a device token, or the account api
@@ -172,6 +202,8 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			DeviceTokenAPI: deviceTokenAPI,
 			DeviceTokenWeb: deviceTokenWeb,
 			APIKeyWeb:      apiKeyWeb,
+			Bins:           binsWeb,
+			Locations:      locationsWeb,
 			Denier:         denier,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's

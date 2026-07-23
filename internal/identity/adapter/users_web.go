@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/a-h/templ"
 	"github.com/alexedwards/scs/v2"
 
 	"github.com/ericfisherdev/nestcore/render"
@@ -28,12 +27,6 @@ type adminService interface {
 	ResetPassword(ctx context.Context, id domain.UserID, password string) error
 }
 
-// layoutFunc wraps page content in the app shell. Injected by the
-// composition root (cmd/server/shell.go) rather than built here: this
-// package has no access to ShellProps/shellNav, which are cmd/server's own
-// concepts.
-type layoutFunc func(templ.Component) templ.Component
-
 // UsersWebHandlers serves the admin user-management screen (NSTR-21): the
 // household's other users are listed, created, promoted/demoted,
 // deactivated (never deleted — history keeps their name), reactivated, and
@@ -44,14 +37,14 @@ type layoutFunc func(templ.Component) templ.Component
 type UsersWebHandlers struct {
 	admin  adminService
 	sm     *scs.SessionManager
-	layout layoutFunc
+	layout requestLayoutFunc
 	logger *slog.Logger
 }
 
 // NewUsersWebHandlers constructs UsersWebHandlers. All dependencies are
 // required; a missing one panics at construction time, matching every other
 // WebHandlers constructor in this codebase.
-func NewUsersWebHandlers(admin adminService, sm *scs.SessionManager, layout layoutFunc, logger *slog.Logger) *UsersWebHandlers {
+func NewUsersWebHandlers(admin adminService, sm *scs.SessionManager, layout requestLayoutFunc, logger *slog.Logger) *UsersWebHandlers {
 	if admin == nil {
 		panic("identity/adapter: NewUsersWebHandlers requires a non-nil adminService")
 	}
@@ -255,7 +248,7 @@ func (h *UsersWebHandlers) renderPage(w http.ResponseWriter, r *http.Request, st
 	content := components.UsersTable(view)
 	c := content
 	if !render.IsHTMX(r) {
-		c = h.layout(content)
+		c = h.layout(r, content)
 	}
 	if err := render.Render(r.Context(), w, status, c); err != nil {
 		h.logger.ErrorContext(r.Context(), "admin users: render", "error", err)
