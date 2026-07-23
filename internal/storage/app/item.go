@@ -1,7 +1,10 @@
 // Package app contains the storage context's application services.
 // ItemService orchestrates item creation, edits, and visibility-aware
 // reads/list/delete over domain.ItemRepository, without depending on any
-// infrastructure package directly.
+// infrastructure package directly. NSTR-29 adds OperationService
+// (operations.go): the transactional add/remove/return placement
+// operations, over the same domain.ItemRepository/domain.BinRepository
+// shape but through its own narrower ports.
 package app
 
 import (
