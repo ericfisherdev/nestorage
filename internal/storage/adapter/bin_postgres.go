@@ -172,15 +172,19 @@ func (r *BinRepository) UpdateVisibility(ctx context.Context, viewer identity.Pr
 
 // Delete removes the bin, scoped to what viewer may mutate (see
 // visibilityWhere). Returns domain.ErrBinNotFound when id is unknown or not
-// mutable by viewer. A later item foreign key (NSTR-28) will add its own
-// ON DELETE RESTRICT rejecting deletion of a non-empty bin — not this
-// method's concern.
+// mutable by viewer, or domain.ErrBinNotEmpty when a dependent row (an item,
+// NSTR-28) still references it — enforced at the database by
+// item.current_bin_id's ON DELETE RESTRICT foreign key, the bin-side analog
+// of LocationRepository.Delete's ErrLocationNotEmpty.
 func (r *BinRepository) Delete(ctx context.Context, viewer identity.Principal, id domain.BinID) error {
 	q := `DELETE FROM bin WHERE id = $1 AND ` + visibilityWhere(1)
 	args := append([]any{id.String()}, viewerArgs(viewer)...)
 
 	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {
+		if isForeignKeyViolation(err) {
+			return domain.ErrBinNotEmpty
+		}
 		return fmt.Errorf("delete bin: %w", err)
 	}
 	if tag.RowsAffected() == 0 {

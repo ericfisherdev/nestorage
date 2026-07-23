@@ -144,7 +144,9 @@ var _ identity.BinSubject = (*Bin)(nil)
 //     bin exists.
 //   - ListVisible returns every bin viewer may see, empty slice when none.
 //   - UpdateVisibility and Delete return ErrBinNotFound when the row is
-//     missing or viewer may not mutate it (CanMutateBin).
+//     missing or viewer may not mutate it (CanMutateBin). Delete also
+//     returns ErrBinNotEmpty when an item (NSTR-28) still references the
+//     bin.
 type BinRepository interface {
 	Create(ctx context.Context, b *Bin) error
 	FindVisibleByID(ctx context.Context, viewer identity.Principal, id BinID) (*Bin, error)

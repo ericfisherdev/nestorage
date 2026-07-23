@@ -34,6 +34,12 @@ var (
 	// unique constraint.
 	ErrDuplicateBinCode = errors.New("storage: bin code already in use")
 
+	// ErrBinNotEmpty is returned by BinRepository.Delete when an item
+	// (NSTR-28) still references the bin — enforced at the database by
+	// item.current_bin_id's ON DELETE RESTRICT foreign key, the bin-side
+	// analog of ErrLocationNotEmpty.
+	ErrBinNotEmpty = errors.New("storage: bin is not empty")
+
 	// ErrInvalidBin is returned (wrapped) by Bin.Validate for a malformed
 	// bin.
 	ErrInvalidBin = errors.New("storage: invalid bin")
@@ -42,4 +48,29 @@ var (
 	// by ParseVisibility when given a string that is not a known
 	// Visibility.
 	ErrInvalidVisibility = errors.New("storage: invalid bin visibility")
+
+	// ErrItemNotFound is returned by ItemRepository methods that look up or
+	// mutate a specific item (Get, GetForUpdate, Update, Move, Delete) when
+	// no matching row exists, or exists but is not visible to the
+	// requesting viewer — the same "not found" masking ErrBinNotFound's own
+	// doc requires, so a member cannot even confirm another member's
+	// private-bin item exists.
+	ErrItemNotFound = errors.New("storage: item not found")
+
+	// ErrInvalidQuantity is returned (wrapped) by Item.Validate, and by
+	// ItemRepository.Create/Update, for a quantity that is not strictly
+	// positive — the domain mirror of the item_quantity_check database
+	// CHECK.
+	ErrInvalidQuantity = errors.New("storage: item quantity must be positive")
+
+	// ErrInvalidPlacement is returned (wrapped) by Item.Validate, and by
+	// ItemRepository.Create/Move, when an item does not have exactly one of
+	// CurrentBinID/HeldBy set — the domain mirror of the
+	// item_placement_exclusive database CHECK.
+	ErrInvalidPlacement = errors.New("storage: item must be placed in exactly one bin or held by exactly one user")
+
+	// ErrItemNameRequired is returned (wrapped) by Item.Validate for a
+	// blank (or whitespace-only) name — the domain mirror of item's own
+	// blank-name CHECK.
+	ErrItemNameRequired = errors.New("storage: item name is required")
 )
