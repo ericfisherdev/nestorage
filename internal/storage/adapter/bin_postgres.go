@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -191,6 +192,51 @@ func (r *BinRepository) Delete(ctx context.Context, viewer identity.Principal, i
 		return domain.ErrBinNotFound
 	}
 	return nil
+}
+
+// GetForUpdate returns the bin locked FOR UPDATE within the caller's
+// transaction, not scoped by visibility — see domain.BinRepository's own doc:
+// the caller (NSTR-30's app.BinMover) is expected to have already checked
+// visibility via FindVisibleByID. Mirrors ItemRepository.GetForUpdate
+// exactly. Returns domain.ErrBinNotFound when id is unknown.
+func (r *BinRepository) GetForUpdate(ctx context.Context, id domain.BinID) (*domain.Bin, error) {
+	q := binColumns + ` WHERE id = $1 FOR UPDATE`
+	b, err := scanBin(r.dbtx.QueryRow(ctx, q, id.String()))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrBinNotFound
+		}
+		return nil, fmt.Errorf("get bin for update: %w", err)
+	}
+	return b, nil
+}
+
+// Move overwrites id's location_id/updated_at to relocate the bin — the
+// move variant of ItemRepository.Move, sharing its rowsAffected-alongside-
+// error contract so a caller that already holds the row FOR UPDATE (see
+// GetForUpdate) can confirm the write landed without a second round trip.
+// now is supplied by the caller (app.BinMover's clock) rather than read from
+// SQL's own now(), so the persisted updated_at matches exactly the MovedAt
+// app.MoveResult returns. Returns domain.ErrBinNotFound when id is unknown,
+// or a wrapped domain.ErrLocationNotFound when target's foreign key is
+// violated — a backstop only: app.BinMover's own visibility check against
+// the target, via LocationRepository.FindVisibleByID, is the primary guard,
+// since it also rejects a present-but-invisible location the FK alone
+// cannot catch.
+func (r *BinRepository) Move(ctx context.Context, id domain.BinID, target domain.LocationID, now time.Time) (int64, error) {
+	const q = `UPDATE bin SET location_id = $2, updated_at = $3 WHERE id = $1`
+	tag, err := r.dbtx.Exec(ctx, q, id.String(), target.String(), now)
+	if err != nil {
+		if isPgConstraint(err, foreignKeyViolation, binLocationFKConstraint) {
+			return 0, domain.ErrLocationNotFound
+		}
+		return 0, fmt.Errorf("move bin: %w", err)
+	}
+	affected := tag.RowsAffected()
+	if affected == 0 {
+		return 0, domain.ErrBinNotFound
+	}
+	return affected, nil
 }
 
 // visibilityWhere returns the SQL fragment enforcing identity.CanSeeBin's

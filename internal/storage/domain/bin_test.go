@@ -102,6 +102,37 @@ func TestBin_Validate(t *testing.T) {
 	}
 }
 
+// TestBin_MoveTo_RelocatesBin exercises the success path: MoveTo to a
+// different location overwrites LocationID and returns nil.
+func TestBin_MoveTo_RelocatesBin(t *testing.T) {
+	from := domain.NewLocationID()
+	to := domain.NewLocationID()
+	b := &domain.Bin{LocationID: from}
+
+	if err := b.MoveTo(to); err != nil {
+		t.Fatalf("MoveTo: %v", err)
+	}
+	if b.LocationID != to {
+		t.Errorf("LocationID after MoveTo = %v, want %v", b.LocationID, to)
+	}
+}
+
+// TestBin_MoveTo_NoopRejected is the no-op guard NSTR-30 requires: moving to
+// the bin's own current location is rejected with ErrBinAlreadyInLocation
+// and leaves LocationID untouched, regardless of which caller invokes it.
+func TestBin_MoveTo_NoopRejected(t *testing.T) {
+	loc := domain.NewLocationID()
+	b := &domain.Bin{LocationID: loc}
+
+	err := b.MoveTo(loc)
+	if !errors.Is(err, domain.ErrBinAlreadyInLocation) {
+		t.Errorf("MoveTo(current location) = %v, want ErrBinAlreadyInLocation", err)
+	}
+	if b.LocationID != loc {
+		t.Errorf("rejected MoveTo must not change LocationID: got %v, want %v", b.LocationID, loc)
+	}
+}
+
 // TestBin_SatisfiesBinSubject exercises the two accessors identity.BinSubject
 // needs, through the interface itself rather than the concrete type, so a
 // regression that breaks the compile-time assertion in bin.go would also

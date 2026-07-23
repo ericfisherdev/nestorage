@@ -61,8 +61,14 @@ func (u *fakeUnitOfWork) WithinTx(_ context.Context, fn func(app.ItemStore) erro
 	return fn(u.store)
 }
 
-// fakeBinVisibility is an in-memory binFinder fake: FindVisibleByID
-// returns bin when its id matches, else notFoundErr.
+// fakeBinVisibility is an in-memory binFinder fake: FindVisibleByID returns
+// a copy of bin when its id matches, else notFoundErr. A copy, not bin
+// itself, mirrors fakeItemStore.GetForUpdate's own copy-on-read rationale:
+// two independent reads of the same row (a real FindVisibleByID SELECT and a
+// later, separate GetForUpdate SELECT ... FOR UPDATE) are always distinct Go
+// values in production, so a caller mutating one (BinMover.Move's own
+// bin.MoveTo(target) no-op check, mover_test.go) must never be able to
+// corrupt what a later read of the same fake sees.
 type fakeBinVisibility struct {
 	bin         *domain.Bin
 	notFoundErr error
@@ -70,7 +76,8 @@ type fakeBinVisibility struct {
 
 func (f *fakeBinVisibility) FindVisibleByID(_ context.Context, _ identity.Principal, id domain.BinID) (*domain.Bin, error) {
 	if f.bin != nil && f.bin.ID == id {
-		return f.bin, nil
+		cp := *f.bin
+		return &cp, nil
 	}
 	return nil, f.notFoundErr
 }

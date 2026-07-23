@@ -99,4 +99,11 @@ var (
 	// the Nestova integration's account api key principal has no person
 	// behind it to attribute a checked-out item's hold to.
 	ErrHolderRequired = errors.New("storage: only a user principal may check out an item")
+
+	// ErrBinAlreadyInLocation is returned by Bin.MoveTo when the target
+	// location equals the bin's current LocationID — NSTR-30's no-op guard,
+	// kept in the domain (not app.BinMover) so it holds regardless of
+	// caller, the same "guard in the domain" contract EnterBin/CheckOut/
+	// ReturnTo follow for Item.
+	ErrBinAlreadyInLocation = errors.New("storage: bin already in that location")
 )
