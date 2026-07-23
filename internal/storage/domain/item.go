@@ -160,5 +160,12 @@ type ItemRepository interface {
 	// ListByBin returns every item in binID viewer may see, ordered by
 	// name, tie-broken by id.
 	ListByBin(ctx context.Context, viewer identity.Principal, binID BinID) ([]Item, error)
+	// CountsByBin returns how many items viewer may see are currently sitting
+	// in each bin, keyed by bin id — the aggregate the bin grid and location
+	// detail pages need to show "N items" on every card without an N+1
+	// ListByBin call per bin. A bin holding zero visible items is simply
+	// absent from the map; the caller treats a missing key as zero, the same
+	// "absence means zero/none" contract ListVisible's empty slice follows.
+	CountsByBin(ctx context.Context, viewer identity.Principal) (map[BinID]int, error)
 	Delete(ctx context.Context, id ItemID) error
 }
