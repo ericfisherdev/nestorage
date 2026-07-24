@@ -38,6 +38,9 @@ type itemGetter interface {
 // upload (Sprint 5 reconciliation R3), so a photo carrying EXIF GPS data can
 // never reach PhotoStore.Put with that data intact, and re-uploading the
 // same source photo twice still dedupes on the identical scrubbed bytes.
+// NSTR-84 extends Upload with a thumbnail-generation step (PhotoThumbnailer)
+// after that same dedup probe, and extends Open/DirectURL/Delete to handle
+// the resulting thumbnail variant — see each method's own doc.
 //
 // Every method below is visibility-scoped to viewer via itemGetter (Sprint
 // 5 reconciliation R5) — see itemGetter's own doc.
@@ -45,6 +48,7 @@ type PhotoService struct {
 	store          domain.PhotoStore
 	validator      domain.PhotoValidator
 	scrubber       domain.PhotoScrubber
+	thumbnailer    domain.PhotoThumbnailer
 	photos         domain.PhotoRepository
 	items          itemGetter
 	maxUploadBytes int64
@@ -59,7 +63,7 @@ type PhotoService struct {
 // media/adapter.NewLocalPhotoStore's identical config-value check: it is a
 // value that flows from parsed configuration, not a structural dependency,
 // so the composition root can fail startup gracefully rather than panic.
-func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, scrubber domain.PhotoScrubber, photos domain.PhotoRepository, items itemGetter, maxUploadBytes int64, logger *slog.Logger) (*PhotoService, error) {
+func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, scrubber domain.PhotoScrubber, thumbnailer domain.PhotoThumbnailer, photos domain.PhotoRepository, items itemGetter, maxUploadBytes int64, logger *slog.Logger) (*PhotoService, error) {
 	switch {
 	case store == nil:
 		panic("media/app: NewPhotoService requires a non-nil PhotoStore")
@@ -67,6 +71,8 @@ func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, s
 		panic("media/app: NewPhotoService requires a non-nil PhotoValidator")
 	case scrubber == nil:
 		panic("media/app: NewPhotoService requires a non-nil PhotoScrubber")
+	case thumbnailer == nil:
+		panic("media/app: NewPhotoService requires a non-nil PhotoThumbnailer")
 	case photos == nil:
 		panic("media/app: NewPhotoService requires a non-nil PhotoRepository")
 	case items == nil:
@@ -78,7 +84,7 @@ func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, s
 		return nil, fmt.Errorf("media/app: max upload bytes must be positive, got %d", maxUploadBytes)
 	}
 	return &PhotoService{
-		store: store, validator: validator, scrubber: scrubber, photos: photos, items: items,
+		store: store, validator: validator, scrubber: scrubber, thumbnailer: thumbnailer, photos: photos, items: items,
 		maxUploadBytes: maxUploadBytes, logger: logger,
 	}, nil
 }
@@ -98,7 +104,19 @@ func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, s
 // same key, so if a photo with that StorageRef already exists
 // (FindByStorageRef, or a concurrent upload losing the race and surfacing
 // ErrDuplicatePhoto from Create) Upload returns the EXISTING photo rather
-// than creating a second row.
+// than creating a second row (and never bothers generating a thumbnail for
+// it — see the dedup check below).
+//
+// Once a genuinely new upload clears that dedup check, Upload generates a
+// thumbnail from the SAME scrubbed bytes (PhotoThumbnailer, NSTR-84) and
+// Puts it under its own key, keyed by the SAME content hash as the full
+// image (see PutMeta.Variant/buildStorageKey) so item-scoped dedup keeps
+// working for both variants. Thumbnail generation or storage failing does
+// NOT fail the upload: the resulting Photo is created with a nil
+// ThumbnailRef and the failure is logged at warn level — the household
+// loses a size optimization, never a photo, and the serve path
+// (Open/DirectURL) transparently falls back to the full image for a photo
+// whose ThumbnailRef is nil.
 func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, itemID storagedomain.ItemID, r io.Reader) (*domain.Photo, error) {
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return nil, err
@@ -136,9 +154,12 @@ func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, it
 		return nil, fmt.Errorf("media/app: check duplicate photo: %w", findErr)
 	}
 
+	thumbRef := s.tryGenerateThumbnail(ctx, itemID, scrubbed, meta.ContentType, meta.ContentHash)
+
 	photo := &domain.Photo{
 		ID:             domain.NewPhotoID(),
 		StorageRef:     ref,
+		ThumbnailRef:   thumbRef,
 		ContentHash:    meta.ContentHash,
 		SizeBytes:      meta.SizeBytes,
 		ContentType:    meta.ContentType,
@@ -189,34 +210,39 @@ func (s *PhotoService) ListForItem(ctx context.Context, viewer identity.Principa
 	return photos, nil
 }
 
-// Open streams photoID's stored bytes back, first confirming itemID is
+// Open streams photoID's variant bytes back, first confirming itemID is
 // visible to viewer and that photoID is attached to itemID (GetForItem —
 // see its own doc for why a bare photo id is never trusted alone). Returns
 // the photo's content type alongside the stream so the caller can set an
-// explicit Content-Type rather than letting the client sniff it.
-func (s *PhotoService) Open(ctx context.Context, viewer identity.Principal, itemID storagedomain.ItemID, photoID domain.PhotoID) (io.ReadCloser, string, error) {
+// explicit Content-Type rather than letting the client sniff it — this is
+// always the FULL image's content type, which is also correct for the thumb
+// variant, since PhotoThumbnailer always re-encodes at the same content
+// type it decoded (see that port's own doc). variant selects which object
+// resolveRef resolves to (see its own doc for the thumb-missing fallback).
+func (s *PhotoService) Open(ctx context.Context, viewer identity.Principal, itemID storagedomain.ItemID, photoID domain.PhotoID, variant domain.PhotoVariant) (io.ReadCloser, string, error) {
 	photo, err := s.viewablePhoto(ctx, viewer, itemID, photoID)
 	if err != nil {
 		return nil, "", err
 	}
-	rc, err := s.store.Open(ctx, photo.StorageRef)
+	rc, err := s.store.Open(ctx, s.resolveRef(photo, variant))
 	if err != nil {
 		return nil, "", err
 	}
 	return rc, photo.ContentType, nil
 }
 
-// DirectURL returns a locator for photoID's stored bytes (see
+// DirectURL returns a locator for photoID's variant bytes (see
 // PhotoStore.URL), first confirming itemID is visible to viewer and that
 // photoID is attached to itemID. Callers should check SupportsDirectURL
 // before deciding whether to redirect a client to the result or to stream
-// it through Open instead.
-func (s *PhotoService) DirectURL(ctx context.Context, viewer identity.Principal, itemID storagedomain.ItemID, photoID domain.PhotoID) (string, error) {
+// it through Open instead. variant selects which object resolveRef resolves
+// to (see its own doc for the thumb-missing fallback).
+func (s *PhotoService) DirectURL(ctx context.Context, viewer identity.Principal, itemID storagedomain.ItemID, photoID domain.PhotoID, variant domain.PhotoVariant) (string, error) {
 	photo, err := s.viewablePhoto(ctx, viewer, itemID, photoID)
 	if err != nil {
 		return "", err
 	}
-	url, err := s.store.URL(ctx, photo.StorageRef, 0)
+	url, err := s.store.URL(ctx, s.resolveRef(photo, variant), 0)
 	if err != nil {
 		return "", err
 	}
@@ -226,14 +252,36 @@ func (s *PhotoService) DirectURL(ctx context.Context, viewer identity.Principal,
 // SupportsDirectURL reports whether DirectURL returns a browser-navigable
 // locator (see PhotoStore.SupportsDirectURL's own doc). It carries no
 // per-item data, so — unlike every other method here — it is not
-// visibility-scoped: there is nothing item-specific to leak.
+// visibility-scoped: there is nothing item-specific to leak. It is also
+// deliberately variant-independent (mirrors PhotoStore.SupportsDirectURL's
+// own doc): it describes the backend, not which object a given call
+// resolves to, so a thumbnail request travels through exactly the same
+// redirect-or-stream branch a full-image request does.
 func (s *PhotoService) SupportsDirectURL() bool { return s.store.SupportsDirectURL() }
+
+// resolveRef returns photo's StorageRef for variant: its ThumbnailRef when
+// variant is PhotoVariantThumb AND one exists, its full StorageRef
+// otherwise — both for a PhotoVariantFull request and for a
+// PhotoVariantThumb request that falls back because ThumbnailRef is nil
+// (generation never ran, or failed at upload time — see Upload's own doc).
+// No caller of Open/DirectURL ever has to implement this fallback itself.
+func (s *PhotoService) resolveRef(photo *domain.Photo, variant domain.PhotoVariant) domain.StorageRef {
+	if variant == domain.PhotoVariantThumb && photo.ThumbnailRef != nil {
+		return *photo.ThumbnailRef
+	}
+	return photo.StorageRef
+}
 
 // Delete removes photoID (first confirming itemID is visible to viewer and
 // that photoID is attached to itemID), then its stored bytes: the
-// PhotoRepository row(s) first, the PhotoStore object last (see
+// PhotoRepository row(s) first, the PhotoStore object(s) last (see
 // domain.PhotoRepository's own doc for why item-scoped dedup makes this
-// ordering safe with no refcounting).
+// ordering safe with no refcounting) — the thumbnail object (when one
+// exists), then the full object (NSTR-84). A missing thumbnail object is
+// not an error: PhotoStore.Delete is idempotent on a missing key by the
+// contract NSTR-34 locked, which matters here since ThumbnailRef can be nil
+// or can point at an object a prior, partially-failed Delete already
+// removed.
 func (s *PhotoService) Delete(ctx context.Context, viewer identity.Principal, itemID storagedomain.ItemID, photoID domain.PhotoID) error {
 	photo, err := s.viewablePhoto(ctx, viewer, itemID, photoID)
 	if err != nil {
@@ -241,6 +289,11 @@ func (s *PhotoService) Delete(ctx context.Context, viewer identity.Principal, it
 	}
 	if err := s.photos.Delete(ctx, itemID, photoID); err != nil {
 		return err
+	}
+	if photo.ThumbnailRef != nil {
+		if err := s.store.Delete(ctx, *photo.ThumbnailRef); err != nil {
+			return fmt.Errorf("media/app: delete stored thumbnail bytes: %w", err)
+		}
 	}
 	if err := s.store.Delete(ctx, photo.StorageRef); err != nil {
 		return fmt.Errorf("media/app: delete stored photo bytes: %w", err)
@@ -291,6 +344,33 @@ func (s *PhotoService) viewablePhoto(ctx context.Context, viewer identity.Princi
 		return nil, err
 	}
 	return photo, nil
+}
+
+// tryGenerateThumbnail generates itemID's thumbnail variant from scrubbed
+// (the already-scrubbed upload bytes Upload hashed for the full image) and
+// stores it under fullHash — the SAME content hash as the full image — so
+// item-scoped dedup keeps working for both variants. Returns nil, logged at
+// warn level, on either a generation or a storage failure: never fatal to
+// Upload (see its own doc) — the household loses a size optimization, never
+// a photo.
+func (s *PhotoService) tryGenerateThumbnail(ctx context.Context, itemID storagedomain.ItemID, scrubbed []byte, contentType, fullHash string) *domain.StorageRef {
+	thumb, err := s.thumbnailer.Thumbnail(scrubbed, contentType)
+	if err != nil {
+		s.logger.WarnContext(ctx, "media: thumbnail generation failed, photo will serve the full image", "item_id", itemID.String(), "error", err)
+		return nil
+	}
+	thumbMeta := domain.PutMeta{
+		ContentHash: fullHash,
+		SizeBytes:   int64(len(thumb.Bytes)),
+		ContentType: thumb.ContentType,
+		Variant:     domain.PhotoVariantThumb,
+	}
+	ref, err := s.store.Put(ctx, itemID, thumbMeta, bytes.NewReader(thumb.Bytes))
+	if err != nil {
+		s.logger.WarnContext(ctx, "media: thumbnail storage failed, photo will serve the full image", "item_id", itemID.String(), "error", err)
+		return nil
+	}
+	return &ref
 }
 
 // hashBytes returns the hex sha256 of data — Upload's "hash the scrubbed

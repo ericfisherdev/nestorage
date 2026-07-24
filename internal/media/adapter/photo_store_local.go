@@ -65,7 +65,7 @@ func (s *LocalPhotoStore) Put(_ context.Context, itemID storagedomain.ItemID, me
 	if !ok {
 		return "", fmt.Errorf("%w: %q", domain.ErrUnsupportedMediaType, meta.ContentType)
 	}
-	key := buildStorageKey(itemID, meta.ContentHash, ext)
+	key := buildStorageKey(itemID, meta.ContentHash, ext, meta.Variant)
 	full, err := s.resolve(key)
 	if err != nil {
 		return "", err

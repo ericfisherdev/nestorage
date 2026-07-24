@@ -19,6 +19,14 @@ type PutMeta struct {
 	ContentHash string
 	SizeBytes   int64
 	ContentType string
+	// Variant selects which key suffix Put derives (see
+	// internal/media/adapter's buildStorageKey): PhotoVariantThumb appends
+	// "_thumb" before the extension, landing the thumbnail on its own key
+	// derived from the SAME ContentHash as the full image (NSTR-84). The
+	// zero value behaves exactly like PhotoVariantFull, so every call site
+	// that predates NSTR-84 (which never sets this field) keeps landing on
+	// the unsuffixed key.
+	Variant PhotoVariant
 }
 
 // PhotoStore persists and serves already-validated photo bytes behind a
@@ -141,9 +149,12 @@ type ItemPhoto struct {
 // silently orphaning another item's bytes.
 type PhotoRepository interface {
 	// Create inserts photo (not yet attached to any item — see
-	// AttachToItem) and populates its CreatedAt. Returns ErrDuplicatePhoto
-	// when photo.StorageRef collides with an existing row (the
-	// photo_storage_ref_uniq constraint), or identity.ErrUserNotFound when
+	// AttachToItem) and populates its CreatedAt. photo.ThumbnailRef, when
+	// non-nil, is written in this SAME INSERT (NSTR-84) — there is no
+	// separate write path on the upload flow; SetThumbnailRef exists only
+	// for cmd/backfill-thumbs' later UPDATE against an existing row. Returns
+	// ErrDuplicatePhoto when photo.StorageRef collides with an existing row
+	// (the photo_storage_ref_uniq constraint), or identity.ErrUserNotFound when
 	// photo.UploadedBy is unknown.
 	Create(ctx context.Context, photo *Photo) error
 
@@ -203,4 +214,35 @@ type PhotoRepository interface {
 	// which callers must not rely on — PhotoService.Reorder always builds
 	// order from a preceding ListForItem.
 	Reorder(ctx context.Context, itemID storagedomain.ItemID, order []PhotoID) error
+
+	// SetThumbnailRef records ref as photoID's thumbnail variant. Used only
+	// by cmd/backfill-thumbs (NSTR-84): the upload path instead populates
+	// Photo.ThumbnailRef before Create, in the same INSERT (see Create's own
+	// doc) — this method exists for the separate UPDATE a backfill run makes
+	// against an already-existing row. Returns ErrPhotoNotFound when photoID
+	// is unknown.
+	SetThumbnailRef(ctx context.Context, photoID PhotoID, ref StorageRef) error
+
+	// ListMissingThumbnail returns up to limit photo rows whose thumbnail
+	// reference is still NULL, ordered by id ascending and starting strictly
+	// after afterID (the zero PhotoID for the first page) — a resumable,
+	// deterministic cursor cmd/backfill-thumbs (NSTR-84) re-runs until it
+	// gets back an empty slice. Each row carries just enough (its own id,
+	// the item it is attached to, its full StorageRef, and its content
+	// type) for the backfill to generate and store a thumbnail without a
+	// second query per row.
+	ListMissingThumbnail(ctx context.Context, limit int, afterID PhotoID) ([]MissingThumbnailPhoto, error)
+}
+
+// MissingThumbnailPhoto is one row PhotoRepository.ListMissingThumbnail
+// returns. ContentHash lets cmd/backfill-thumbs key the generated
+// thumbnail's Put under the SAME content hash as the full image (see
+// PutMeta.Variant/buildStorageKey), exactly like the upload path, without a
+// second query to recover it.
+type MissingThumbnailPhoto struct {
+	ID          PhotoID
+	ItemID      storagedomain.ItemID
+	StorageRef  StorageRef
+	ContentHash string
+	ContentType string
 }

@@ -79,8 +79,16 @@ func (r StorageRef) String() string { return string(r) }
 // (NSTR-35's mixed-state requirement); UploadedBy is the user who uploaded
 // it, for item history attribution.
 type Photo struct {
-	ID             PhotoID
-	StorageRef     StorageRef
+	ID         PhotoID
+	StorageRef StorageRef
+	// ThumbnailRef is the thumbnail variant's StorageRef (NSTR-84), or nil
+	// when no thumbnail exists — either generation/storage failed at upload
+	// time (PhotoService.Upload treats that as non-fatal, see its own doc)
+	// or the photo predates NSTR-84 and has not been backfilled yet. A
+	// pointer, not an empty StorageRef: StorageRef("") is already rejected
+	// by Validate for StorageRef itself, so a pointer is the honest way to
+	// express "no thumbnail" without inventing a sentinel value.
+	ThumbnailRef   *StorageRef
 	ContentHash    string
 	SizeBytes      int64
 	ContentType    string
@@ -98,6 +106,9 @@ type Photo struct {
 func (p Photo) Validate() error {
 	if strings.TrimSpace(p.StorageRef.String()) == "" {
 		return fmt.Errorf("%w: storage ref must not be blank", ErrInvalidPhoto)
+	}
+	if p.ThumbnailRef != nil && strings.TrimSpace(p.ThumbnailRef.String()) == "" {
+		return fmt.Errorf("%w: thumbnail ref must not be blank when present", ErrInvalidPhoto)
 	}
 	if !contentHashPattern.MatchString(p.ContentHash) {
 		return fmt.Errorf("%w: content hash must be a 64-character lowercase hex sha256, got %q", ErrInvalidPhoto, p.ContentHash)

@@ -3,6 +3,7 @@ package adapter_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -436,6 +437,184 @@ func TestPhotoRepository_Reorder_RewritesPositions(t *testing.T) {
 		if ip.Photo.ID != want[i] {
 			t.Errorf("list[%d].Photo.ID = %s, want %s", i, ip.Photo.ID, want[i])
 		}
+	}
+}
+
+// TestPhotoRepository_Create_ThumbnailRefRoundTrips proves Create's INSERT
+// populates thumb_storage_ref in the same statement (NSTR-84) when
+// Photo.ThumbnailRef is set — no follow-up UPDATE required.
+func TestPhotoRepository_Create_ThumbnailRefRoundTrips(t *testing.T) {
+	f := newPhotoFixture(t)
+	uploader := f.seedUser(t)
+	p := newPhoto(uploader, "items/thumb/"+validHash+".jpg")
+	thumbRef := domain.StorageRef("items/thumb/" + validHash + "_thumb.jpg")
+	p.ThumbnailRef = &thumbRef
+
+	if err := f.repo.Create(testCtx(t), p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := f.repo.FindByStorageRef(testCtx(t), p.StorageRef)
+	if err != nil {
+		t.Fatalf("FindByStorageRef: %v", err)
+	}
+	if got.ThumbnailRef == nil || *got.ThumbnailRef != thumbRef {
+		t.Errorf("FindByStorageRef.ThumbnailRef = %v, want %v", got.ThumbnailRef, thumbRef)
+	}
+}
+
+// TestPhotoRepository_Create_NoThumbnailRefLeavesItNil proves a photo
+// created without a ThumbnailRef (the common upload-time path when
+// generation is deferred, or the fallback when it failed) round-trips a nil
+// ThumbnailRef rather than some zero-value sentinel.
+func TestPhotoRepository_Create_NoThumbnailRefLeavesItNil(t *testing.T) {
+	f := newPhotoFixture(t)
+	uploader := f.seedUser(t)
+	p := newPhoto(uploader, "items/no-thumb/"+validHash+".jpg")
+
+	if err := f.repo.Create(testCtx(t), p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := f.repo.FindByStorageRef(testCtx(t), p.StorageRef)
+	if err != nil {
+		t.Fatalf("FindByStorageRef: %v", err)
+	}
+	if got.ThumbnailRef != nil {
+		t.Errorf("FindByStorageRef.ThumbnailRef = %v, want nil", *got.ThumbnailRef)
+	}
+}
+
+// TestPhotoRepository_SetThumbnailRef_RoundTrips proves SetThumbnailRef's
+// UPDATE (the path cmd/backfill-thumbs uses) is visible through a
+// subsequent read.
+func TestPhotoRepository_SetThumbnailRef_RoundTrips(t *testing.T) {
+	f := newPhotoFixture(t)
+	uploader := f.seedUser(t)
+	p := newPhoto(uploader, "items/set-thumb/"+validHash+".jpg")
+	if err := f.repo.Create(testCtx(t), p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	ref := domain.StorageRef("items/set-thumb/" + validHash + "_thumb.jpg")
+	if err := f.repo.SetThumbnailRef(testCtx(t), p.ID, ref); err != nil {
+		t.Fatalf("SetThumbnailRef: %v", err)
+	}
+
+	got, err := f.repo.FindByStorageRef(testCtx(t), p.StorageRef)
+	if err != nil {
+		t.Fatalf("FindByStorageRef: %v", err)
+	}
+	if got.ThumbnailRef == nil || *got.ThumbnailRef != ref {
+		t.Errorf("FindByStorageRef.ThumbnailRef = %v, want %v", got.ThumbnailRef, ref)
+	}
+}
+
+func TestPhotoRepository_SetThumbnailRef_UnknownPhotoNotFound(t *testing.T) {
+	f := newPhotoFixture(t)
+	err := f.repo.SetThumbnailRef(testCtx(t), domain.NewPhotoID(), domain.StorageRef("items/x/y_thumb.jpg"))
+	if !errors.Is(err, domain.ErrPhotoNotFound) {
+		t.Errorf("SetThumbnailRef(unknown) = %v, want ErrPhotoNotFound", err)
+	}
+}
+
+// TestPhotoRepository_ListMissingThumbnail_OnlyNullRows proves the query
+// returns exactly the rows whose thumbnail reference is still NULL,
+// excluding one that already has a thumbnail — over photos attached to a
+// seeded item, since ListMissingThumbnail's join requires an item_photo row.
+func TestPhotoRepository_ListMissingThumbnail_OnlyNullRows(t *testing.T) {
+	f := newPhotoFixture(t)
+	uploader := f.seedUser(t)
+	itemID := f.seedItem(t, uploader)
+
+	missing := newPhoto(uploader, "items/lm/missing-"+validHash+".jpg")
+	if err := f.repo.Create(testCtx(t), missing); err != nil {
+		t.Fatalf("Create(missing): %v", err)
+	}
+	if err := f.repo.AttachToItem(testCtx(t), itemID, missing.ID, 0, true); err != nil {
+		t.Fatalf("AttachToItem(missing): %v", err)
+	}
+
+	populated := newPhoto(uploader, "items/lm/populated-"+validHash+".jpg")
+	thumbRef := domain.StorageRef("items/lm/populated-" + validHash + "_thumb.jpg")
+	populated.ThumbnailRef = &thumbRef
+	if err := f.repo.Create(testCtx(t), populated); err != nil {
+		t.Fatalf("Create(populated): %v", err)
+	}
+	if err := f.repo.AttachToItem(testCtx(t), itemID, populated.ID, 1, false); err != nil {
+		t.Fatalf("AttachToItem(populated): %v", err)
+	}
+
+	rows, err := f.repo.ListMissingThumbnail(testCtx(t), 10, domain.PhotoID{})
+	if err != nil {
+		t.Fatalf("ListMissingThumbnail: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != missing.ID {
+		t.Fatalf("ListMissingThumbnail = %+v, want exactly [missing]", rows)
+	}
+	if rows[0].ItemID != itemID {
+		t.Errorf("ListMissingThumbnail[0].ItemID = %v, want %v", rows[0].ItemID, itemID)
+	}
+	if rows[0].StorageRef != missing.StorageRef {
+		t.Errorf("ListMissingThumbnail[0].StorageRef = %v, want %v", rows[0].StorageRef, missing.StorageRef)
+	}
+	if rows[0].ContentHash != missing.ContentHash {
+		t.Errorf("ListMissingThumbnail[0].ContentHash = %v, want %v", rows[0].ContentHash, missing.ContentHash)
+	}
+	if rows[0].ContentType != domain.ContentTypeJPEG {
+		t.Errorf("ListMissingThumbnail[0].ContentType = %v, want %v", rows[0].ContentType, domain.ContentTypeJPEG)
+	}
+}
+
+// TestPhotoRepository_ListMissingThumbnail_PagesByID proves the afterID
+// cursor pages deterministically: a limit of 1 with afterID set to the first
+// page's last id returns the next row, and re-running from the zero PhotoID
+// once every row has a thumbnail returns nothing (the idempotent-rerun
+// property cmd/backfill-thumbs relies on).
+func TestPhotoRepository_ListMissingThumbnail_PagesByID(t *testing.T) {
+	f := newPhotoFixture(t)
+	uploader := f.seedUser(t)
+	itemID := f.seedItem(t, uploader)
+
+	var created []*domain.Photo
+	for i := 0; i < 3; i++ {
+		p := newPhoto(uploader, fmt.Sprintf("items/lm-page/%d-%s.jpg", i, validHash))
+		if err := f.repo.Create(testCtx(t), p); err != nil {
+			t.Fatalf("Create(%d): %v", i, err)
+		}
+		if err := f.repo.AttachToItem(testCtx(t), itemID, p.ID, i, i == 0); err != nil {
+			t.Fatalf("AttachToItem(%d): %v", i, err)
+		}
+		created = append(created, p)
+	}
+
+	page1, err := f.repo.ListMissingThumbnail(testCtx(t), 1, domain.PhotoID{})
+	if err != nil {
+		t.Fatalf("ListMissingThumbnail(page1): %v", err)
+	}
+	if len(page1) != 1 {
+		t.Fatalf("page1 = %+v, want exactly 1 row", page1)
+	}
+	page2, err := f.repo.ListMissingThumbnail(testCtx(t), 1, page1[0].ID)
+	if err != nil {
+		t.Fatalf("ListMissingThumbnail(page2): %v", err)
+	}
+	if len(page2) != 1 || page2[0].ID == page1[0].ID {
+		t.Fatalf("page2 = %+v, want exactly 1 row distinct from page1", page2)
+	}
+
+	for _, p := range created {
+		ref := domain.StorageRef(p.StorageRef.String() + "_thumb")
+		if err := f.repo.SetThumbnailRef(testCtx(t), p.ID, ref); err != nil {
+			t.Fatalf("SetThumbnailRef(%s): %v", p.ID, err)
+		}
+	}
+	remaining, err := f.repo.ListMissingThumbnail(testCtx(t), 10, domain.PhotoID{})
+	if err != nil {
+		t.Fatalf("ListMissingThumbnail(after backfill): %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Errorf("ListMissingThumbnail after every row was backfilled = %+v, want empty", remaining)
 	}
 }
 

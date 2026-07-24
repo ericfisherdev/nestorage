@@ -4,7 +4,8 @@
 // bounded context, not an extension of storage or identity — it reimplements
 // Nestova's internal/media package against Nestorage's own identity model
 // (Nestova's media package is reference only; it is keyed by household
-// identity and was measured as not extractable to nestcore).
+// identity and was measured as not extractable to nestcore). NSTR-84 adds
+// the PhotoThumbnailer port, PhotoVariant, and Photo.ThumbnailRef.
 //
 // Every photo belongs to exactly one storage item (internal/storage), keyed
 // by storagedomain.ItemID: dedup, the storage key layout, and visibility are
