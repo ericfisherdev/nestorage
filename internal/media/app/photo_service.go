@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -29,21 +30,21 @@ type itemGetter interface {
 }
 
 // PhotoService orchestrates the upload/read/delete pipeline the Sprint 5
-// reconciliation (R1) binds: stage+validate (PhotoValidator) -> hash the
-// validated bytes -> Put (PhotoStore, keyed by the item and that hash) ->
-// dedup-probe (FindByStorageRef) -> persist (PhotoRepository.Create) ->
-// attach (AttachToItem). NSTR-36 inserts a scrub step between validate and
-// hash by adding its own PhotoScrubber dependency here; this ticket's
-// pipeline computes the hash directly over the validated bytes, so a photo
-// uploaded before NSTR-36 lands reads back byte-identical, full stop (the
-// AC's "apart from EXIF removal" clause becomes observable only once that
-// ticket adds the scrub step).
+// reconciliation (R1) binds: stage+validate (PhotoValidator) -> scrub
+// (PhotoScrubber, NSTR-36) -> hash the scrubbed bytes -> Put (PhotoStore,
+// keyed by the item and that hash) -> dedup-probe (FindByStorageRef) ->
+// persist (PhotoRepository.Create) -> attach (AttachToItem). The hash and
+// the storage key are both derived from Scrub's OUTPUT, never the raw
+// upload (Sprint 5 reconciliation R3), so a photo carrying EXIF GPS data can
+// never reach PhotoStore.Put with that data intact, and re-uploading the
+// same source photo twice still dedupes on the identical scrubbed bytes.
 //
 // Every method below is visibility-scoped to viewer via itemGetter (Sprint
 // 5 reconciliation R5) — see itemGetter's own doc.
 type PhotoService struct {
 	store          domain.PhotoStore
 	validator      domain.PhotoValidator
+	scrubber       domain.PhotoScrubber
 	photos         domain.PhotoRepository
 	items          itemGetter
 	maxUploadBytes int64
@@ -58,12 +59,14 @@ type PhotoService struct {
 // media/adapter.NewLocalPhotoStore's identical config-value check: it is a
 // value that flows from parsed configuration, not a structural dependency,
 // so the composition root can fail startup gracefully rather than panic.
-func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, photos domain.PhotoRepository, items itemGetter, maxUploadBytes int64, logger *slog.Logger) (*PhotoService, error) {
+func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, scrubber domain.PhotoScrubber, photos domain.PhotoRepository, items itemGetter, maxUploadBytes int64, logger *slog.Logger) (*PhotoService, error) {
 	switch {
 	case store == nil:
 		panic("media/app: NewPhotoService requires a non-nil PhotoStore")
 	case validator == nil:
 		panic("media/app: NewPhotoService requires a non-nil PhotoValidator")
+	case scrubber == nil:
+		panic("media/app: NewPhotoService requires a non-nil PhotoScrubber")
 	case photos == nil:
 		panic("media/app: NewPhotoService requires a non-nil PhotoRepository")
 	case items == nil:
@@ -75,7 +78,7 @@ func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, p
 		return nil, fmt.Errorf("media/app: max upload bytes must be positive, got %d", maxUploadBytes)
 	}
 	return &PhotoService{
-		store: store, validator: validator, photos: photos, items: items,
+		store: store, validator: validator, scrubber: scrubber, photos: photos, items: items,
 		maxUploadBytes: maxUploadBytes, logger: logger,
 	}, nil
 }
@@ -83,16 +86,19 @@ func NewPhotoService(store domain.PhotoStore, validator domain.PhotoValidator, p
 // Upload validates and stores r as a new photo attached to itemID,
 // attributed to viewer, first confirming itemID is visible to viewer
 // (storagedomain.ErrItemNotFound otherwise). It streams r to a staging file
-// (PhotoValidator.ValidateAndStage), hashes the validated bytes, hands them
-// to PhotoStore.Put keyed by itemID and that hash, and persists the
-// resulting Photo, attached at the next position (primary if it is the
-// item's first photo).
+// (PhotoValidator.ValidateAndStage), scrubs the staged bytes
+// (PhotoScrubber.Scrub — the whole image now lives in one buffer bounded by
+// s.maxUploadBytes, which is expected: scrubbing needs the whole image, not
+// a stream), hashes the SCRUBBED bytes, hands them to PhotoStore.Put keyed
+// by itemID and that hash, and persists the resulting Photo, attached at the
+// next position (primary if it is the item's first photo).
 //
 // Put's key is content-addressed and item-scoped: re-uploading the same
-// bytes to the same item lands on the same key, so if a photo with that
-// StorageRef already exists (FindByStorageRef, or a concurrent upload
-// losing the race and surfacing ErrDuplicatePhoto from Create) Upload
-// returns the EXISTING photo rather than creating a second row.
+// source photo to the same item scrubs to the same bytes and lands on the
+// same key, so if a photo with that StorageRef already exists
+// (FindByStorageRef, or a concurrent upload losing the race and surfacing
+// ErrDuplicatePhoto from Create) Upload returns the EXISTING photo rather
+// than creating a second row.
 func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, itemID storagedomain.ItemID, r io.Reader) (*domain.Photo, error) {
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return nil, err
@@ -104,19 +110,22 @@ func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, it
 	}
 	defer func() { _ = os.Remove(staged.Path) }()
 
-	hash, err := hashFile(staged.Path)
+	raw, err := os.ReadFile(staged.Path)
 	if err != nil {
-		return nil, fmt.Errorf("media/app: hash staged upload: %w", err)
+		return nil, fmt.Errorf("media/app: read staged upload: %w", err)
 	}
 
-	f, err := os.Open(staged.Path)
+	scrubbed, err := s.scrubber.Scrub(ctx, raw, staged.ContentType)
 	if err != nil {
-		return nil, fmt.Errorf("media/app: open staged upload: %w", err)
+		return nil, err
 	}
-	defer func() { _ = f.Close() }()
 
-	meta := domain.PutMeta{ContentHash: hash, SizeBytes: staged.SizeBytes, ContentType: staged.ContentType}
-	ref, err := s.store.Put(ctx, itemID, meta, f)
+	meta := domain.PutMeta{
+		ContentHash: hashBytes(scrubbed),
+		SizeBytes:   int64(len(scrubbed)),
+		ContentType: staged.ContentType,
+	}
+	ref, err := s.store.Put(ctx, itemID, meta, bytes.NewReader(scrubbed))
 	if err != nil {
 		return nil, err
 	}
@@ -130,9 +139,9 @@ func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, it
 	photo := &domain.Photo{
 		ID:             domain.NewPhotoID(),
 		StorageRef:     ref,
-		ContentHash:    hash,
-		SizeBytes:      staged.SizeBytes,
-		ContentType:    staged.ContentType,
+		ContentHash:    meta.ContentHash,
+		SizeBytes:      meta.SizeBytes,
+		ContentType:    meta.ContentType,
 		StorageBackend: domain.StorageBackendLocal,
 		UploadedBy:     viewer.UserID,
 	}
@@ -284,21 +293,14 @@ func (s *PhotoService) viewablePhoto(ctx context.Context, viewer identity.Princi
 	return photo, nil
 }
 
-// hashFile returns the hex sha256 of the file at path — Upload's "hash the
-// validated bytes" step (Sprint 5 reconciliation R1), run once the staged
-// file has already passed PhotoValidator.ValidateAndStage.
-func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("open staged file: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", fmt.Errorf("read staged file: %w", err)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+// hashBytes returns the hex sha256 of data — Upload's "hash the scrubbed
+// bytes" step (Sprint 5 reconciliation R1/R3), run only after
+// PhotoScrubber.Scrub has already produced data from the staged upload, so
+// the hash (and the storage key PhotoStore.Put derives from it) always
+// describes the bytes actually handed to Put, never the raw upload.
+func hashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // logAction writes one INFO-level audit line for a completed photo
