@@ -19,12 +19,6 @@ import (
 	corecfg "github.com/ericfisherdev/nestcore/config"
 )
 
-// devDSN is the DATABASE_URL fallback applied only in dev when the
-// environment does not supply one, matching compose.yaml's local Postgres
-// service: host port 5433, not Postgres's default 5432 — Nestova's own
-// compose service already binds 127.0.0.1:5432 on this host.
-const devDSN = "postgres://nestorage:nestorage@localhost:5433/nestorage?sslmode=disable"
-
 // Config holds Nestorage's validated runtime configuration, composed from
 // nestcore's generic sub-configs plus the deployment environment.
 type Config struct {
@@ -66,14 +60,6 @@ func Load() (Config, error) {
 	// (post dotenv re-read) above.
 	session, sessionErrs := corecfg.LoadSession(env)
 	errs = append(errs, sessionErrs...)
-
-	// Dev-only convenience DSN, applied before validation so the dev happy
-	// path boots with no environment at all. Test and prod are left alone
-	// so a missing DATABASE_URL still fails validation there, rather than
-	// silently connecting to Nestorage's dev database.
-	if env == corecfg.EnvDev && db.DSN == "" {
-		db.DSN = devDSN
-	}
 
 	errs = append(errs, corecfg.ValidateAppEnv(env)...)
 	errs = append(errs, server.Validate()...)

@@ -37,36 +37,39 @@ func setEnv(t *testing.T, env map[string]string) {
 	}
 }
 
-// TestLoad_DevDSNFallback and its siblings below were originally table-driven
-// subtests of one TestLoad; split into separate top-level functions so each
-// case's setup and assertions read as one story instead of accumulating into
-// a single function's cognitive complexity.
+// TestLoad_DevRequiresDatabaseURL and its siblings below were originally
+// table-driven subtests of one TestLoad; split into separate top-level
+// functions so each case's setup and assertions read as one story instead
+// of accumulating into a single function's cognitive complexity.
 
-func TestLoad_DevDSNFallback(t *testing.T) {
+// TestLoad_DevRequiresDatabaseURL asserts dev no longer applies a hardcoded
+// fallback DSN: a missing DATABASE_URL fails Load the same way it does in
+// test and prod, naming the variable in the aggregated error.
+func TestLoad_DevRequiresDatabaseURL(t *testing.T) {
 	setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev})
 
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v, want nil", err)
-	}
-	if !strings.Contains(cfg.DB.DSN, "localhost:5433") {
-		t.Errorf("DB.DSN = %q, want the dev fallback pointing at compose's port 5433", cfg.DB.DSN)
-	}
-	if cfg.Env != corecfg.EnvDev {
-		t.Errorf("Env = %q, want %q", cfg.Env, corecfg.EnvDev)
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("Load() error = %v, want an error naming DATABASE_URL", err)
 	}
 }
 
-func TestLoad_ExplicitDatabaseURLWinsOverDevFallback(t *testing.T) {
-	const explicit = "postgres://u:p@example.com:5432/nestorage?sslmode=disable"
-	setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev, "DATABASE_URL": explicit})
+// TestLoad_DevRealEnvironmentOverridesDotenv asserts that within dev, a
+// DATABASE_URL already set in the real environment wins over a conflicting
+// value in .env — godotenv never overwrites a variable that is already
+// present, so the real environment must be the one Load() surfaces.
+func TestLoad_DevRealEnvironmentOverridesDotenv(t *testing.T) {
+	const fromEnv = "postgres://u:p@example.com:5432/nestorage?sslmode=disable"
+	const fromDotenv = "postgres://u:p@from-dotenv:5432/nestorage?sslmode=disable"
+	setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev, "DATABASE_URL": fromEnv})
+	writeDotenv(t, fromDotenv)
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
 	}
-	if cfg.DB.DSN != explicit {
-		t.Errorf("DB.DSN = %q, want %q", cfg.DB.DSN, explicit)
+	if cfg.DB.DSN != fromEnv {
+		t.Errorf("DB.DSN = %q, want the real environment value %q (.env must not override it)", cfg.DB.DSN, fromEnv)
 	}
 }
 
@@ -80,7 +83,10 @@ func TestLoad_ProdWithNoDatabaseURLFails(t *testing.T) {
 }
 
 func TestLoad_SessionDefaultsWireThrough(t *testing.T) {
-	setEnv(t, map[string]string{"APP_ENV": corecfg.EnvDev})
+	setEnv(t, map[string]string{
+		"APP_ENV":      corecfg.EnvDev,
+		"DATABASE_URL": "postgres://u:p@example.com:5432/nestorage?sslmode=disable",
+	})
 
 	cfg, err := config.Load()
 	if err != nil {

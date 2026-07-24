@@ -51,9 +51,17 @@ first use.
 
 ### The local dev loop
 
+Configuration is read exclusively from the environment — there is no
+hardcoded fallback, including in dev. Copy [`.env.example`](.env.example) to
+`.env` (gitignored) once per worktree and fill in `DATABASE_URL`; `docker
+compose up -d` starts a matching local Postgres on `127.0.0.1:5433` using
+the same credentials the example file's placeholder points at.
+
 ```sh
 git -C /home/esfisher/dev/housedev/nestorage worktree add <dir> -b <branch>
 cd /home/esfisher/dev/housedev/nestorage/<dir>
+cp .env.example .env   # once per worktree: fill in DATABASE_URL, etc.
+docker compose up -d   # local Postgres on 127.0.0.1:5433
 make hooks   # once per clone: installs the Lefthook Git hooks
 # ... edit ...
 make build   # build the CSS bundle, then compile bin/server
