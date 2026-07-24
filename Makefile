@@ -65,8 +65,10 @@ GATED_COVERAGE_OUT := coverage.gated.out
 # cmd/server's own lifecycle test joins them (NSTR-15); internal/identity is
 # Sprint 3's bounded context (NSTR-18); internal/storage is Sprint 4's
 # (NSTR-26), appended to as NSTR-27/28 add bins and items to the same
-# context; internal/media is Sprint 5's (NSTR-34), extended by NSTR-35.
-GATED_TEST_PACKAGES := ./internal/platform/db/... ./cmd/migrate/... ./cmd/server/... ./internal/identity/... ./internal/storage/... ./internal/media/...
+# context; internal/media is Sprint 5's (NSTR-34), extended by NSTR-35;
+# cmd/backfill-thumbs joins them at NSTR-84, whose run() lifecycle test
+# mirrors cmd/server's TestServe_Lifecycle.
+GATED_TEST_PACKAGES := ./internal/platform/db/... ./cmd/migrate/... ./cmd/server/... ./cmd/backfill-thumbs/... ./internal/identity/... ./internal/storage/... ./internal/media/...
 
 .PHONY: all build run test test-gated cover lint fmt generate assets hooks hooks-uninstall tidy clean help \
 	migrate-up migrate-down migrate-status migrate-reset migrate-create

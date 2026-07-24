@@ -176,16 +176,32 @@ func (v PhotoValidator) ValidateAndStage(_ context.Context, r io.Reader, maxUplo
 	return domain.StagedUpload{Path: tmpPath, ContentType: sniffedType, SizeBytes: written}, nil
 }
 
+// thumbKeySuffix is appended to the content hash for a PhotoVariantThumb key
+// (NSTR-84) — see buildStorageKey.
+const thumbKeySuffix = "_thumb"
+
 // buildStorageKey builds the content-addressed, item-scoped key every
-// PhotoStore backend uses — items/<item>/<hash>.<ext> — shared by
+// PhotoStore backend uses — items/<item>/<hash>.<ext> for the full image,
+// items/<item>/<hash>_thumb.<ext> for its thumbnail (NSTR-84) — shared by
 // LocalPhotoStore (where it becomes a relative filesystem path) and
 // NSTR-35's S3 adapter (where it becomes an object key verbatim) so the key
 // layout can never drift between backends. Built with "path".Join (forward
 // slashes only, never the OS path separator) since an S3 key is never
 // OS-path-shaped; LocalPhotoStore.resolve converts to the OS separator only
 // at the point it actually touches the filesystem.
-func buildStorageKey(itemID storagedomain.ItemID, hash, ext string) string {
-	return path.Join("items", itemID.String(), hash+"."+ext)
+//
+// The thumb key derives from the SAME hash as the full image (variant is
+// the only difference), so item-scoped dedup keeps working unchanged:
+// re-uploading identical bytes to the same item produces the same two keys.
+// variant's zero value behaves as domain.PhotoVariantFull — every call site
+// that predates NSTR-84 built a PutMeta with no Variant field set and must
+// keep landing on the unsuffixed key.
+func buildStorageKey(itemID storagedomain.ItemID, hash, ext string, variant domain.PhotoVariant) string {
+	name := hash
+	if variant == domain.PhotoVariantThumb {
+		name += thumbKeySuffix
+	}
+	return path.Join("items", itemID.String(), name+"."+ext)
 }
 
 // canonicalType lowercases a content type and strips any parameters (e.g.

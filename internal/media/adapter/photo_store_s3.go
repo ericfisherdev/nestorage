@@ -163,7 +163,7 @@ func (s *S3PhotoStore) Put(ctx context.Context, itemID storagedomain.ItemID, met
 	if !ok {
 		return "", fmt.Errorf("%w: %q", domain.ErrUnsupportedMediaType, meta.ContentType)
 	}
-	key := buildStorageKey(itemID, meta.ContentHash, ext)
+	key := buildStorageKey(itemID, meta.ContentHash, ext, meta.Variant)
 
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),

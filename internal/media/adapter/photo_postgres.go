@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -36,16 +37,24 @@ const (
 )
 
 // photoColumns selects a photo's own columns with no join — Create,
-// FindByStorageRef. thumb_storage_ref (00010_item_photo.sql) is
-// deliberately absent: this ticket owns that column's SCHEMA only; no Go
-// code here reads or writes it (NSTR-84 adds that).
-const photoColumns = `SELECT id, storage_ref, content_sha256, size_bytes, content_type, storage_backend, uploaded_by, created_at FROM photo`
+// FindByStorageRef. thumb_storage_ref (00010_item_photo.sql, populated by
+// NSTR-84) is nullable — scanPhoto reads it into a sql.NullString and
+// finishScanPhoto projects that onto Photo.ThumbnailRef.
+const photoColumns = `SELECT id, storage_ref, thumb_storage_ref, content_sha256, size_bytes, content_type, storage_backend, uploaded_by, created_at FROM photo`
+
+// photoJoinSelectColumns is photo's own columns, p.-prefixed for a query
+// joining onto item_photo — the one list itemPhotoJoinColumns (GetForItem)
+// and ListByItem's own extended select (which adds ip.position/
+// ip.is_primary) are both built from, so the two can never drift apart on
+// which columns a joined photo row carries (this is exactly the class of
+// drift that first shipped NSTR-84's thumb_storage_ref column in only one
+// of the two).
+const photoJoinSelectColumns = `p.id, p.storage_ref, p.thumb_storage_ref, p.content_sha256, p.size_bytes, p.content_type, p.storage_backend, p.uploaded_by, p.created_at`
 
 // itemPhotoJoinColumns left-joins photo's columns onto item_photo, used by
-// GetForItem/ListByItem so both queries stay in lockstep with the same
-// select list.
+// GetForItem.
 const itemPhotoJoinColumns = `
-	SELECT p.id, p.storage_ref, p.content_sha256, p.size_bytes, p.content_type, p.storage_backend, p.uploaded_by, p.created_at
+	SELECT ` + photoJoinSelectColumns + `
 	FROM photo p
 	JOIN item_photo ip ON ip.photo_id = p.id`
 
@@ -80,11 +89,11 @@ func (r *PhotoRepository) Create(ctx context.Context, photo *domain.Photo) error
 		return errors.New("media/adapter: create photo: nil photo")
 	}
 	const q = `
-		INSERT INTO photo (id, storage_ref, content_sha256, size_bytes, content_type, storage_backend, uploaded_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO photo (id, storage_ref, thumb_storage_ref, content_sha256, size_bytes, content_type, storage_backend, uploaded_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at`
 	err := r.dbtx.QueryRow(ctx, q,
-		photo.ID.String(), photo.StorageRef.String(), photo.ContentHash, photo.SizeBytes,
+		photo.ID.String(), photo.StorageRef.String(), nullableStorageRefParam(photo.ThumbnailRef), photo.ContentHash, photo.SizeBytes,
 		photo.ContentType, photo.StorageBackend.String(), photo.UploadedBy.String(),
 	).Scan(&photo.CreatedAt)
 	if err != nil {
@@ -153,8 +162,7 @@ func (r *PhotoRepository) AttachToItem(ctx context.Context, itemID storagedomain
 // empty slice when none are attached.
 func (r *PhotoRepository) ListByItem(ctx context.Context, itemID storagedomain.ItemID) ([]domain.ItemPhoto, error) {
 	q := `
-		SELECT p.id, p.storage_ref, p.content_sha256, p.size_bytes, p.content_type, p.storage_backend, p.uploaded_by, p.created_at,
-		       ip.position, ip.is_primary
+		SELECT ` + photoJoinSelectColumns + `, ip.position, ip.is_primary
 		FROM photo p
 		JOIN item_photo ip ON ip.photo_id = p.id
 		WHERE ip.item_id = $1
@@ -252,6 +260,67 @@ func (r *PhotoRepository) Reorder(ctx context.Context, itemID storagedomain.Item
 	return nil
 }
 
+// SetThumbnailRef records ref as photoID's thumbnail variant (NSTR-84) — the
+// UPDATE cmd/backfill-thumbs runs against a row Create left with a NULL
+// thumb_storage_ref (see domain.PhotoRepository.SetThumbnailRef's own doc for
+// why this is a separate method from Create's upload-path write). Returns
+// domain.ErrPhotoNotFound when photoID is unknown.
+func (r *PhotoRepository) SetThumbnailRef(ctx context.Context, photoID domain.PhotoID, ref domain.StorageRef) error {
+	tag, err := r.dbtx.Exec(ctx, `UPDATE photo SET thumb_storage_ref = $2 WHERE id = $1`, photoID.String(), ref.String())
+	if err != nil {
+		return fmt.Errorf("set thumbnail ref: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrPhotoNotFound
+	}
+	return nil
+}
+
+// ListMissingThumbnail returns up to limit photo rows whose thumbnail
+// reference is still NULL (see domain.PhotoRepository.ListMissingThumbnail's
+// own doc for the resumable-cursor contract cmd/backfill-thumbs relies on).
+// The explicit ::uuid cast on afterID matters: this codebase passes UUIDs as
+// plain text parameters (never registering a pgx UUID codec — see this
+// type's own doc), and an untyped text parameter has no implicit ordering
+// operator against the uuid column without it.
+func (r *PhotoRepository) ListMissingThumbnail(ctx context.Context, limit int, afterID domain.PhotoID) ([]domain.MissingThumbnailPhoto, error) {
+	const q = `
+		SELECT p.id, ip.item_id, p.storage_ref, p.content_sha256, p.content_type
+		FROM photo p
+		JOIN item_photo ip ON ip.photo_id = p.id
+		WHERE p.thumb_storage_ref IS NULL AND p.id > $1::uuid
+		ORDER BY p.id
+		LIMIT $2`
+	rows, err := r.dbtx.Query(ctx, q, afterID.String(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list photos missing thumbnail: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]domain.MissingThumbnailPhoto, 0)
+	for rows.Next() {
+		var idStr, itemIDStr, refStr, contentHash, contentType string
+		if err := rows.Scan(&idStr, &itemIDStr, &refStr, &contentHash, &contentType); err != nil {
+			return nil, fmt.Errorf("list photos missing thumbnail: scan: %w", err)
+		}
+		id, err := domain.ParsePhotoID(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("list photos missing thumbnail: id: %w", err)
+		}
+		itemID, err := storagedomain.ParseItemID(itemIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("list photos missing thumbnail: item id: %w", err)
+		}
+		out = append(out, domain.MissingThumbnailPhoto{
+			ID: id, ItemID: itemID, StorageRef: domain.StorageRef(refStr), ContentHash: contentHash, ContentType: contentType,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list photos missing thumbnail: %w", err)
+	}
+	return out, nil
+}
+
 // scanner abstracts pgx.Row and pgx.Rows for the shared scan helpers.
 type scanner interface {
 	Scan(dest ...any) error
@@ -261,16 +330,17 @@ func scanPhoto(r scanner) (*domain.Photo, error) {
 	var (
 		photo             domain.Photo
 		idStr, refStr     string
+		thumbRefStr       sql.NullString
 		storageBackendStr string
 		uploadedByStr     string
 	)
 	if err := r.Scan(
-		&idStr, &refStr, &photo.ContentHash, &photo.SizeBytes, &photo.ContentType,
+		&idStr, &refStr, &thumbRefStr, &photo.ContentHash, &photo.SizeBytes, &photo.ContentType,
 		&storageBackendStr, &uploadedByStr, &photo.CreatedAt,
 	); err != nil {
 		return nil, err
 	}
-	return finishScanPhoto(&photo, idStr, refStr, storageBackendStr, uploadedByStr)
+	return finishScanPhoto(&photo, idStr, refStr, thumbRefStr, storageBackendStr, uploadedByStr)
 }
 
 // scanItemPhotoRow scans one ListByItem row: a photo's own columns plus its
@@ -279,22 +349,25 @@ func scanItemPhotoRow(r scanner) (photo *domain.Photo, position int, isPrimary b
 	var (
 		p                 domain.Photo
 		idStr, refStr     string
+		thumbRefStr       sql.NullString
 		storageBackendStr string
 		uploadedByStr     string
 	)
 	if err := r.Scan(
-		&idStr, &refStr, &p.ContentHash, &p.SizeBytes, &p.ContentType,
+		&idStr, &refStr, &thumbRefStr, &p.ContentHash, &p.SizeBytes, &p.ContentType,
 		&storageBackendStr, &uploadedByStr, &p.CreatedAt, &position, &isPrimary,
 	); err != nil {
 		return nil, 0, false, err
 	}
-	photo, err = finishScanPhoto(&p, idStr, refStr, storageBackendStr, uploadedByStr)
+	photo, err = finishScanPhoto(&p, idStr, refStr, thumbRefStr, storageBackendStr, uploadedByStr)
 	return photo, position, isPrimary, err
 }
 
 // finishScanPhoto parses the string-typed columns scanPhoto/scanItemPhotoRow
 // read into p's typed fields, shared so the two scan paths stay in lockstep.
-func finishScanPhoto(p *domain.Photo, idStr, refStr, storageBackendStr, uploadedByStr string) (*domain.Photo, error) {
+// thumbRefStr is thumb_storage_ref (NSTR-84): NULL projects to a nil
+// Photo.ThumbnailRef, a non-NULL value to a populated one.
+func finishScanPhoto(p *domain.Photo, idStr, refStr string, thumbRefStr sql.NullString, storageBackendStr, uploadedByStr string) (*domain.Photo, error) {
 	id, err := domain.ParsePhotoID(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("scan photo: id: %w", err)
@@ -309,9 +382,32 @@ func finishScanPhoto(p *domain.Photo, idStr, refStr, storageBackendStr, uploaded
 	}
 	p.ID = id
 	p.StorageRef = domain.StorageRef(refStr)
+	p.ThumbnailRef = nullableStorageRef(thumbRefStr)
 	p.StorageBackend = backend
 	p.UploadedBy = uploadedBy
 	return p, nil
+}
+
+// nullableStorageRef projects a scanned nullable thumb_storage_ref column
+// onto Photo.ThumbnailRef's *domain.StorageRef shape: nil when NULL, a
+// populated pointer otherwise.
+func nullableStorageRef(s sql.NullString) *domain.StorageRef {
+	if !s.Valid {
+		return nil
+	}
+	ref := domain.StorageRef(s.String)
+	return &ref
+}
+
+// nullableStorageRefParam is nullableStorageRef's inverse: the pgx query
+// parameter Create binds thumb_storage_ref to. pgx maps a nil *string to
+// SQL NULL, and a non-nil one to its pointee's value.
+func nullableStorageRefParam(ref *domain.StorageRef) *string {
+	if ref == nil {
+		return nil
+	}
+	s := ref.String()
+	return &s
 }
 
 // isPgConstraint reports whether err is a Postgres error with the given

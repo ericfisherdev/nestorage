@@ -8,5 +8,7 @@
 // rerunning the same conformance suite (conformance_test.go) against it.
 // NSTR-36 adds ExifScrubber (exif_scrub.go), the domain.PhotoScrubber
 // implementation PhotoService runs on staged bytes before PhotoStore.Put
-// ever sees them.
+// ever sees them. NSTR-84 adds ImageThumbnailer (thumbnailer.go), the
+// domain.PhotoThumbnailer implementation, and extends buildStorageKey with
+// a PhotoVariant parameter so a thumbnail lands on its own key.
 package adapter

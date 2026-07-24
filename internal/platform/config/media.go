@@ -22,6 +22,10 @@ const devMediaRoot = "./media"
 // defaultMaxUploadBytes is MEDIA_MAX_UPLOAD_BYTES's default (10 MiB).
 const defaultMaxUploadBytes int64 = 10 << 20
 
+// defaultThumbMaxEdge is MEDIA_THUMB_MAX_EDGE's default (NSTR-84): the
+// generated thumbnail variant's long edge, in pixels.
+const defaultThumbMaxEdge int32 = 400
+
 // MediaStorageBackend selects which domain.PhotoStore implementation
 // bootstrap.NewPhotoStore constructs (NSTR-35). It is a plain string type
 // (not an iota) so its .env/log spelling is its own zero-translation
@@ -52,6 +56,10 @@ type MediaConfig struct {
 	Root string
 	// MaxUploadBytes caps a single photo upload (bytes).
 	MaxUploadBytes int64
+	// ThumbMaxEdge bounds the generated thumbnail variant's long edge, in
+	// pixels (NSTR-84) — passed straight to
+	// media/adapter.NewImageThumbnailer.
+	ThumbMaxEdge int
 	// Backend selects which PhotoStore implementation bootstrap.NewPhotoStore
 	// returns. Defaults to MediaStorageBackendLocal.
 	Backend MediaStorageBackend
@@ -79,6 +87,10 @@ func LoadMedia() (MediaConfig, []error) {
 	if err != nil {
 		errs = append(errs, err)
 	}
+	thumbMaxEdge, err := corecfg.Int32("MEDIA_THUMB_MAX_EDGE", defaultThumbMaxEdge)
+	if err != nil {
+		errs = append(errs, err)
+	}
 	backend := MediaStorageBackend(strings.ToLower(strings.TrimSpace(
 		corecfg.String("MEDIA_STORAGE_BACKEND", string(MediaStorageBackendLocal)),
 	)))
@@ -91,6 +103,7 @@ func LoadMedia() (MediaConfig, []error) {
 	return MediaConfig{
 		Root:           strings.TrimSpace(corecfg.String("MEDIA_ROOT", devMediaRoot)),
 		MaxUploadBytes: maxUploadBytes,
+		ThumbMaxEdge:   int(thumbMaxEdge),
 		Backend:        backend,
 		S3:             s3Cfg,
 	}, errs
@@ -107,6 +120,9 @@ func (m MediaConfig) Validate() []error {
 	}
 	if m.MaxUploadBytes <= 0 {
 		errs = append(errs, fmt.Errorf("MEDIA_MAX_UPLOAD_BYTES must be positive, got %d", m.MaxUploadBytes))
+	}
+	if m.ThumbMaxEdge <= 0 {
+		errs = append(errs, fmt.Errorf("MEDIA_THUMB_MAX_EDGE must be positive, got %d", m.ThumbMaxEdge))
 	}
 	switch m.Backend {
 	case MediaStorageBackendLocal, MediaStorageBackendS3:

@@ -51,6 +51,56 @@ func TestLoad_MediaOverrides(t *testing.T) {
 	}
 }
 
+// TestLoad_MediaThumbMaxEdgeDefault covers NSTR-84's AC that a fresh install
+// needs zero MEDIA_THUMB_MAX_EDGE configuration.
+func TestLoad_MediaThumbMaxEdgeDefault(t *testing.T) {
+	setEnv(t, baseMediaEnv())
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.Media.ThumbMaxEdge != 400 {
+		t.Errorf("Media.ThumbMaxEdge = %d, want the default %d", cfg.Media.ThumbMaxEdge, 400)
+	}
+}
+
+func TestLoad_MediaThumbMaxEdgeOverride(t *testing.T) {
+	env := baseMediaEnv()
+	env["MEDIA_THUMB_MAX_EDGE"] = "800"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.Media.ThumbMaxEdge != 800 {
+		t.Errorf("Media.ThumbMaxEdge = %d, want 800", cfg.Media.ThumbMaxEdge)
+	}
+}
+
+func TestLoad_MediaThumbMaxEdgeNonPositiveRejected(t *testing.T) {
+	env := baseMediaEnv()
+	env["MEDIA_THUMB_MAX_EDGE"] = "0"
+	setEnv(t, env)
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "MEDIA_THUMB_MAX_EDGE") {
+		t.Fatalf("Load() error = %v, want an error naming MEDIA_THUMB_MAX_EDGE", err)
+	}
+}
+
+func TestLoad_MediaThumbMaxEdgeUnparsableRejected(t *testing.T) {
+	env := baseMediaEnv()
+	env["MEDIA_THUMB_MAX_EDGE"] = "not-a-number"
+	setEnv(t, env)
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "MEDIA_THUMB_MAX_EDGE") {
+		t.Fatalf("Load() error = %v, want an error naming MEDIA_THUMB_MAX_EDGE", err)
+	}
+}
+
 func TestLoad_MediaRootBlankRejected(t *testing.T) {
 	env := baseMediaEnv()
 	env["MEDIA_ROOT"] = "   "
