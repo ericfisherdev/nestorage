@@ -137,6 +137,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	locationRepo := storageadapter.NewLocationRepository(pool)
 	binRepo := storageadapter.NewBinRepository(pool)
 	itemRepo := storageadapter.NewItemRepository(pool)
+	itemLinkRepo := storageadapter.NewItemLinkRepository(pool)
 	storageUOW := storageadapter.NewPostgresUnitOfWork(pool)
 
 	locationService := storageapp.NewLocationService(locationRepo, binRepo, logger)
@@ -148,9 +149,13 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// storageUOW/binRepo BinMover already shares (PostgresUnitOfWork
 	// satisfies both WithinTx and WithinBinTx); ItemQueryService (NSTR-32)
 	// backs the visibility-scoped detail/search reads, over the same
-	// itemRepo every other item-adjacent service shares.
+	// itemRepo every other item-adjacent service shares. NSTR-38's
+	// ItemLinkService backs the detail page's labeled-links section, over
+	// itemRepo too — every one of its methods authorizes through the same
+	// visibility-scoped Get every other item-adjacent service already uses.
 	operationService := storageapp.NewOperationService(storageUOW, binRepo, logger)
 	itemQueryService := storageapp.NewItemQueryService(itemRepo, logger)
+	itemLinkService := storageapp.NewItemLinkService(itemLinkRepo, itemRepo, logger)
 
 	shellData := newShellDataService(identityRepo, binService, locationService)
 
@@ -162,7 +167,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
 	)
 	itemsWeb := storageadapter.NewItemsWebHandlers(storageadapter.ItemsWebHandlersDeps{
-		Items: itemQueryService, Operations: operationService, Bins: binService,
+		Items: itemQueryService, Operations: operationService, Bins: binService, Links: itemLinkService,
 		SM: sm, Layout: newStorageLayout(shellData, searchPageTitle, logger), Logger: logger,
 	})
 

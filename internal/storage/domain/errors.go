@@ -106,4 +106,26 @@ var (
 	// caller, the same "guard in the domain" contract EnterBin/CheckOut/
 	// ReturnTo follow for Item.
 	ErrBinAlreadyInLocation = errors.New("storage: bin already in that location")
+
+	// ErrItemLinkNotFound is returned by ItemLinkRepository methods that look
+	// up or mutate a specific link (Update, Delete) when no row matches both
+	// the link id and the item id it is expected to belong to — NSTR-38's
+	// item-scoped 404, the same masking rationale as ErrItemNotFound.
+	ErrItemLinkNotFound = errors.New("storage: item link not found")
+
+	// ErrInvalidItemLinkURL is returned (wrapped) by ValidateItemLinkURL for
+	// a URL that fails to parse, uses any scheme other than http/https, or
+	// carries no host — the domain mirror of the item_link_url_check
+	// database CHECK, and the security boundary a stored link's scheme can
+	// never cross (see ValidateItemLinkURL's own doc).
+	ErrInvalidItemLinkURL = errors.New("storage: invalid item link url")
+
+	// ErrItemLinkLabelRequired is returned (wrapped) by ValidateItemLinkLabel
+	// for a blank (or whitespace-only) label — the domain mirror of
+	// item_link's own blank-label CHECK.
+	ErrItemLinkLabelRequired = errors.New("storage: item link label is required")
+
+	// ErrItemLinkLabelTooLong is returned (wrapped) by ValidateItemLinkLabel
+	// for a label longer than MaxItemLinkLabelRunes.
+	ErrItemLinkLabelTooLong = errors.New("storage: item link label is too long")
 )
