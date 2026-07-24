@@ -27,6 +27,9 @@ type Config struct {
 	TLS     corecfg.TLSConfig
 	HSTS    corecfg.HSTSConfig
 	Session corecfg.SessionConfig
+	// Media configures photo storage (NSTR-34) — Nestorage-local, since
+	// nestcore has no media loader.
+	Media MediaConfig
 	// Env is the deployment environment: one of corecfg.EnvDev, EnvTest, or
 	// EnvProd.
 	Env string
@@ -60,6 +63,8 @@ func Load() (Config, error) {
 	// (post dotenv re-read) above.
 	session, sessionErrs := corecfg.LoadSession(env)
 	errs = append(errs, sessionErrs...)
+	media, mediaErrs := LoadMedia()
+	errs = append(errs, mediaErrs...)
 
 	errs = append(errs, corecfg.ValidateAppEnv(env)...)
 	errs = append(errs, server.Validate()...)
@@ -67,6 +72,7 @@ func Load() (Config, error) {
 	errs = append(errs, hsts.Validate()...)
 	errs = append(errs, tls.Validate()...)
 	errs = append(errs, session.Validate(env)...)
+	errs = append(errs, media.Validate()...)
 
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("invalid configuration:\n%w", errors.Join(errs...))
@@ -78,6 +84,7 @@ func Load() (Config, error) {
 		TLS:     tls,
 		HSTS:    hsts,
 		Session: session,
+		Media:   media,
 		Env:     env,
 	}, nil
 }

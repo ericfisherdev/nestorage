@@ -24,6 +24,7 @@ var allKeys = []string{
 	"TLS_CERT_FILE", "TLS_KEY_FILE",
 	"HSTS_ENABLED", "HSTS_MAX_AGE", "HSTS_INCLUDE_SUBDOMAINS", "HSTS_PRELOAD",
 	"SESSION_SECRET", "SESSION_LIFETIME", "SESSION_COOKIE_SECURE",
+	"MEDIA_ROOT", "MEDIA_MAX_UPLOAD_BYTES",
 }
 
 // setEnv isolates a test case from both the developer's ambient environment
