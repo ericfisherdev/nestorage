@@ -13,7 +13,8 @@ func TestStorageBackend_Valid(t *testing.T) {
 		want bool
 	}{
 		{"local", domain.StorageBackendLocal, true},
-		{"unknown", domain.StorageBackend("s3"), false},
+		{"s3", domain.StorageBackendS3, true},
+		{"unknown", domain.StorageBackend("azure-blob"), false},
 		{"blank", domain.StorageBackend(""), false},
 	}
 	for _, c := range cases {
@@ -35,13 +36,19 @@ func TestParseStorageBackend(t *testing.T) {
 	}
 }
 
-// TestParseStorageBackend_DefaultCase exercises the default switch case —
-// written now so NSTR-35 can add StorageBackendS3 without this function's
-// shape changing.
-func TestParseStorageBackend_DefaultCase(t *testing.T) {
-	if _, err := domain.ParseStorageBackend("s3"); err == nil {
-		t.Error("ParseStorageBackend(\"s3\") error = nil, want an error (S3 is NSTR-35's addition)")
+// TestParseStorageBackend_S3 covers NSTR-35's addition to the enum.
+func TestParseStorageBackend_S3(t *testing.T) {
+	got, err := domain.ParseStorageBackend(" S3 ")
+	if err != nil {
+		t.Fatalf("ParseStorageBackend(\" S3 \") error = %v, want nil", err)
 	}
+	if got != domain.StorageBackendS3 {
+		t.Errorf("ParseStorageBackend(\" S3 \") = %q, want %q", got, domain.StorageBackendS3)
+	}
+}
+
+// TestParseStorageBackend_DefaultCase exercises the default switch case.
+func TestParseStorageBackend_DefaultCase(t *testing.T) {
 	if _, err := domain.ParseStorageBackend("bogus"); err == nil {
 		t.Error("ParseStorageBackend(\"bogus\") error = nil, want an error")
 	}

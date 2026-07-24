@@ -14,17 +14,18 @@ import (
 // existing values.
 type StorageBackend string
 
-// StorageBackendLocal is the only StorageBackend this ticket supports — the
-// zero-config default every fresh install gets. NSTR-35 adds
-// StorageBackendS3.
+// StorageBackendLocal is the zero-config default every fresh install gets.
+// StorageBackendS3 (NSTR-35) records a photo whose bytes an S3-compatible
+// PhotoStore persisted instead.
 const (
 	StorageBackendLocal StorageBackend = "local"
+	StorageBackendS3    StorageBackend = "s3"
 )
 
 // Valid reports whether b is a known StorageBackend.
 func (b StorageBackend) Valid() bool {
 	switch b {
-	case StorageBackendLocal:
+	case StorageBackendLocal, StorageBackendS3:
 		return true
 	default:
 		return false
@@ -35,13 +36,11 @@ func (b StorageBackend) Valid() bool {
 func (b StorageBackend) String() string { return string(b) }
 
 // ParseStorageBackend parses a persisted storage_backend column value,
-// rejecting anything unknown rather than trusting the database blindly —
-// the default switch case is deliberate: it is what lets NSTR-35 add
-// StorageBackendS3 here without this function's shape changing.
+// rejecting anything unknown rather than trusting the database blindly.
 func ParseStorageBackend(s string) (StorageBackend, error) {
 	b := StorageBackend(strings.ToLower(strings.TrimSpace(s)))
 	switch b {
-	case StorageBackendLocal:
+	case StorageBackendLocal, StorageBackendS3:
 		return b, nil
 	default:
 		return "", fmt.Errorf("media: unknown storage backend %q", s)

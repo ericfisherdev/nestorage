@@ -1,7 +1,8 @@
 # Testing
 
-Two tiers: the default suite, which is hermetic and needs nothing, and the
-database-gated suite, which needs a real Postgres.
+Three tiers: the default suite, which is hermetic and needs nothing; the
+database-gated suite, which needs a real Postgres; and the S3-gated suite,
+which needs a real S3-compatible endpoint (NSTR-35).
 
 ## The default suite
 
@@ -112,7 +113,38 @@ reason in reverse: it needs the package's unexported embedded filesystem,
 and `dbtest` imports `migrate` to build its `Harness`, so a `package
 migrate` test importing `dbtest` back would be an import cycle.
 
-## CI runs the gated suite too
+## The S3-gated suite
+
+`internal/media/adapter/photo_store_s3_test.go` self-skips unless
+`NESTORAGE_TEST_S3_ENDPOINT` is set — a separate gate from
+`NESTORAGE_TEST_DATABASE_URL`, so `make test` never depends on a running
+S3-compatible endpoint. The `minio` service in
+[`compose.yaml`](../compose.yaml) is the easiest way to get one:
+
+```sh
+docker compose up -d minio
+export NESTORAGE_TEST_S3_ENDPOINT="http://127.0.0.1:59001"
+export NESTORAGE_TEST_S3_ACCESS_KEY_ID="nestorage"
+export NESTORAGE_TEST_S3_SECRET_ACCESS_KEY="nestorage-dev-minio"
+make test-gated
+```
+
+`./internal/media/...` is already in `GATED_TEST_PACKAGES`
+([`Makefile`](../Makefile), added by NSTR-34), so a `make test-gated` run
+with both `NESTORAGE_TEST_DATABASE_URL` and `NESTORAGE_TEST_S3_ENDPOINT` set
+exercises the database- and S3-gated suites together in one pass; either one
+left unset self-skips only its own tests (the DB-gated ones still need
+`NESTORAGE_TEST_DATABASE_URL` regardless — `test-gated`'s own guard clause
+requires it).
+
+Each test creates and tears down its own uniquely-named bucket against the
+configured endpoint — no shared bucket to reset between runs, unlike the
+database-gated suite's per-package database. `TestS3PhotoStore_Conformance`
+reruns the identical port-level suite `TestLocalPhotoStore_Conformance`
+(`photo_store_local_test.go`) runs against `LocalPhotoStore` — see
+`conformance_test.go`'s own doc.
+
+## CI runs both gated suites
 
 The `test-gated` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
 runs `make test-gated` against a `postgres:17-alpine` service container,
@@ -123,3 +155,12 @@ a locally started container. The Makefile target runs with `-v` so the
 job's log shows each gated test PASS or SKIP by name — a package-level "ok"
 line alone can't distinguish "ran and passed" from "every test skipped
 itself" (e.g. a misnamed or missing environment variable).
+
+MinIO runs alongside it as a plain `docker run -d` step, not a `services:`
+entry: GitHub Actions' service-container support has no way to pass the
+`server /data` command MinIO's image requires, and a `services:` container
+always starts before any step runs, whereas `docker run -d` can be sequenced
+and its readiness polled explicitly. The step exports
+`NESTORAGE_TEST_S3_ENDPOINT` and the container's own test credentials before
+`make test-gated` runs, so the S3-gated suite executes in the very same
+`go test` invocation as the database-gated one.

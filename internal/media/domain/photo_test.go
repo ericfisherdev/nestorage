@@ -40,7 +40,8 @@ func TestPhoto_Validate(t *testing.T) {
 		{"negative size", func(p *domain.Photo) { p.SizeBytes = -1 }, true},
 		{"unaccepted content type", func(p *domain.Photo) { p.ContentType = "image/webp" }, true},
 		{"blank content type", func(p *domain.Photo) { p.ContentType = "" }, true},
-		{"invalid storage backend", func(p *domain.Photo) { p.StorageBackend = domain.StorageBackend("s3") }, true},
+		{"invalid storage backend", func(p *domain.Photo) { p.StorageBackend = domain.StorageBackend("azure-blob") }, true},
+		{"s3 storage backend is valid (NSTR-35)", func(p *domain.Photo) { p.StorageBackend = domain.StorageBackendS3 }, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
