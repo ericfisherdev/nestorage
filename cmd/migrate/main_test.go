@@ -9,66 +9,71 @@ import (
 	"github.com/ericfisherdev/nestcore/config"
 )
 
+// writeMigrationFiles creates a temp dir and populates it with the given
+// filenames (contents are irrelevant to nextVersion/createMigration, which
+// only inspect names), returning the dir for the caller to exercise.
+func writeMigrationFiles(t *testing.T, names []string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
 func TestNextVersion(t *testing.T) {
-	t.Run("empty dir starts at 1", func(t *testing.T) {
-		got, err := nextVersion(t.TempDir())
-		if err != nil {
-			t.Fatalf("nextVersion() error: %v", err)
-		}
-		if got != 1 {
-			t.Errorf("nextVersion() = %d, want 1", got)
-		}
-	})
+	cases := []struct {
+		name  string
+		files []string
+		want  int
+	}{
+		{
+			name: "empty dir starts at 1",
+			want: 1,
+		},
+		{
+			name:  "increments past the highest existing number",
+			files: []string{"00001_baseline.sql", "00002_auth.sql", "notes.txt"},
+			want:  3,
+		},
+		{
+			// migrationFilePrefix only checks for a leading run of digits, so
+			// a corrupted or hand-edited filename with an absurdly long
+			// numeric prefix still matches the regexp but overflows
+			// strconv.Atoi's int range. That entry must be skipped, not
+			// treated as an error.
+			name:  "skips a numeric prefix too large to parse as int",
+			files: []string{"99999999999999999999999_overflow.sql", "00001_baseline.sql"},
+			want:  2,
+		},
+	}
 
-	t.Run("increments past the highest existing number", func(t *testing.T) {
-		dir := t.TempDir()
-		for _, name := range []string{"00001_baseline.sql", "00002_auth.sql", "notes.txt"} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
-				t.Fatal(err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeMigrationFiles(t, tc.files)
+
+			got, err := nextVersion(dir)
+			if err != nil {
+				t.Fatalf("nextVersion() error: %v", err)
 			}
-		}
-		got, err := nextVersion(dir)
-		if err != nil {
-			t.Fatalf("nextVersion() error: %v", err)
-		}
-		if got != 3 {
-			t.Errorf("nextVersion() = %d, want 3", got)
-		}
-	})
-
-	t.Run("missing dir is an error", func(t *testing.T) {
-		if _, err := nextVersion(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
-			t.Error("nextVersion() = nil error, want error for missing dir")
-		}
-	})
-
-	t.Run("skips a numeric prefix too large to parse as int", func(t *testing.T) {
-		dir := t.TempDir()
-		// migrationFilePrefix only checks for a leading run of digits, so a
-		// corrupted or hand-edited filename with an absurdly long numeric
-		// prefix still matches the regexp but overflows strconv.Atoi's int
-		// range. That entry must be skipped, not treated as an error.
-		for _, name := range []string{"99999999999999999999999_overflow.sql", "00001_baseline.sql"} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
-				t.Fatal(err)
+			if got != tc.want {
+				t.Errorf("nextVersion() = %d, want %d", got, tc.want)
 			}
-		}
-		got, err := nextVersion(dir)
-		if err != nil {
-			t.Fatalf("nextVersion() error: %v", err)
-		}
-		if got != 2 {
-			t.Errorf("nextVersion() = %d, want 2 (overflow entry skipped)", got)
-		}
-	})
+		})
+	}
+}
+
+func TestNextVersion_MissingDir(t *testing.T) {
+	if _, err := nextVersion(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
+		t.Error("nextVersion() = nil error, want error for missing dir")
+	}
 }
 
 func TestCreateMigration(t *testing.T) {
 	t.Run("writes a sequential, slugged goose file", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "00001_baseline.sql"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		dir := writeMigrationFiles(t, []string{"00001_baseline.sql"})
 
 		path, err := createMigration(dir, "Add Widgets!!")
 		if err != nil {
