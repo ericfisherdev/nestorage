@@ -10,6 +10,11 @@ type ItemRowView struct {
 	Name        string
 	Description string
 	Quantity    int
+	// PhotoURL is the item's primary photo thumbnail URL (NSTR-37),
+	// pre-built by adapter.buildItemRows from a single fan-in
+	// primaryPhotoRefLister call — empty means no primary photo, and
+	// binItemsList renders the neutral placeholder block instead.
+	PhotoURL string
 }
 
 // BinDetailView is the view-layer model for a bin's detail page: its own
@@ -101,7 +106,8 @@ templ deleteBinForm(view BinDetailView) {
 }
 
 // binItemsList renders the bin's contents as a read-only row per item, or
-// an empty-state message.
+// an empty-state message. Each row carries its primary-photo thumbnail (or
+// a neutral placeholder, NSTR-37) — never a full-resolution image.
 templ binItemsList(items []ItemRowView) {
 	<div class="px-[26px] pb-6">
 		<h3 class="mb-3 text-sm font-bold text-text-secondary">Contents</h3>
@@ -111,10 +117,27 @@ templ binItemsList(items []ItemRowView) {
 			}
 			for _, it := range items {
 				<li class="flex items-center justify-between rounded-card border border-border px-3 py-2 text-sm">
-					<span class="font-semibold text-text">{ it.Name }</span>
+					<span class="flex items-center gap-3">
+						@itemRowThumbnail(it)
+						<span class="font-semibold text-text">{ it.Name }</span>
+					</span>
 					<span class="text-text-faint">×{ strconv.Itoa(it.Quantity) }</span>
 				</li>
 			}
 		</ul>
 	</div>
+}
+
+// itemRowThumbnail renders a bin contents row's primary-photo thumbnail
+// (NSTR-37), or a neutral placeholder block when PhotoURL is empty —
+// mirrors item_search.templ's own resultThumbnail exactly (a separate copy,
+// since the two view types are unrelated structs).
+templ itemRowThumbnail(it ItemRowView) {
+	if it.PhotoURL != "" {
+		<img src={ it.PhotoURL } alt="" class="h-8 w-8 flex-none rounded-input object-cover"/>
+	} else {
+		<span class="flex h-8 w-8 flex-none items-center justify-center rounded-input bg-surface text-text-faint">
+			@IconImage("h-4 w-4")
+		</span>
+	}
 }

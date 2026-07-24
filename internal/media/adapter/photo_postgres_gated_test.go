@@ -618,6 +618,57 @@ func TestPhotoRepository_ListMissingThumbnail_PagesByID(t *testing.T) {
 	}
 }
 
+// TestPhotoRepository_ListPrimaryForItems_ReturnsPrimaryOnly proves the
+// batched lookup (NSTR-37, Sprint 5 reconciliation R8) returns exactly one
+// entry per item that has a primary photo — the non-primary sibling and the
+// photoless item are both absent, and the query never runs an item-by-item
+// round trip.
+func TestPhotoRepository_ListPrimaryForItems_ReturnsPrimaryOnly(t *testing.T) {
+	f := newPhotoFixture(t)
+	uploader := f.seedUser(t)
+	itemWithPhotos := f.seedItem(t, uploader)
+	itemWithNone := f.seedItem(t, uploader)
+
+	primary := newPhoto(uploader, "items/lp/primary-"+validHash+".jpg")
+	secondary := newPhoto(uploader, "items/lp/secondary-"+validHash+".jpg")
+	for _, p := range []*domain.Photo{primary, secondary} {
+		if err := f.repo.Create(testCtx(t), p); err != nil {
+			t.Fatalf("Create(%s): %v", p.StorageRef, err)
+		}
+	}
+	if err := f.repo.AttachToItem(testCtx(t), itemWithPhotos, primary.ID, 0, true); err != nil {
+		t.Fatalf("AttachToItem(primary): %v", err)
+	}
+	if err := f.repo.AttachToItem(testCtx(t), itemWithPhotos, secondary.ID, 1, false); err != nil {
+		t.Fatalf("AttachToItem(secondary): %v", err)
+	}
+
+	refs, err := f.repo.ListPrimaryForItems(testCtx(t), []storagedomain.ItemID{itemWithPhotos, itemWithNone})
+	if err != nil {
+		t.Fatalf("ListPrimaryForItems: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("ListPrimaryForItems returned %d entries, want exactly 1", len(refs))
+	}
+	if got := refs[itemWithPhotos]; got != primary.ID {
+		t.Errorf("ListPrimaryForItems[itemWithPhotos] = %v, want the primary photo %v (not the secondary)", got, primary.ID)
+	}
+	if _, ok := refs[itemWithNone]; ok {
+		t.Errorf("ListPrimaryForItems must not include a photoless item, got an entry for itemWithNone")
+	}
+}
+
+func TestPhotoRepository_ListPrimaryForItems_EmptyInputNoRoundTrip(t *testing.T) {
+	f := newPhotoFixture(t)
+	refs, err := f.repo.ListPrimaryForItems(testCtx(t), nil)
+	if err != nil {
+		t.Fatalf("ListPrimaryForItems(nil): %v", err)
+	}
+	if len(refs) != 0 {
+		t.Errorf("ListPrimaryForItems(nil) = %v, want empty", refs)
+	}
+}
+
 func TestNewPhotoRepository_NilExecutorPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {

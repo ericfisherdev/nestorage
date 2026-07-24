@@ -197,9 +197,18 @@ type binsWebHarness struct {
 
 func newBinsWebHarness(t *testing.T, viewer identity.Principal, bins *fakeBinService, mover *fakeBinMover, locations *fakeLocationSummaries, members *fakeMembers, items *fakeItemLister) *binsWebHarness {
 	t.Helper()
+	return newBinsWebHarnessWithPhotos(t, viewer, bins, mover, locations, members, items, &fakePrimaryPhotoRefLister{})
+}
+
+// newBinsWebHarnessWithPhotos is newBinsWebHarness's own extension point for
+// NSTR-37's own thumbnail-projection tests, which need a configurable
+// primaryPhotoRefLister rather than the zero-value default every
+// pre-existing call to newBinsWebHarness still gets.
+func newBinsWebHarnessWithPhotos(t *testing.T, viewer identity.Principal, bins *fakeBinService, mover *fakeBinMover, locations *fakeLocationSummaries, members *fakeMembers, items *fakeItemLister, photos *fakePrimaryPhotoRefLister) *binsWebHarness {
+	t.Helper()
 	sm := scs.New()
 	handlers := adapter.NewBinsWebHandlers(adapter.BinsWebHandlersDeps{
-		Bins: bins, Mover: mover, Locations: locations, Members: members, Items: items,
+		Bins: bins, Mover: mover, Locations: locations, Members: members, Items: items, Photos: photos,
 		SM: sm, Layout: testLayout, Logger: testLogger(),
 	})
 	server := newPrincipalServer(t, sm, viewer, handlers.Routes)
@@ -248,7 +257,7 @@ func TestNewBinsWebHandlers_NilDependenciesPanic(t *testing.T) {
 	bins, mover, locations, members, items := newFakeBinService(), &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, &fakeItemLister{}
 	sm := scs.New()
 	base := adapter.BinsWebHandlersDeps{
-		Bins: bins, Mover: mover, Locations: locations, Members: members, Items: items,
+		Bins: bins, Mover: mover, Locations: locations, Members: members, Items: items, Photos: &fakePrimaryPhotoRefLister{},
 		SM: sm, Layout: testLayout, Logger: testLogger(),
 	}
 	tests := []struct {
@@ -260,6 +269,7 @@ func TestNewBinsWebHandlers_NilDependenciesPanic(t *testing.T) {
 		{"nil locations", func(d *adapter.BinsWebHandlersDeps) { d.Locations = nil }},
 		{"nil members", func(d *adapter.BinsWebHandlersDeps) { d.Members = nil }},
 		{"nil items", func(d *adapter.BinsWebHandlersDeps) { d.Items = nil }},
+		{"nil primary photo ref lister", func(d *adapter.BinsWebHandlersDeps) { d.Photos = nil }},
 		{"nil session manager", func(d *adapter.BinsWebHandlersDeps) { d.SM = nil }},
 		{"nil layout", func(d *adapter.BinsWebHandlersDeps) { d.Layout = nil }},
 		{"nil logger", func(d *adapter.BinsWebHandlersDeps) { d.Logger = nil }},
@@ -535,6 +545,44 @@ func TestBinsWebHandlers_Detail_Success_ShowsItemsAndOwner(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("detail body missing %q", want)
 		}
+	}
+}
+
+// TestBinsWebHandlers_Detail_RendersThumbnailForPrimaryPhoto proves the
+// Sprint 5 reconciliation R8 fan-in for a bin's own contents list: the
+// primaryPhotoRefLister is called exactly once (never once per item), and
+// only the item carrying a primary photo gets a thumbnail URL.
+func TestBinsWebHandlers_Detail_RendersThumbnailForPrimaryPhoto(t *testing.T) {
+	bins := newFakeBinService()
+	binID := domain.NewBinID()
+	bins.addBin(app.BinView{Bin: domain.Bin{ID: binID, Code: "A1", Name: "Winter Clothes"}})
+	withPhoto := domain.NewItemID()
+	withoutPhoto := domain.NewItemID()
+	items := &fakeItemLister{items: []domain.Item{
+		{ID: withPhoto, Name: "Stove", Quantity: 1},
+		{ID: withoutPhoto, Name: "Lantern", Quantity: 2},
+	}}
+	photos := &fakePrimaryPhotoRefLister{refs: map[domain.ItemID]domain.PhotoRef{withPhoto: {PhotoID: "photo-1"}}}
+	h := newBinsWebHarnessWithPhotos(t, testViewer(), bins, &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, items, photos)
+
+	resp, err := h.client.Get(h.server.URL + "/b/A1")
+	if err != nil {
+		t.Fatalf("GET /b/A1: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /b/A1 = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	wantURL := "/items/" + withPhoto.String() + "/photos/photo-1?size=thumb"
+	if !strings.Contains(string(body), wantURL) {
+		t.Errorf("detail body missing thumbnail URL %q: %s", wantURL, body)
+	}
+	if strings.Contains(string(body), "/items/"+withoutPhoto.String()+"/photos/") {
+		t.Errorf("detail body rendered a thumbnail for an item with no primary photo: %s", body)
+	}
+	if len(photos.calls) != 1 {
+		t.Fatalf("ListPrimaryThumbRefs called %d times, want exactly 1", len(photos.calls))
 	}
 }
 

@@ -321,6 +321,50 @@ func (r *PhotoRepository) ListMissingThumbnail(ctx context.Context, limit int, a
 	return out, nil
 }
 
+// ListPrimaryForItems returns each item in itemIDs' primary photo id, keyed
+// by item id (see domain.PhotoRepository.ListPrimaryForItems's own doc). An
+// empty itemIDs returns an empty map without a round trip. ANY($1) against a
+// text[] parameter is the same batched-lookup shape
+// ListMissingThumbnail's own ::uuid cast comment describes this codebase
+// using instead of a pgx UUID codec — item_id/photo_id are compared as
+// plain text here too.
+func (r *PhotoRepository) ListPrimaryForItems(ctx context.Context, itemIDs []storagedomain.ItemID) (map[storagedomain.ItemID]domain.PhotoID, error) {
+	out := make(map[storagedomain.ItemID]domain.PhotoID, len(itemIDs))
+	if len(itemIDs) == 0 {
+		return out, nil
+	}
+	ids := make([]string, len(itemIDs))
+	for i, id := range itemIDs {
+		ids[i] = id.String()
+	}
+	const q = `SELECT item_id, photo_id FROM item_photo WHERE item_id = ANY($1) AND is_primary = true`
+	rows, err := r.dbtx.Query(ctx, q, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list primary photos for items: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var itemIDStr, photoIDStr string
+		if err := rows.Scan(&itemIDStr, &photoIDStr); err != nil {
+			return nil, fmt.Errorf("list primary photos for items: scan: %w", err)
+		}
+		itemID, err := storagedomain.ParseItemID(itemIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("list primary photos for items: item id: %w", err)
+		}
+		photoID, err := domain.ParsePhotoID(photoIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("list primary photos for items: photo id: %w", err)
+		}
+		out[itemID] = photoID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list primary photos for items: %w", err)
+	}
+	return out, nil
+}
+
 // scanner abstracts pgx.Row and pgx.Rows for the shared scan helpers.
 type scanner interface {
 	Scan(dest ...any) error

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,14 +183,15 @@ func (s *fakeStore) SupportsDirectURL() bool { return s.supportsDirect }
 // fakeRepo is the domain.PhotoRepository test double: in-memory photos plus
 // item_photo attachments, recording call order for TestPhotoService_Delete_Ordering.
 type fakeRepo struct {
-	photos      map[domain.PhotoID]*domain.Photo
-	byRef       map[domain.StorageRef]domain.PhotoID
-	attachments map[storagedomain.ItemID][]domain.ItemPhoto
-	createErr   error
-	findErr     error
-	listErr     error
-	attachErr   error
-	events      *[]string
+	photos         map[domain.PhotoID]*domain.Photo
+	byRef          map[domain.StorageRef]domain.PhotoID
+	attachments    map[storagedomain.ItemID][]domain.ItemPhoto
+	createErr      error
+	findErr        error
+	listErr        error
+	attachErr      error
+	listPrimaryErr error
+	events         *[]string
 }
 
 func newFakeRepo(events *[]string) *fakeRepo {
@@ -329,6 +331,25 @@ func (r *fakeRepo) SetThumbnailRef(_ context.Context, photoID domain.PhotoID, re
 
 func (r *fakeRepo) ListMissingThumbnail(_ context.Context, _ int, _ domain.PhotoID) ([]domain.MissingThumbnailPhoto, error) {
 	return nil, nil
+}
+
+// ListPrimaryForItems backs TestPhotoService_ListPrimaryThumbRefs*: scans
+// each requested item's attachments for its primary photo, mirroring the
+// real adapter's "absent from the map when there is none" contract.
+func (r *fakeRepo) ListPrimaryForItems(_ context.Context, itemIDs []storagedomain.ItemID) (map[storagedomain.ItemID]domain.PhotoID, error) {
+	if r.listPrimaryErr != nil {
+		return nil, r.listPrimaryErr
+	}
+	out := make(map[storagedomain.ItemID]domain.PhotoID, len(itemIDs))
+	for _, itemID := range itemIDs {
+		for _, ip := range r.attachments[itemID] {
+			if ip.IsPrimary {
+				out[itemID] = ip.Photo.ID
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 // --- helpers -------------------------------------------------------------
@@ -1074,5 +1095,68 @@ func TestPhotoService_Delete_RemovesFullOnlyWhenThumbnailRefNil(t *testing.T) {
 	}
 	if len(store.deletedRefs) != 1 || store.deletedRefs[0] != photo.StorageRef {
 		t.Errorf("store.deletedRefs = %v, want exactly [%v]", store.deletedRefs, photo.StorageRef)
+	}
+}
+
+// --- ListPrimaryThumbRefs (NSTR-37, Sprint 5 reconciliation R8) ----------
+
+func TestPhotoService_ListPrimaryThumbRefs_ReturnsPrimaryOnly(t *testing.T) {
+	itemWithPhotos := storagedomain.NewItemID()
+	itemWithNone := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemWithPhotos, itemWithNone)
+	repo := newFakeRepo(nil)
+	primary := domain.Photo{ID: domain.NewPhotoID(), StorageRef: "items/a/x.jpg", ContentHash: strings.Repeat("a", 64), SizeBytes: 1, ContentType: domain.ContentTypeJPEG, StorageBackend: domain.StorageBackendLocal}
+	secondary := domain.Photo{ID: domain.NewPhotoID(), StorageRef: "items/a/y.jpg", ContentHash: strings.Repeat("b", 64), SizeBytes: 1, ContentType: domain.ContentTypeJPEG, StorageBackend: domain.StorageBackendLocal}
+	repo.attachments[itemWithPhotos] = []domain.ItemPhoto{
+		{Photo: primary, Position: 0, IsPrimary: true},
+		{Photo: secondary, Position: 1, IsPrimary: false},
+	}
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, &fakeThumbnailer{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+
+	refs, err := svc.ListPrimaryThumbRefs(context.Background(), newViewer(), []storagedomain.ItemID{itemWithPhotos, itemWithNone})
+	if err != nil {
+		t.Fatalf("ListPrimaryThumbRefs: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("ListPrimaryThumbRefs returned %d refs, want exactly 1 (the photoless item must be absent)", len(refs))
+	}
+	got, ok := refs[itemWithPhotos]
+	if !ok {
+		t.Fatalf("ListPrimaryThumbRefs missing itemWithPhotos entirely")
+	}
+	if got.PhotoID != primary.ID.String() {
+		t.Errorf("ListPrimaryThumbRefs[itemWithPhotos].PhotoID = %q, want the PRIMARY photo's id %q (not the secondary)", got.PhotoID, primary.ID.String())
+	}
+	if _, ok := refs[itemWithNone]; ok {
+		t.Errorf("ListPrimaryThumbRefs must not include an item with no primary photo, got an entry for itemWithNone")
+	}
+}
+
+func TestPhotoService_ListPrimaryThumbRefs_EmptyItemIDs(t *testing.T) {
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, &fakeThumbnailer{}, newFakeRepo(nil), newFakeItemGetter(), 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	refs, err := svc.ListPrimaryThumbRefs(context.Background(), newViewer(), nil)
+	if err != nil {
+		t.Fatalf("ListPrimaryThumbRefs(nil ids): %v", err)
+	}
+	if len(refs) != 0 {
+		t.Errorf("ListPrimaryThumbRefs(nil ids) = %v, want empty", refs)
+	}
+}
+
+func TestPhotoService_ListPrimaryThumbRefs_RepoErrorPropagates(t *testing.T) {
+	repo := newFakeRepo(nil)
+	repo.listPrimaryErr = errors.New("boom")
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, &fakeThumbnailer{}, repo, newFakeItemGetter(), 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	if _, err := svc.ListPrimaryThumbRefs(context.Background(), newViewer(), []storagedomain.ItemID{storagedomain.NewItemID()}); err == nil {
+		t.Fatal("ListPrimaryThumbRefs(repo error) = nil, want an error")
 	}
 }

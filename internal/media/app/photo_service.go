@@ -331,6 +331,41 @@ func (s *PhotoService) Reorder(ctx context.Context, viewer identity.Principal, i
 	return nil
 }
 
+// ListPrimaryThumbRefs satisfies internal/storage/adapter's own unexported
+// primaryPhotoRefLister port (Sprint 5 reconciliation R8): the media-side
+// half of the cross-context fan-in read storage's list views (item search
+// results, a bin's contents) use to render thumbnails without ever LEFT
+// JOINing onto media's own tables. Returns each item in itemIDs' primary
+// photo, projected onto the narrow storagedomain.PhotoRef both contexts
+// agree on — never media's own domain.Photo or domain.PhotoID reaching
+// across the boundary. An item with no primary photo is simply absent from
+// the returned map, never an error: a thumbnail is a decoration, and its
+// absence must never fail a list render.
+//
+// Deliberately NOT re-verified per item through itemGetter the way every
+// other PhotoService method above is (see itemGetter's own doc): itemIDs is
+// always already scoped to what viewer may see by the caller's own query
+// (SearchVisible/ListInBin), the same "not itself visibility-scoped, the
+// caller already scoped it" contract domain.PhotoRepository.ListByItem
+// documents for ListForItem's own preceding check. Re-checking per item
+// here would turn the fan-in's one call into one query per row, defeating
+// the batching R8 asks for ("ONE call per list render, never one per
+// row"). The viewer parameter is still part of this method's signature,
+// matching every other PhotoService method's shape and leaving room for a
+// future caller that has NOT already scoped itemIDs to extend this method
+// to enforce it directly.
+func (s *PhotoService) ListPrimaryThumbRefs(ctx context.Context, _ identity.Principal, itemIDs []storagedomain.ItemID) (map[storagedomain.ItemID]storagedomain.PhotoRef, error) {
+	photoIDs, err := s.photos.ListPrimaryForItems(ctx, itemIDs)
+	if err != nil {
+		return nil, fmt.Errorf("media/app: list primary photo refs: %w", err)
+	}
+	refs := make(map[storagedomain.ItemID]storagedomain.PhotoRef, len(photoIDs))
+	for itemID, photoID := range photoIDs {
+		refs[itemID] = storagedomain.PhotoRef{PhotoID: photoID.String()}
+	}
+	return refs, nil
+}
+
 // viewablePhoto confirms itemID is visible to viewer and that photoID is
 // attached to itemID, shared by every method keyed on one existing photo
 // (Open, DirectURL, Delete, SetPrimary) so the two-step visibility check

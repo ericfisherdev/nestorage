@@ -68,6 +68,7 @@ type BinsWebHandlers struct {
 	locations locationLister
 	members   memberLister
 	items     itemLister
+	photos    primaryPhotoRefLister
 	sm        *scs.SessionManager
 	layout    requestLayoutFunc
 	logger    *slog.Logger
@@ -86,6 +87,7 @@ type BinsWebHandlersDeps struct {
 	Locations locationLister
 	Members   memberLister
 	Items     itemLister
+	Photos    primaryPhotoRefLister
 	SM        *scs.SessionManager
 	Layout    requestLayoutFunc
 	Logger    *slog.Logger
@@ -110,6 +112,9 @@ func NewBinsWebHandlers(deps BinsWebHandlersDeps) *BinsWebHandlers {
 	if deps.Items == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil itemLister")
 	}
+	if deps.Photos == nil {
+		panic("storage/adapter: NewBinsWebHandlers requires a non-nil primaryPhotoRefLister")
+	}
 	if deps.SM == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil session manager")
 	}
@@ -120,7 +125,7 @@ func NewBinsWebHandlers(deps BinsWebHandlersDeps) *BinsWebHandlers {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil logger")
 	}
 	return &BinsWebHandlers{
-		bins: deps.Bins, mover: deps.Mover, locations: deps.Locations, members: deps.Members, items: deps.Items,
+		bins: deps.Bins, mover: deps.Mover, locations: deps.Locations, members: deps.Members, items: deps.Items, photos: deps.Photos,
 		sm: deps.SM, layout: deps.Layout, logger: deps.Logger,
 	}
 }
@@ -437,6 +442,7 @@ func (h *BinsWebHandlers) renderDetailView(w http.ResponseWriter, r *http.Reques
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
+	photoRefs := loadPrimaryPhotoRefs(r.Context(), h.photos, viewer, itemIDs(items), h.logger, "bins: detail: list primary photo refs")
 
 	detail := components.BinDetailView{
 		CSRFToken:    session.CSRFToken(r.Context(), h.sm),
@@ -447,7 +453,7 @@ func (h *BinsWebHandlers) renderDetailView(w http.ResponseWriter, r *http.Reques
 		LocationName: locationNameIndex(locations)[view.Bin.LocationID.String()],
 		Owner:        ownerView(view.Owner),
 		Private:      view.Bin.Visibility.IsPrivate() && view.Bin.CreatedBy == viewer.UserID,
-		Items:        buildItemRows(items),
+		Items:        buildItemRows(items, photoRefs),
 	}
 	move := components.MoveBinView{
 		CSRFToken:         detail.CSRFToken,
@@ -556,17 +562,33 @@ func buildBinCards(views []app.BinView, locNames map[string]string, viewer ident
 }
 
 // buildItemRows projects a bin's items into the read-only contents list's
-// view model.
-func buildItemRows(items []domain.Item) []components.ItemRowView {
+// view model, merging in photoRefs (loadPrimaryPhotoRefs' own single
+// fan-in call, keyed by item id) as each row's thumbnail URL — the fan-in
+// merge Sprint 5 reconciliation R8 assigns to this package's own view
+// builders, never a LEFT JOIN in the bin-contents read.
+func buildItemRows(items []domain.Item, photoRefs map[domain.ItemID]domain.PhotoRef) []components.ItemRowView {
 	rows := make([]components.ItemRowView, 0, len(items))
 	for _, it := range items {
 		description := ""
 		if it.Description != nil {
 			description = *it.Description
 		}
-		rows = append(rows, components.ItemRowView{Name: it.Name, Description: description, Quantity: it.Quantity})
+		rows = append(rows, components.ItemRowView{
+			Name: it.Name, Description: description, Quantity: it.Quantity,
+			PhotoURL: thumbURL(it.ID, photoRefs),
+		})
 	}
 	return rows
+}
+
+// itemIDs extracts each item's id, in order — the batch loadPrimaryPhotoRefs'
+// single ListPrimaryThumbRefs call needs.
+func itemIDs(items []domain.Item) []domain.ItemID {
+	ids := make([]domain.ItemID, len(items))
+	for i, it := range items {
+		ids[i] = it.ID
+	}
+	return ids
 }
 
 // parseBinForm validates the create form's location/owner/visibility

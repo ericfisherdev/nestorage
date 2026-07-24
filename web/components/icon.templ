@@ -166,3 +166,60 @@ templ IconTrash(class string) {
 		<path d="M4 7h16M9 7V4.5h6V7M6 7l1 13.5A1.5 1.5 0 0 0 8.5 22h7a1.5 1.5 0 0 0 1.5-1.5L18 7"></path>
 	</svg>
 }
+
+// IconImage is the no-photo placeholder glyph (NSTR-37): a search result row
+// and a bin's contents row both render this in place of a thumbnail
+// <img> when an item has no primary photo.
+templ IconImage(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<rect x="3" y="4.5" width="18" height="15" rx="2"></rect>
+		<circle cx="8.5" cy="9.5" r="1.75"></circle>
+		<path d="M21 15.5l-5.5-5-8.5 8"></path>
+	</svg>
+}
+
+// IconStar is the photo gallery's set-primary control glyph (NSTR-37): a
+// filled star marks the current primary photo, an outline star the action
+// to make a non-primary one so.
+templ IconStar(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.2 5.9-.8z"></path>
+	</svg>
+}
+
+// IconStarFilled is IconStar's solid-fill variant, marking the photo
+// gallery's current primary photo (NSTR-37).
+templ IconStarFilled(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.2 5.9-.8z"></path>
+	</svg>
+}
+
+// IconArrowUp is the photo gallery's move-earlier control glyph (NSTR-37).
+templ IconArrowUp(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M12 19V5M5 12l7-7 7 7"></path>
+	</svg>
+}
+
+// IconArrowDown is the photo gallery's move-later control glyph (NSTR-37).
+templ IconArrowDown(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M12 5v14M5 12l7 7 7-7"></path>
+	</svg>
+}
+
+// IconClose is the photo gallery lightbox's close control glyph (NSTR-37).
+templ IconClose(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" focusable="false">
+		<path d="M6 6l12 12M18 6L6 18"></path>
+	</svg>
+}
+
+// IconCamera is the photo gallery upload form's glyph (NSTR-37).
+templ IconCamera(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"></path>
+		<circle cx="12" cy="14" r="3.5"></circle>
+	</svg>
+}

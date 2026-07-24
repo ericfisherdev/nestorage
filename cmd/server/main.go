@@ -26,6 +26,8 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identityapp "github.com/ericfisherdev/nestorage/internal/identity/app"
+	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
+	mediaapp "github.com/ericfisherdev/nestorage/internal/media/app"
 	mediabootstrap "github.com/ericfisherdev/nestorage/internal/media/bootstrap"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
@@ -88,10 +90,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// boot — a bounded-timeout context so a misconfigured or unreachable S3
 	// endpoint fails serve() with a clear message (AC 3) rather than
 	// surfacing on a household's first photo upload, mirroring the pool
-	// connectivity check just above. Not yet wired into any handler (NSTR-37
-	// composes PhotoService and its routes over whatever this resolves to);
-	// logged here so the selected backend is visible in every boot's logs
-	// regardless.
+	// connectivity check just above.
 	mediaCtx, cancelMedia := context.WithTimeout(context.Background(), mediaBootstrapTimeout)
 	photoStore, err := mediabootstrap.NewPhotoStore(mediaCtx, cfg.Media)
 	cancelMedia()
@@ -99,6 +98,19 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	logger.Info("photo storage backend ready", "backend", cfg.Media.Backend, "direct_url", photoStore.SupportsDirectURL())
+
+	// NSTR-37's own media composition: PhotoValidator stages uploads under
+	// the OS default temp dir (empty dir — see its own doc), ExifScrubber
+	// and ImageThumbnailer are NSTR-36/NSTR-84's stateless adapters, and
+	// PhotoRepository shares the same pool every other repository does.
+	// itemRepo (built below, alongside every other storage repository)
+	// satisfies PhotoService's own itemGetter port directly — no adapter
+	// wrapper needed.
+	thumbnailer, err := mediaadapter.NewImageThumbnailer(cfg.Media.ThumbMaxEdge)
+	if err != nil {
+		return err
+	}
+	photoRepo := mediaadapter.NewPhotoRepository(pool)
 
 	registry := metrics.NewRegistry()
 	// "nestorage" namespaces every metric this process emits, so Nestova and
@@ -140,6 +152,17 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	itemLinkRepo := storageadapter.NewItemLinkRepository(pool)
 	storageUOW := storageadapter.NewPostgresUnitOfWork(pool)
 
+	// NSTR-37's own PhotoService composition, now that itemRepo exists to
+	// satisfy its itemGetter port directly: PhotoValidator stages uploads
+	// under the OS default temp dir (empty dir — see its own doc),
+	// ExifScrubber is NSTR-36's stateless adapter.
+	photoValidator := mediaadapter.NewPhotoValidator("")
+	photoScrubber := mediaadapter.NewExifScrubber()
+	photoService, err := mediaapp.NewPhotoService(photoStore, photoValidator, photoScrubber, thumbnailer, photoRepo, itemRepo, cfg.Media.MaxUploadBytes, logger)
+	if err != nil {
+		return err
+	}
+
 	locationService := storageapp.NewLocationService(locationRepo, binRepo, logger)
 	binService := storageapp.NewBinService(binRepo, identityRepo, itemRepo, logger)
 	itemService := storageapp.NewItemService(itemRepo, logger)
@@ -160,15 +183,22 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	shellData := newShellDataService(identityRepo, binService, locationService)
 
 	binsWeb := storageadapter.NewBinsWebHandlers(storageadapter.BinsWebHandlersDeps{
-		Bins: binService, Mover: binMover, Locations: locationService, Members: identityRepo, Items: itemService,
+		Bins: binService, Mover: binMover, Locations: locationService, Members: identityRepo, Items: itemService, Photos: photoService,
 		SM: sm, Layout: newStorageLayout(shellData, binsPageTitle, logger), Logger: logger,
 	})
 	locationsWeb := storageadapter.NewLocationsWebHandlers(
 		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
 	)
 	itemsWeb := storageadapter.NewItemsWebHandlers(storageadapter.ItemsWebHandlersDeps{
-		Items: itemQueryService, Operations: operationService, Bins: binService, Links: itemLinkService,
+		Items: itemQueryService, Operations: operationService, Bins: binService, Links: itemLinkService, Photos: photoService,
 		SM: sm, Layout: newStorageLayout(shellData, searchPageTitle, logger), Logger: logger,
+	})
+	// NSTR-37's own web handlers: no Layout dependency (see
+	// mediaadapter.PhotosWebHandlers' own doc for why every route it serves
+	// is a bare fragment or binary image bytes, never a full-page
+	// navigation).
+	photosWeb := mediaadapter.NewPhotosWebHandlers(mediaadapter.PhotosWebHandlersDeps{
+		Photos: photoService, SM: sm, Logger: logger,
 	})
 
 	hasher := crypto.NewHasher(crypto.DefaultParams())
@@ -248,6 +278,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			Bins:           binsWeb,
 			Locations:      locationsWeb,
 			Items:          itemsWeb,
+			Photos:         photosWeb,
 			Denier:         denier,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's

@@ -14,10 +14,33 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
+	"github.com/ericfisherdev/nestorage/internal/storage/domain"
 )
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil))
+}
+
+// fakePrimaryPhotoRefLister is a configurable primaryPhotoRefLister fake for
+// BinsWebHandlers/ItemsWebHandlers' hermetic unit tests (NSTR-37), shared
+// here (rather than duplicated per _test.go file) since both handler
+// groups' own harnesses need it. Every existing harness call site defaults
+// to a zero-value instance (no refs, no error) — the "no photos yet" case —
+// so the many pre-NSTR-37 tests in this package needed no signature change;
+// only the harness helpers' own internals changed to inject one.
+type fakePrimaryPhotoRefLister struct {
+	refs map[domain.ItemID]domain.PhotoRef
+	err  error
+
+	calls [][]domain.ItemID
+}
+
+func (f *fakePrimaryPhotoRefLister) ListPrimaryThumbRefs(_ context.Context, _ identity.Principal, itemIDs []domain.ItemID) (map[domain.ItemID]domain.PhotoRef, error) {
+	f.calls = append(f.calls, itemIDs)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.refs, nil
 }
 
 // fixedPrincipalResolver is an identityadapter.Resolver that always reports
