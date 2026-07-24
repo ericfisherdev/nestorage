@@ -1,0 +1,768 @@
+package app_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"os"
+	"testing"
+	"time"
+
+	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
+	"github.com/ericfisherdev/nestorage/internal/media/app"
+	"github.com/ericfisherdev/nestorage/internal/media/domain"
+	storagedomain "github.com/ericfisherdev/nestorage/internal/storage/domain"
+)
+
+// --- fakes -------------------------------------------------------------
+
+// fakeItemGetter is the itemGetter test double: a map of itemID -> either a
+// visible item or a nil (not-found/not-visible).
+type fakeItemGetter struct {
+	visible map[storagedomain.ItemID]bool
+}
+
+func newFakeItemGetter(visibleIDs ...storagedomain.ItemID) *fakeItemGetter {
+	f := &fakeItemGetter{visible: make(map[storagedomain.ItemID]bool)}
+	for _, id := range visibleIDs {
+		f.visible[id] = true
+	}
+	return f
+}
+
+func (f *fakeItemGetter) Get(_ context.Context, _ identity.Principal, itemID storagedomain.ItemID) (*storagedomain.Item, error) {
+	if !f.visible[itemID] {
+		return nil, storagedomain.ErrItemNotFound
+	}
+	return &storagedomain.Item{ID: itemID}, nil
+}
+
+// fakeValidator is the domain.PhotoValidator test double: it stages r into
+// a real temp file (so PhotoService's hashFile/os.Open calls behave exactly
+// as they would against the real adapter), or returns a canned error.
+type fakeValidator struct {
+	err         error
+	contentType string
+}
+
+func (v *fakeValidator) ValidateAndStage(_ context.Context, r io.Reader, _ int64) (domain.StagedUpload, error) {
+	if v.err != nil {
+		return domain.StagedUpload{}, v.err
+	}
+	tmp, err := os.CreateTemp("", "fake-staged-*.tmp")
+	if err != nil {
+		return domain.StagedUpload{}, err
+	}
+	defer func() { _ = tmp.Close() }()
+	n, err := io.Copy(tmp, r)
+	if err != nil {
+		return domain.StagedUpload{}, err
+	}
+	contentType := v.contentType
+	if contentType == "" {
+		contentType = domain.ContentTypeJPEG
+	}
+	return domain.StagedUpload{Path: tmp.Name(), ContentType: contentType, SizeBytes: n}, nil
+}
+
+// fakeStore is the domain.PhotoStore test double: an in-memory ref -> bytes
+// map, recording the last Put call's arguments for assertions.
+type fakeStore struct {
+	objects        map[domain.StorageRef][]byte
+	putErr         error
+	deleteErr      error
+	urlErr         error
+	supportsDirect bool
+	lastItemID     storagedomain.ItemID
+	lastMeta       domain.PutMeta
+	deletedRefs    []domain.StorageRef
+}
+
+func newFakeStore() *fakeStore { return &fakeStore{objects: make(map[domain.StorageRef][]byte)} }
+
+func (s *fakeStore) Put(_ context.Context, itemID storagedomain.ItemID, meta domain.PutMeta, r io.Reader) (domain.StorageRef, error) {
+	if s.putErr != nil {
+		return "", s.putErr
+	}
+	s.lastItemID, s.lastMeta = itemID, meta
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", err
+	}
+	ref := domain.StorageRef("items/" + itemID.String() + "/" + meta.ContentHash)
+	s.objects[ref] = data
+	return ref, nil
+}
+
+func (s *fakeStore) Open(_ context.Context, ref domain.StorageRef) (io.ReadCloser, error) {
+	data, ok := s.objects[ref]
+	if !ok {
+		return nil, domain.ErrPhotoNotFound
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (s *fakeStore) Delete(_ context.Context, ref domain.StorageRef) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	s.deletedRefs = append(s.deletedRefs, ref)
+	delete(s.objects, ref)
+	return nil
+}
+
+func (s *fakeStore) URL(_ context.Context, ref domain.StorageRef, _ time.Duration) (string, error) {
+	if s.urlErr != nil {
+		return "", s.urlErr
+	}
+	if _, ok := s.objects[ref]; !ok {
+		return "", domain.ErrPhotoNotFound
+	}
+	return "https://example.test/" + string(ref), nil
+}
+
+func (s *fakeStore) SupportsDirectURL() bool { return s.supportsDirect }
+
+// fakeRepo is the domain.PhotoRepository test double: in-memory photos plus
+// item_photo attachments, recording call order for TestPhotoService_Delete_Ordering.
+type fakeRepo struct {
+	photos      map[domain.PhotoID]*domain.Photo
+	byRef       map[domain.StorageRef]domain.PhotoID
+	attachments map[storagedomain.ItemID][]domain.ItemPhoto
+	createErr   error
+	findErr     error
+	listErr     error
+	attachErr   error
+	events      *[]string
+}
+
+func newFakeRepo(events *[]string) *fakeRepo {
+	return &fakeRepo{
+		photos:      make(map[domain.PhotoID]*domain.Photo),
+		byRef:       make(map[domain.StorageRef]domain.PhotoID),
+		attachments: make(map[storagedomain.ItemID][]domain.ItemPhoto),
+		events:      events,
+	}
+}
+
+func (r *fakeRepo) log(event string) {
+	if r.events != nil {
+		*r.events = append(*r.events, event)
+	}
+}
+
+func (r *fakeRepo) Create(_ context.Context, photo *domain.Photo) error {
+	r.log("repo.Create")
+	if r.createErr != nil {
+		return r.createErr
+	}
+	photo.CreatedAt = time.Now()
+	cp := *photo
+	r.photos[photo.ID] = &cp
+	r.byRef[photo.StorageRef] = photo.ID
+	return nil
+}
+
+func (r *fakeRepo) GetForItem(_ context.Context, itemID storagedomain.ItemID, id domain.PhotoID) (*domain.Photo, error) {
+	for _, ip := range r.attachments[itemID] {
+		if ip.Photo.ID == id {
+			p := ip.Photo
+			return &p, nil
+		}
+	}
+	return nil, domain.ErrPhotoNotFound
+}
+
+func (r *fakeRepo) FindByStorageRef(_ context.Context, ref domain.StorageRef) (*domain.Photo, error) {
+	if r.findErr != nil {
+		return nil, r.findErr
+	}
+	id, ok := r.byRef[ref]
+	if !ok {
+		return nil, domain.ErrPhotoNotFound
+	}
+	return r.photos[id], nil
+}
+
+func (r *fakeRepo) AttachToItem(_ context.Context, itemID storagedomain.ItemID, photoID domain.PhotoID, position int, isPrimary bool) error {
+	r.log("repo.AttachToItem")
+	if r.attachErr != nil {
+		return r.attachErr
+	}
+	p, ok := r.photos[photoID]
+	if !ok {
+		return domain.ErrPhotoNotFound
+	}
+	r.attachments[itemID] = append(r.attachments[itemID], domain.ItemPhoto{Photo: *p, Position: position, IsPrimary: isPrimary})
+	return nil
+}
+
+func (r *fakeRepo) ListByItem(_ context.Context, itemID storagedomain.ItemID) ([]domain.ItemPhoto, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return append([]domain.ItemPhoto(nil), r.attachments[itemID]...), nil
+}
+
+func (r *fakeRepo) Delete(_ context.Context, itemID storagedomain.ItemID, id domain.PhotoID) error {
+	r.log("repo.Delete")
+	if _, ok := r.photos[id]; !ok {
+		return domain.ErrPhotoNotFound
+	}
+	delete(r.photos, id)
+	list := r.attachments[itemID]
+	filtered := make([]domain.ItemPhoto, 0, len(list))
+	for _, ip := range list {
+		if ip.Photo.ID != id {
+			filtered = append(filtered, ip)
+		}
+	}
+	r.attachments[itemID] = filtered
+	return nil
+}
+
+func (r *fakeRepo) SetPrimary(_ context.Context, itemID storagedomain.ItemID, photoID domain.PhotoID) error {
+	r.log("repo.SetPrimary")
+	found := false
+	list := r.attachments[itemID]
+	for i := range list {
+		if list[i].Photo.ID == photoID {
+			found = true
+		}
+	}
+	if !found {
+		return domain.ErrPhotoNotFound
+	}
+	for i := range list {
+		list[i].IsPrimary = list[i].Photo.ID == photoID
+	}
+	return nil
+}
+
+func (r *fakeRepo) Reorder(_ context.Context, itemID storagedomain.ItemID, order []domain.PhotoID) error {
+	r.log("repo.Reorder")
+	byID := make(map[domain.PhotoID]domain.ItemPhoto, len(r.attachments[itemID]))
+	for _, ip := range r.attachments[itemID] {
+		byID[ip.Photo.ID] = ip
+	}
+	reordered := make([]domain.ItemPhoto, 0, len(order))
+	for i, id := range order {
+		ip, ok := byID[id]
+		if !ok {
+			return domain.ErrPhotoNotFound
+		}
+		ip.Position = i
+		reordered = append(reordered, ip)
+	}
+	r.attachments[itemID] = reordered
+	return nil
+}
+
+// --- helpers -------------------------------------------------------------
+
+func testLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
+func newViewer() identity.Principal {
+	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Tester")
+}
+
+// --- tests -----------------------------------------------------------------
+
+func TestPhotoService_Upload_ItemNotVisible(t *testing.T) {
+	items := newFakeItemGetter() // nothing visible
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+
+	_, err = svc.Upload(context.Background(), newViewer(), storagedomain.NewItemID(), bytes.NewReader([]byte("data")))
+	if !errors.Is(err, storagedomain.ErrItemNotFound) {
+		t.Fatalf("Upload(invisible item) = %v, want storagedomain.ErrItemNotFound", err)
+	}
+}
+
+func TestPhotoService_Upload_ValidatorErrorPropagates(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	wantErr := domain.ErrUnsupportedMediaType
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{err: wantErr}, newFakeRepo(nil), items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+
+	_, err = svc.Upload(context.Background(), newViewer(), itemID, bytes.NewReader([]byte("data")))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Upload(validator error) = %v, want %v", err, wantErr)
+	}
+}
+
+func TestPhotoService_Upload_Success(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+
+	photo, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("some image bytes")))
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if photo.UploadedBy != viewer.UserID {
+		t.Errorf("Upload photo.UploadedBy = %v, want %v", photo.UploadedBy, viewer.UserID)
+	}
+	if store.lastItemID != itemID {
+		t.Errorf("Put itemID = %v, want %v", store.lastItemID, itemID)
+	}
+	if store.lastMeta.ContentType != domain.ContentTypeJPEG {
+		t.Errorf("Put meta.ContentType = %q, want %q", store.lastMeta.ContentType, domain.ContentTypeJPEG)
+	}
+
+	list, err := svc.ListForItem(context.Background(), viewer, itemID)
+	if err != nil {
+		t.Fatalf("ListForItem: %v", err)
+	}
+	if len(list) != 1 || list[0].Photo.ID != photo.ID || !list[0].IsPrimary || list[0].Position != 0 {
+		t.Errorf("ListForItem = %+v, want the uploaded photo attached primary at position 0", list)
+	}
+}
+
+func TestPhotoService_Upload_DedupReturnsExistingWithoutCreate(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+	data := []byte("identical bytes")
+
+	first, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("first Upload: %v", err)
+	}
+	second, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("second Upload: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Errorf("second Upload returned a new photo %v, want the existing %v", second.ID, first.ID)
+	}
+
+	list, err := svc.ListForItem(context.Background(), viewer, itemID)
+	if err != nil {
+		t.Fatalf("ListForItem: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("ListForItem returned %d photos after a duplicate upload, want 1", len(list))
+	}
+}
+
+func TestPhotoService_Open(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+	data := []byte("readable bytes")
+	photo, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	rc, contentType, err := svc.Open(context.Background(), viewer, itemID, photo.ID)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Errorf("Open returned %q, want %q", got, data)
+	}
+	if contentType != domain.ContentTypeJPEG {
+		t.Errorf("Open contentType = %q, want %q", contentType, domain.ContentTypeJPEG)
+	}
+}
+
+func TestPhotoService_Open_WrongItemNotFound(t *testing.T) {
+	itemA := storagedomain.NewItemID()
+	itemB := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemA, itemB)
+	store := newFakeStore()
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+	photo, err := svc.Upload(context.Background(), viewer, itemA, bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	// itemB is visible to the viewer, but photo belongs to itemA — must
+	// still be reported not found (Sprint 5 reconciliation R5).
+	if _, _, err := svc.Open(context.Background(), viewer, itemB, photo.ID); !errors.Is(err, domain.ErrPhotoNotFound) {
+		t.Fatalf("Open(wrong item) = %v, want ErrPhotoNotFound", err)
+	}
+}
+
+func TestPhotoService_DirectURLAndSupportsDirectURL(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	store.supportsDirect = true
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	if !svc.SupportsDirectURL() {
+		t.Fatal("SupportsDirectURL() = false, want true")
+	}
+	viewer := newViewer()
+	photo, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	url, err := svc.DirectURL(context.Background(), viewer, itemID, photo.ID)
+	if err != nil {
+		t.Fatalf("DirectURL: %v", err)
+	}
+	if url == "" {
+		t.Error("DirectURL returned an empty URL")
+	}
+}
+
+// TestPhotoService_Delete_Ordering proves the repository row(s) are removed
+// before the stored object (Sprint 5 reconciliation R6).
+func TestPhotoService_Delete_Ordering(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	var events []string
+	repo := newFakeRepo(&events)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+	photo, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	events = nil // reset: only care about Delete's own ordering
+
+	if err := svc.Delete(context.Background(), viewer, itemID, photo.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(events) != 1 || events[0] != "repo.Delete" {
+		t.Errorf("events = %v, want exactly [repo.Delete]", events)
+	}
+	if len(store.deletedRefs) != 1 || store.deletedRefs[0] != photo.StorageRef {
+		t.Errorf("store.deletedRefs = %v, want [%v]", store.deletedRefs, photo.StorageRef)
+	}
+
+	if _, _, err := svc.Open(context.Background(), viewer, itemID, photo.ID); !errors.Is(err, domain.ErrPhotoNotFound) {
+		t.Errorf("Open after Delete = %v, want ErrPhotoNotFound", err)
+	}
+}
+
+func TestPhotoService_Delete_NotVisibleItem(t *testing.T) {
+	items := newFakeItemGetter()
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	err = svc.Delete(context.Background(), newViewer(), storagedomain.NewItemID(), domain.NewPhotoID())
+	if !errors.Is(err, storagedomain.ErrItemNotFound) {
+		t.Fatalf("Delete(invisible item) = %v, want storagedomain.ErrItemNotFound", err)
+	}
+}
+
+func TestPhotoService_SetPrimary(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+	p1, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("one")))
+	if err != nil {
+		t.Fatalf("Upload(p1): %v", err)
+	}
+	p2, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("two")))
+	if err != nil {
+		t.Fatalf("Upload(p2): %v", err)
+	}
+
+	if err := svc.SetPrimary(context.Background(), viewer, itemID, p2.ID); err != nil {
+		t.Fatalf("SetPrimary: %v", err)
+	}
+
+	list, err := svc.ListForItem(context.Background(), viewer, itemID)
+	if err != nil {
+		t.Fatalf("ListForItem: %v", err)
+	}
+	for _, ip := range list {
+		if ip.Photo.ID == p1.ID && ip.IsPrimary {
+			t.Error("p1 must no longer be primary after SetPrimary(p2)")
+		}
+		if ip.Photo.ID == p2.ID && !ip.IsPrimary {
+			t.Error("p2 must be primary after SetPrimary(p2)")
+		}
+	}
+}
+
+func TestPhotoService_Reorder(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+	p1, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("one")))
+	if err != nil {
+		t.Fatalf("Upload(p1): %v", err)
+	}
+	p2, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("two")))
+	if err != nil {
+		t.Fatalf("Upload(p2): %v", err)
+	}
+
+	if err := svc.Reorder(context.Background(), viewer, itemID, []domain.PhotoID{p2.ID, p1.ID}); err != nil {
+		t.Fatalf("Reorder: %v", err)
+	}
+
+	list, err := svc.ListForItem(context.Background(), viewer, itemID)
+	if err != nil {
+		t.Fatalf("ListForItem: %v", err)
+	}
+	if len(list) != 2 || list[0].Photo.ID != p2.ID || list[1].Photo.ID != p1.ID {
+		t.Errorf("ListForItem after Reorder = %+v, want [p2, p1]", list)
+	}
+}
+
+func TestPhotoService_Reorder_NotVisibleItem(t *testing.T) {
+	items := newFakeItemGetter()
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	err = svc.Reorder(context.Background(), newViewer(), storagedomain.NewItemID(), nil)
+	if !errors.Is(err, storagedomain.ErrItemNotFound) {
+		t.Fatalf("Reorder(invisible item) = %v, want storagedomain.ErrItemNotFound", err)
+	}
+}
+
+func TestPhotoService_ListForItem_NotVisibleItem(t *testing.T) {
+	items := newFakeItemGetter()
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	_, err = svc.ListForItem(context.Background(), newViewer(), storagedomain.NewItemID())
+	if !errors.Is(err, storagedomain.ErrItemNotFound) {
+		t.Fatalf("ListForItem(invisible item) = %v, want storagedomain.ErrItemNotFound", err)
+	}
+}
+
+func TestPhotoService_ListForItem_RepoErrorPropagates(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	repo := newFakeRepo(nil)
+	repo.listErr = errors.New("boom")
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	if _, err := svc.ListForItem(context.Background(), newViewer(), itemID); err == nil {
+		t.Fatal("ListForItem(repo error) = nil, want an error")
+	}
+}
+
+func TestPhotoService_SetPrimary_NotVisibleItem(t *testing.T) {
+	items := newFakeItemGetter()
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	err = svc.SetPrimary(context.Background(), newViewer(), storagedomain.NewItemID(), domain.NewPhotoID())
+	if !errors.Is(err, storagedomain.ErrItemNotFound) {
+		t.Fatalf("SetPrimary(invisible item) = %v, want storagedomain.ErrItemNotFound", err)
+	}
+}
+
+func TestPhotoService_DirectURL_NotVisibleItem(t *testing.T) {
+	items := newFakeItemGetter()
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	_, err = svc.DirectURL(context.Background(), newViewer(), storagedomain.NewItemID(), domain.NewPhotoID())
+	if !errors.Is(err, storagedomain.ErrItemNotFound) {
+		t.Fatalf("DirectURL(invisible item) = %v, want storagedomain.ErrItemNotFound", err)
+	}
+}
+
+func TestPhotoService_DirectURL_StoreErrorPropagates(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+	photo, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	store.urlErr = errors.New("boom")
+
+	if _, err := svc.DirectURL(context.Background(), viewer, itemID, photo.ID); err == nil {
+		t.Fatal("DirectURL(store error) = nil, want an error")
+	}
+}
+
+func TestPhotoService_Delete_StoreErrorPropagates(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	store := newFakeStore()
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	viewer := newViewer()
+	photo, err := svc.Upload(context.Background(), viewer, itemID, bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	store.deleteErr = errors.New("boom")
+
+	if err := svc.Delete(context.Background(), viewer, itemID, photo.ID); err == nil {
+		t.Fatal("Delete(store delete error) = nil, want an error")
+	}
+}
+
+// TestPhotoService_Upload_FindByStorageRefUnexpectedErrorPropagates covers
+// Upload's dedup probe: an error other than ErrPhotoNotFound from
+// FindByStorageRef must propagate rather than being treated as "not a
+// duplicate."
+func TestPhotoService_Upload_FindByStorageRefUnexpectedErrorPropagates(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	repo := newFakeRepo(nil)
+	repo.findErr = errors.New("boom")
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	if _, err := svc.Upload(context.Background(), newViewer(), itemID, bytes.NewReader([]byte("x"))); err == nil {
+		t.Fatal("Upload(FindByStorageRef error) = nil, want an error")
+	}
+}
+
+// TestPhotoService_Upload_CreateErrorPropagates covers a Create failure
+// other than ErrDuplicatePhoto (the one Create error Upload resolves
+// itself — see TestPhotoService_Upload_DedupReturnsExistingWithoutCreate).
+func TestPhotoService_Upload_CreateErrorPropagates(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	repo := newFakeRepo(nil)
+	repo.createErr = errors.New("boom")
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	if _, err := svc.Upload(context.Background(), newViewer(), itemID, bytes.NewReader([]byte("x"))); err == nil {
+		t.Fatal("Upload(Create error) = nil, want an error")
+	}
+}
+
+func TestPhotoService_Upload_ListByItemErrorPropagates(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	repo := newFakeRepo(nil)
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	repo.listErr = errors.New("boom")
+	if _, err := svc.Upload(context.Background(), newViewer(), itemID, bytes.NewReader([]byte("x"))); err == nil {
+		t.Fatal("Upload(ListByItem error) = nil, want an error")
+	}
+}
+
+func TestPhotoService_Upload_AttachToItemErrorPropagates(t *testing.T) {
+	itemID := storagedomain.NewItemID()
+	items := newFakeItemGetter(itemID)
+	repo := newFakeRepo(nil)
+	repo.attachErr = errors.New("boom")
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	if _, err := svc.Upload(context.Background(), newViewer(), itemID, bytes.NewReader([]byte("x"))); err == nil {
+		t.Fatal("Upload(AttachToItem error) = nil, want an error")
+	}
+}
+
+func TestNewPhotoService_NilDependenciesPanic(t *testing.T) {
+	store := newFakeStore()
+	validator := &fakeValidator{}
+	repo := newFakeRepo(nil)
+	items := newFakeItemGetter()
+	logger := testLogger()
+
+	cases := []struct {
+		name string
+		fn   func()
+	}{
+		{"nil store", func() { _, _ = app.NewPhotoService(nil, validator, repo, items, 1, logger) }},
+		{"nil validator", func() { _, _ = app.NewPhotoService(store, nil, repo, items, 1, logger) }},
+		{"nil repo", func() { _, _ = app.NewPhotoService(store, validator, nil, items, 1, logger) }},
+		{"nil items", func() { _, _ = app.NewPhotoService(store, validator, repo, nil, 1, logger) }},
+		{"nil logger", func() { _, _ = app.NewPhotoService(store, validator, repo, items, 1, nil) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: did not panic", c.name)
+				}
+			}()
+			c.fn()
+		})
+	}
+}
+
+func TestNewPhotoService_NonPositiveMaxUploadBytesRejected(t *testing.T) {
+	_, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), newFakeItemGetter(), 0, testLogger())
+	if err == nil {
+		t.Error("NewPhotoService(maxUploadBytes=0) error = nil, want an error")
+	}
+}
