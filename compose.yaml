@@ -1,5 +1,5 @@
 # Local development services. Start with: docker compose up -d
-# The default DATABASE_URL in internal/platform/config matches this service.
+# .env.example's DATABASE_URL placeholder matches this service's credentials.
 services:
   postgres:
     image: postgres:17-alpine
