@@ -232,6 +232,18 @@ type PhotoRepository interface {
 	// type) for the backfill to generate and store a thumbnail without a
 	// second query per row.
 	ListMissingThumbnail(ctx context.Context, limit int, afterID PhotoID) ([]MissingThumbnailPhoto, error)
+
+	// ListPrimaryForItems returns each item in itemIDs' primary photo id,
+	// keyed by item id — an item with no primary photo (or no photos at
+	// all) is simply absent from the map, never an error. This is the
+	// media-side half of the cross-context fan-in read Sprint 5
+	// reconciliation R8 assigns to NSTR-37: PhotoService.ListPrimaryThumbRefs
+	// calls this once per list render (never once per item) to back
+	// storage's own primaryPhotoRefLister port. Not itself
+	// visibility-scoped — see ListPrimaryThumbRefs's own doc for why
+	// itemIDs is trusted as already caller-scoped, mirroring ListByItem's
+	// identical "caller already scoped it" contract.
+	ListPrimaryForItems(ctx context.Context, itemIDs []storagedomain.ItemID) (map[storagedomain.ItemID]PhotoID, error)
 }
 
 // MissingThumbnailPhoto is one row PhotoRepository.ListMissingThumbnail

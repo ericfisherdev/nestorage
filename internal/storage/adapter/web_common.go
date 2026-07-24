@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 	"github.com/ericfisherdev/nestorage/internal/storage/app"
+	"github.com/ericfisherdev/nestorage/internal/storage/domain"
 	"github.com/ericfisherdev/nestorage/web/components"
 )
 
@@ -50,6 +52,56 @@ type memberLister interface {
 // List) and by test fakes.
 type locationLister interface {
 	List(ctx context.Context, viewer identity.Principal) ([]app.LocationSummary, error)
+}
+
+// primaryPhotoRefLister is the narrow port (ISP) the item list views depend
+// on to render thumbnails, satisfied by *mediaapp.PhotoService (NSTR-37,
+// Sprint 5 reconciliation R8). Declared here — the house convention for a
+// consumer-declared narrow port is an unexported interface in the consuming
+// package, mirroring memberLister/locationLister's own identical shape —
+// rather than in either ItemsWebHandlers' or BinsWebHandlers' own file,
+// since both handler groups share it (search results and a bin's contents
+// list alike). internal/storage never imports internal/media to reference
+// this port's concrete implementation: the composition root
+// (cmd/server/main.go) injects *mediaapp.PhotoService by value, satisfying
+// this interface structurally.
+type primaryPhotoRefLister interface {
+	ListPrimaryThumbRefs(ctx context.Context, viewer identity.Principal, itemIDs []domain.ItemID) (map[domain.ItemID]domain.PhotoRef, error)
+}
+
+// loadPrimaryPhotoRefs calls photos.ListPrimaryThumbRefs for itemIDs (the
+// ONE call per list render Sprint 5 reconciliation R8 requires — never one
+// per row), logging and returning a nil map on failure rather than failing
+// the whole list render: a thumbnail is a decoration, and a nil map's
+// lookups all miss, which is exactly the "no photo" case thumbURL already
+// handles. Skips the call entirely for an empty itemIDs (an empty search
+// result, a photoless-by-definition empty bin).
+func loadPrimaryPhotoRefs(ctx context.Context, photos primaryPhotoRefLister, viewer identity.Principal, itemIDs []domain.ItemID, logger *slog.Logger, op string) map[domain.ItemID]domain.PhotoRef {
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	refs, err := photos.ListPrimaryThumbRefs(ctx, viewer, itemIDs)
+	if err != nil {
+		logger.WarnContext(ctx, op, "error", err)
+		return nil
+	}
+	return refs
+}
+
+// thumbURL returns itemID's list-view thumbnail URL from refs (built by
+// loadPrimaryPhotoRefs), or "" when itemID has no entry — every list-view
+// builder in this package (buildSearchResultViews, buildItemRows) renders
+// the neutral placeholder block instead of an <img> when this is empty. The
+// route always requests size=thumb: list views and the gallery grid never
+// request the full image (this ticket's own AC) — PhotosWebHandlers.Serve
+// (internal/media/adapter) resolves the actual bytes, falling back to the
+// full image internally when a photo's thumbnail variant does not exist.
+func thumbURL(itemID domain.ItemID, refs map[domain.ItemID]domain.PhotoRef) string {
+	ref, ok := refs[itemID]
+	if !ok || ref.PhotoID == "" {
+		return ""
+	}
+	return "/items/" + itemID.String() + "/photos/" + ref.PhotoID + "?size=thumb"
 }
 
 // verifyRequest parses the form and verifies the CSRF token — the two

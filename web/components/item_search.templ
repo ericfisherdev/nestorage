@@ -14,6 +14,11 @@ type SearchResultView struct {
 	BinCode      string
 	LocationName string
 	HolderName   string
+	// PhotoURL is the item's primary photo thumbnail URL (NSTR-37),
+	// pre-built by adapter.buildSearchResultViews from a single fan-in
+	// primaryPhotoRefLister call — empty means no primary photo, and
+	// searchResultRow renders the neutral placeholder block instead.
+	PhotoURL string
 }
 
 // SearchPageView is the view-layer model for the item search page: the
@@ -91,27 +96,45 @@ templ SearchResults(view SearchPageView) {
 	</div>
 }
 
-// searchResultRow renders one result: a link to the item's detail page,
-// its name, either its location/bin code or its holder, and its quantity.
+// searchResultRow renders one result: a thumbnail (or neutral placeholder,
+// NSTR-37), a link to the item's detail page, its name, either its
+// location/bin code or its holder, and its quantity.
 templ searchResultRow(result SearchResultView) {
 	<li>
 		<a
 			href={ templ.SafeURL("/items/" + result.ID) }
 			class="flex items-center justify-between gap-3 rounded-card border border-border bg-surface-raised px-4 py-3 hover:bg-surface"
 		>
-			<span class="flex flex-col">
-				<span class="font-semibold text-text">{ result.Name }</span>
-				if result.CheckedOut {
-					<span class="text-sm text-text-faint">Held by { result.HolderName }</span>
-				} else {
-					<span class="flex items-center gap-1 text-sm text-text-faint">
-						@IconPin("h-[13px] w-[13px]")
-						{ result.LocationName }
-						@BinCode(result.BinCode)
-					</span>
-				}
+			<span class="flex items-center gap-3">
+				@resultThumbnail(result)
+				<span class="flex flex-col">
+					<span class="font-semibold text-text">{ result.Name }</span>
+					if result.CheckedOut {
+						<span class="text-sm text-text-faint">Held by { result.HolderName }</span>
+					} else {
+						<span class="flex items-center gap-1 text-sm text-text-faint">
+							@IconPin("h-[13px] w-[13px]")
+							{ result.LocationName }
+							@BinCode(result.BinCode)
+						</span>
+					}
+				</span>
 			</span>
 			<span class="flex-none text-xs font-semibold text-text-faint">×{ strconv.Itoa(result.Quantity) }</span>
 		</a>
 	</li>
+}
+
+// resultThumbnail renders a search result's primary-photo thumbnail
+// (NSTR-37), or a neutral placeholder block when PhotoURL is empty — never
+// a full-resolution image (this ticket's own AC): PhotoURL always carries a
+// size=thumb URL (see adapter.thumbURL's own doc).
+templ resultThumbnail(result SearchResultView) {
+	if result.PhotoURL != "" {
+		<img src={ result.PhotoURL } alt="" class="h-10 w-10 flex-none rounded-input object-cover"/>
+	} else {
+		<span class="flex h-10 w-10 flex-none items-center justify-center rounded-input bg-surface text-text-faint">
+			@IconImage("h-5 w-5")
+		</span>
+	}
 }

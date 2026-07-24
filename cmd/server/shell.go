@@ -12,6 +12,7 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
+	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 	"github.com/ericfisherdev/nestorage/web"
@@ -208,7 +209,12 @@ func shellInitials(name string) string {
 // RequireAuthenticated — every already-registered exact/prefix pattern on
 // the outer mux (the root redirect, static assets, login, admin, settings)
 // still wins over that catch-all, so this only ever gates a request no more
-// specific pattern claimed.
+// specific pattern claimed. NSTR-37's own item photo routes
+// (/items/{id}/photos...) join the SAME storageMux (Sprint 5
+// reconciliation R3, which supersedes that ticket's own plan of mounting a
+// second mux on "/" — a second "/" registration panics at startup); their
+// patterns do not collide with /items/{id} or NSTR-38's own
+// /items/{id}/links... patterns.
 //
 // appRouteDeps groups newAppRoutes' dependencies into one value instead of a
 // growing parameter list: NSTR-24 added Denier as the eighth, past
@@ -226,6 +232,7 @@ type appRouteDeps struct {
 	Bins           *storageadapter.BinsWebHandlers
 	Locations      *storageadapter.LocationsWebHandlers
 	Items          *storageadapter.ItemsWebHandlers
+	Photos         *mediaadapter.PhotosWebHandlers
 	Denier         *identityadapter.Denier
 }
 
@@ -258,6 +265,7 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		deps.Bins.Routes(storageMux)
 		deps.Locations.Routes(storageMux)
 		deps.Items.Routes(storageMux)
+		deps.Photos.Routes(storageMux)
 		mux.Handle("/", authGate(storageMux))
 	}
 }

@@ -1,0 +1,257 @@
+package components
+
+import "strconv"
+
+// PhotoView is one photo in the item detail page's gallery grid (NSTR-37):
+// its thumbnail/full-resolution serve URLs (both PhotosWebHandlers.Serve,
+// distinguished only by the size query parameter — see that handler's own
+// doc), whether it is the item's current primary, and whether the move-up/
+// move-down controls should render — the boundary photos hide the
+// direction that would no-op (see adapter.moveOrder's own doc).
+type PhotoView struct {
+	ID          string
+	ThumbURL    string
+	FullURL     string
+	IsPrimary   bool
+	CanMoveUp   bool
+	CanMoveDown bool
+}
+
+// PhotoGalleryView is the view-layer model for NSTR-37's own item-photos
+// section: the item's own attached photos in position order, plus the
+// ids/token every upload/mutation form needs, and any pending errors from
+// the last upload or mutation.
+type PhotoGalleryView struct {
+	ItemID    string
+	CSRFToken string
+	Photos    []PhotoView
+	// Errors lists per-file upload failures, or a single mutation failure
+	// (set-primary/move/delete) — empty means no error is shown.
+	Errors []string
+}
+
+// itemPhotosID is the DOM id every photo mutation's HTMX outerHTML swap
+// targets — this ticket's own fragment boundary, distinct from
+// item_links.templ's own itemLinksID (Sprint 5 reconciliation R4: the two
+// sections' DOM ids, routes, and tables are all disjoint).
+const itemPhotosID = "item-photos"
+
+// PhotoGalleryStub is item_detail.templ's own single include line (Sprint 5
+// reconciliation R4): a self-contained, initially-empty div that
+// immediately hx-gets its real content from PhotosWebHandlers.List — the
+// same arrangement item_links.templ's own ItemLinksSection uses to coexist
+// inside ItemDetail's single outer div without either ticket's mutation
+// ever touching the other's markup, or ItemDetail's own div needing to know
+// anything about photos. hx-trigger="load" fires this GET once on
+// insertion, including every time ItemDetail's own outer div is
+// re-rendered (check-out/return swap the whole thing), so the gallery never
+// goes stale after an unrelated mutation.
+templ PhotoGalleryStub(itemID string) {
+	<div id={ itemPhotosID } hx-get={ "/items/" + itemID + "/photos" } hx-trigger="load" hx-swap="outerHTML"></div>
+}
+
+// PhotoGallerySection renders the item's photo gallery: any pending errors,
+// a thumbnail grid with per-photo set-primary/move/delete controls and an
+// Alpine lightbox for the full-resolution view, and the upload form (a
+// picker input plus a direct-camera input, both sharing photoFileField, and
+// an Alpine-driven progress bar wired to htmx's own upload-progress event).
+// Rendered by every one of PhotosWebHandlers' routes as the outerHTML swap
+// target, so this div's own id/shape must stay identical to
+// PhotoGalleryStub's.
+templ PhotoGallerySection(view PhotoGalleryView) {
+	<div id={ itemPhotosID } x-data="{ lightboxUrl: '' }" class="flex flex-col gap-3 border-t border-border px-[26px] py-5">
+		<h3 class="text-sm font-bold text-text-secondary">Photos</h3>
+		if len(view.Errors) > 0 {
+			<ul class="flex flex-col gap-1">
+				for _, e := range view.Errors {
+					<li role="alert" class="rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ e }</li>
+				}
+			</ul>
+		}
+		if len(view.Photos) == 0 {
+			<p class="text-sm text-text-faint">No photos yet.</p>
+		} else {
+			<ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+				for _, p := range view.Photos {
+					@photoTile(view, p)
+				}
+			</ul>
+		}
+		@photoUploadForm(view)
+		@photoLightbox()
+	</div>
+}
+
+// photoTile renders one photo: a tappable thumbnail (opening the Alpine
+// lightbox at its full-resolution URL) carrying the primary badge when
+// applicable, and its move/set-primary/delete controls.
+templ photoTile(view PhotoGalleryView, p PhotoView) {
+	<li class="flex flex-col gap-1">
+		<button
+			type="button"
+			x-on:click={ "lightboxUrl = " + strconv.Quote(p.FullURL) }
+			aria-label="View full-size photo"
+			class="relative block aspect-square w-full overflow-hidden rounded-card border border-border"
+		>
+			<img src={ p.ThumbURL } alt="" class="h-full w-full object-cover"/>
+			if p.IsPrimary {
+				<span class="absolute left-1.5 top-1.5 rounded-full bg-surface/90 p-1 text-amber-500">
+					@IconStarFilled("h-4 w-4")
+					<span class="sr-only">Primary photo</span>
+				</span>
+			}
+		</button>
+		<div class="flex flex-wrap items-center gap-1">
+			@photoMoveForm(view, p, "up")
+			if !p.IsPrimary {
+				@photoPrimaryForm(view, p)
+			}
+			@photoMoveForm(view, p, "down")
+			@photoDeleteForm(view, p)
+		</div>
+	</li>
+}
+
+// photoMoveForm renders p's move-earlier/move-later control for dir
+// ("up"|"down"), or nothing when p is already at the boundary that
+// direction would no-op toward (CanMoveUp/CanMoveDown) — HTMX-posted to
+// PhotosWebHandlers.Move and swapped into the gallery section's own
+// outerHTML, mirroring every other control's shape below.
+templ photoMoveForm(view PhotoGalleryView, p PhotoView, dir string) {
+	if moveEnabled(p, dir) {
+		<form
+			method="POST"
+			action={ templ.SafeURL("/items/" + view.ItemID + "/photos/" + p.ID + "/move") }
+			hx-post={ "/items/" + view.ItemID + "/photos/" + p.ID + "/move" }
+			hx-target={ "#" + itemPhotosID }
+			hx-swap="outerHTML"
+		>
+			<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+			<input type="hidden" name="dir" value={ dir }/>
+			<button type="submit" aria-label={ moveLabel(dir) } class="flex h-[44px] w-[44px] items-center justify-center rounded-button text-text-faint hover:bg-surface-raised hover:text-text-secondary">
+				if dir == "up" {
+					@IconArrowUp("h-4 w-4")
+				} else {
+					@IconArrowDown("h-4 w-4")
+				}
+			</button>
+		</form>
+	}
+}
+
+// moveEnabled reports whether p's move control for dir should render.
+func moveEnabled(p PhotoView, dir string) bool {
+	if dir == "up" {
+		return p.CanMoveUp
+	}
+	return p.CanMoveDown
+}
+
+// moveLabel names dir's move control for its aria-label.
+func moveLabel(dir string) string {
+	if dir == "up" {
+		return "Move earlier"
+	}
+	return "Move later"
+}
+
+// photoPrimaryForm renders p's set-primary control — only ever rendered for
+// a non-primary photo (see photoTile), so there is no "make the already-
+// primary photo primary" no-op case to guard against here. HTMX-posted to
+// PhotosWebHandlers.SetPrimary and swapped into the gallery section's own
+// outerHTML.
+templ photoPrimaryForm(view PhotoGalleryView, p PhotoView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + view.ItemID + "/photos/" + p.ID + "/primary") }
+		hx-post={ "/items/" + view.ItemID + "/photos/" + p.ID + "/primary" }
+		hx-target={ "#" + itemPhotosID }
+		hx-swap="outerHTML"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<button type="submit" aria-label="Make primary photo" class="flex h-[44px] w-[44px] items-center justify-center rounded-button text-text-faint hover:bg-surface-raised hover:text-amber-500">
+			@IconStar("h-4 w-4")
+		</button>
+	</form>
+}
+
+// photoDeleteForm renders p's delete control, HTMX-posted to
+// PhotosWebHandlers.Delete and swapped into the gallery section's own
+// outerHTML, mirroring item_links.templ's own itemLinkDeleteForm shape
+// (including the hx-confirm guard against an accidental tap).
+templ photoDeleteForm(view PhotoGalleryView, p PhotoView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + view.ItemID + "/photos/" + p.ID + "/delete") }
+		hx-post={ "/items/" + view.ItemID + "/photos/" + p.ID + "/delete" }
+		hx-target={ "#" + itemPhotosID }
+		hx-swap="outerHTML"
+		hx-confirm="Delete this photo?"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<button type="submit" aria-label="Delete photo" class="flex h-[44px] w-[44px] items-center justify-center rounded-button text-text-faint hover:bg-red-50 hover:text-red-600">
+			@IconTrash("h-4 w-4")
+		</button>
+	</form>
+}
+
+// photoUploadForm renders the multipart upload control: a styled picker
+// input (multiple, no capture) and a direct-camera input (capture=environment),
+// both named photoFileField (PhotosWebHandlers.Upload reads every selected
+// file from that one field regardless of which control chose it) and both
+// accept="image/jpeg,image/png" (Sprint 5 reconciliation R5 — HEIC/webp are
+// out of scope, and this exact accept list is what makes iOS transcode to
+// JPEG client-side). The Alpine x-data below drives the progress element
+// from htmx's own htmx:xhr:progress event (verified htmx pattern — no new
+// JS dependency, everything self-hosted per this app's offline
+// requirement).
+templ photoUploadForm(view PhotoGalleryView) {
+	<form
+		hx-post={ "/items/" + view.ItemID + "/photos" }
+		hx-target={ "#" + itemPhotosID }
+		hx-swap="outerHTML"
+		hx-encoding="multipart/form-data"
+		x-data="{ uploading: false, progress: 0 }"
+		x-on:htmx:before-request="uploading = true; progress = 0"
+		x-on:htmx:after-request="uploading = false"
+		x-on:htmx:xhr:progress="if ($event.detail.lengthComputable) { progress = ($event.detail.loaded / $event.detail.total) * 100 }"
+		class="flex flex-col gap-2 border-t border-border pt-3"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<div class="flex flex-wrap items-center gap-2">
+			<label class="flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+				@IconPlus("h-4 w-4")
+				Add photos
+				<input type="file" name="photos" accept="image/jpeg,image/png" multiple class="sr-only"/>
+			</label>
+			<label class="flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+				@IconCamera("h-4 w-4")
+				Take photo
+				<input type="file" name="photos" accept="image/jpeg,image/png" capture="environment" class="sr-only"/>
+			</label>
+			<button type="submit" class="flex min-h-[44px] items-center gap-1.5 rounded-button bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-primary-deep">
+				Upload
+			</button>
+		</div>
+		<progress x-show="uploading" x-cloak x-bind:value="progress" max="100" class="h-1.5 w-full rounded-full"></progress>
+	</form>
+}
+
+// photoLightbox renders the full-resolution overlay, shown whenever the
+// enclosing PhotoGallerySection's own lightboxUrl Alpine value is
+// non-empty (set by a photoTile's thumbnail button) — closed by an
+// Escape key, a click on the backdrop, or the close button.
+templ photoLightbox() {
+	<div
+		x-show="lightboxUrl !== ''"
+		x-cloak
+		x-on:keydown.escape.window="lightboxUrl = ''"
+		x-on:click="lightboxUrl = ''"
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+	>
+		<button type="button" x-on:click.stop="lightboxUrl = ''" aria-label="Close" class="absolute right-4 top-4 flex h-[44px] w-[44px] items-center justify-center rounded-button text-white hover:bg-white/10">
+			@IconClose("h-6 w-6")
+		</button>
+		<img x-bind:src="lightboxUrl" alt="" x-on:click.stop class="max-h-full max-w-full rounded-card object-contain"/>
+	</div>
+}

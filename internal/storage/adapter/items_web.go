@@ -64,6 +64,7 @@ type ItemsWebHandlers struct {
 	operations itemOperator
 	bins       itemBinLister
 	links      itemLinkOperator
+	photos     primaryPhotoRefLister
 	sm         *scs.SessionManager
 	layout     requestLayoutFunc
 	logger     *slog.Logger
@@ -78,6 +79,7 @@ type ItemsWebHandlersDeps struct {
 	Operations itemOperator
 	Bins       itemBinLister
 	Links      itemLinkOperator
+	Photos     primaryPhotoRefLister
 	SM         *scs.SessionManager
 	Layout     requestLayoutFunc
 	Logger     *slog.Logger
@@ -99,6 +101,9 @@ func NewItemsWebHandlers(deps ItemsWebHandlersDeps) *ItemsWebHandlers {
 	if deps.Links == nil {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil itemLinkOperator")
 	}
+	if deps.Photos == nil {
+		panic("storage/adapter: NewItemsWebHandlers requires a non-nil primaryPhotoRefLister")
+	}
 	if deps.SM == nil {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil session manager")
 	}
@@ -109,7 +114,7 @@ func NewItemsWebHandlers(deps ItemsWebHandlersDeps) *ItemsWebHandlers {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil logger")
 	}
 	return &ItemsWebHandlers{
-		items: deps.Items, operations: deps.Operations, bins: deps.Bins, links: deps.Links,
+		items: deps.Items, operations: deps.Operations, bins: deps.Bins, links: deps.Links, photos: deps.Photos,
 		sm: deps.SM, layout: deps.Layout, logger: deps.Logger,
 	}
 }
@@ -141,7 +146,8 @@ func (h *ItemsWebHandlers) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view := components.SearchPageView{Query: query, Results: buildSearchResultViews(results)}
+	photoRefs := loadPrimaryPhotoRefs(r.Context(), h.photos, viewer, searchResultItemIDs(results), h.logger, "items: search: list primary photo refs")
+	view := components.SearchPageView{Query: query, Results: buildSearchResultViews(results, photoRefs)}
 	w.Header().Set("Vary", "HX-Request")
 	content := components.SearchResults(view)
 	if !render.IsHTMX(r) {
@@ -315,16 +321,30 @@ func mapItemOperationError(err error) (status int, message string, ok bool) {
 }
 
 // buildSearchResultViews projects SearchVisible's read model into the
-// results list's view model.
-func buildSearchResultViews(results []domain.ItemSearchResult) []components.SearchResultView {
+// results list's view model, merging in photoRefs (loadPrimaryPhotoRefs'
+// own single fan-in call, keyed by item id) as each row's thumbnail URL —
+// the fan-in merge Sprint 5 reconciliation R8 assigns to this package's own
+// view builders, never a LEFT JOIN in item_search_postgres.go.
+func buildSearchResultViews(results []domain.ItemSearchResult, photoRefs map[domain.ItemID]domain.PhotoRef) []components.SearchResultView {
 	views := make([]components.SearchResultView, 0, len(results))
 	for _, r := range results {
 		views = append(views, components.SearchResultView{
 			ID: r.ID.String(), Name: r.Name, Quantity: r.Quantity, CheckedOut: r.State == domain.StateCheckedOut,
 			BinCode: r.BinCode, LocationName: r.LocationName, HolderName: r.HolderName,
+			PhotoURL: thumbURL(r.ID, photoRefs),
 		})
 	}
 	return views
+}
+
+// searchResultItemIDs extracts each result's item id, in order — the batch
+// loadPrimaryPhotoRefs' single ListPrimaryThumbRefs call needs.
+func searchResultItemIDs(results []domain.ItemSearchResult) []domain.ItemID {
+	ids := make([]domain.ItemID, len(results))
+	for i, r := range results {
+		ids[i] = r.ID
+	}
+	return ids
 }
 
 // buildBinOptions builds the return control's bin <select> options from

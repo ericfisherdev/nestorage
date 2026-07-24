@@ -183,9 +183,18 @@ type itemsWebHarness struct {
 
 func newItemsWebHarness(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator) *itemsWebHarness {
 	t.Helper()
+	return newItemsWebHarnessWithPhotos(t, viewer, items, ops, bins, links, &fakePrimaryPhotoRefLister{})
+}
+
+// newItemsWebHarnessWithPhotos is newItemsWebHarness's own extension point
+// for NSTR-37's own thumbnail-projection tests, which need a configurable
+// primaryPhotoRefLister rather than the zero-value default every
+// pre-existing call to newItemsWebHarness still gets.
+func newItemsWebHarnessWithPhotos(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator, photos *fakePrimaryPhotoRefLister) *itemsWebHarness {
+	t.Helper()
 	sm := scs.New()
 	handlers := adapter.NewItemsWebHandlers(adapter.ItemsWebHandlersDeps{
-		Items: items, Operations: ops, Bins: bins, Links: links, SM: sm, Layout: testLayout, Logger: testLogger(),
+		Items: items, Operations: ops, Bins: bins, Links: links, Photos: photos, SM: sm, Layout: testLayout, Logger: testLogger(),
 	})
 	server := newPrincipalServer(t, sm, viewer, handlers.Routes)
 	return &itemsWebHarness{server: server, client: newCSRFClient(t), items: items, ops: ops, links: links}
@@ -244,7 +253,10 @@ func checkedOutDetail(id domain.ItemID, holder identity.UserID) domain.ItemDetai
 func TestNewItemsWebHandlers_NilDependenciesPanic(t *testing.T) {
 	items, ops, bins, links := newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator()
 	sm := scs.New()
-	base := adapter.ItemsWebHandlersDeps{Items: items, Operations: ops, Bins: bins, Links: links, SM: sm, Layout: testLayout, Logger: testLogger()}
+	base := adapter.ItemsWebHandlersDeps{
+		Items: items, Operations: ops, Bins: bins, Links: links, Photos: &fakePrimaryPhotoRefLister{},
+		SM: sm, Layout: testLayout, Logger: testLogger(),
+	}
 
 	tests := []struct {
 		name   string
@@ -254,6 +266,7 @@ func TestNewItemsWebHandlers_NilDependenciesPanic(t *testing.T) {
 		{"nil operator", func(d *adapter.ItemsWebHandlersDeps) { d.Operations = nil }},
 		{"nil bin lister", func(d *adapter.ItemsWebHandlersDeps) { d.Bins = nil }},
 		{"nil link operator", func(d *adapter.ItemsWebHandlersDeps) { d.Links = nil }},
+		{"nil primary photo ref lister", func(d *adapter.ItemsWebHandlersDeps) { d.Photos = nil }},
 		{"nil session manager", func(d *adapter.ItemsWebHandlersDeps) { d.SM = nil }},
 		{"nil layout", func(d *adapter.ItemsWebHandlersDeps) { d.Layout = nil }},
 		{"nil logger", func(d *adapter.ItemsWebHandlersDeps) { d.Logger = nil }},
@@ -598,6 +611,70 @@ func TestItemsWebHandlers_Search_WithResults(t *testing.T) {
 	}
 	if len(items.searchCalls) != 1 || items.searchCalls[0] != "stove" {
 		t.Errorf("Search called with %v, want exactly [\"stove\"]", items.searchCalls)
+	}
+}
+
+// TestItemsWebHandlers_Search_RendersThumbnailForPrimaryPhoto proves the
+// Sprint 5 reconciliation R8 fan-in: Search calls primaryPhotoRefLister
+// exactly once (never once per result) and renders the returned photo's
+// thumbnail URL against the matching row.
+func TestItemsWebHandlers_Search_RendersThumbnailForPrimaryPhoto(t *testing.T) {
+	items := newFakeItemQueryService()
+	withPhoto := domain.NewItemID()
+	withoutPhoto := domain.NewItemID()
+	items.searchResults = []domain.ItemSearchResult{
+		{ID: withPhoto, Name: "Camping stove", Quantity: 1, State: domain.StateInBin, BinCode: "BIN-A01", LocationName: "Garage"},
+		{ID: withoutPhoto, Name: "Lantern", Quantity: 1, State: domain.StateInBin, BinCode: "BIN-A01", LocationName: "Garage"},
+	}
+	photos := &fakePrimaryPhotoRefLister{refs: map[domain.ItemID]domain.PhotoRef{withPhoto: {PhotoID: "photo-1"}}}
+	h := newItemsWebHarnessWithPhotos(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator(), photos)
+
+	resp, err := h.client.Get(h.server.URL + "/search?q=stove")
+	if err != nil {
+		t.Fatalf("GET /search?q=stove: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	wantURL := "/items/" + withPhoto.String() + "/photos/photo-1?size=thumb"
+	if !strings.Contains(string(body), wantURL) {
+		t.Errorf("GET /search response missing thumbnail URL %q: %s", wantURL, body)
+	}
+	if strings.Contains(string(body), "/items/"+withoutPhoto.String()+"/photos/") {
+		t.Errorf("GET /search response rendered a thumbnail for an item with no primary photo: %s", body)
+	}
+	if len(photos.calls) != 1 {
+		t.Fatalf("ListPrimaryThumbRefs called %d times, want exactly 1 (one fan-in call per list render)", len(photos.calls))
+	}
+	if len(photos.calls[0]) != 2 {
+		t.Errorf("ListPrimaryThumbRefs called with %d item ids, want 2 (one per result)", len(photos.calls[0]))
+	}
+}
+
+// TestItemsWebHandlers_Search_PhotoRefListerError_StillRendersResults
+// proves a failed fan-in read degrades to the neutral placeholder rather
+// than failing the whole search render (a thumbnail is a decoration).
+func TestItemsWebHandlers_Search_PhotoRefListerError_StillRendersResults(t *testing.T) {
+	items := newFakeItemQueryService()
+	items.searchResults = []domain.ItemSearchResult{
+		{ID: domain.NewItemID(), Name: "Camping stove", Quantity: 1, State: domain.StateInBin, BinCode: "BIN-A01", LocationName: "Garage"},
+	}
+	photos := &fakePrimaryPhotoRefLister{err: errors.New("boom")}
+	h := newItemsWebHarnessWithPhotos(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator(), photos)
+
+	resp, err := h.client.Get(h.server.URL + "/search?q=stove")
+	if err != nil {
+		t.Fatalf("GET /search?q=stove: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (a failed thumbnail fan-in must not fail the list render):\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "Camping stove") {
+		t.Errorf("GET /search response missing the result despite the photo lookup failure: %s", body)
 	}
 }
 
