@@ -1,0 +1,205 @@
+package components
+
+// ItemLinkView is one labeled URL row in the item detail page's links
+// section — not a domain type, matching every other view model in this
+// package's own doc (see ItemDetailView). URL is exactly the value stored
+// by domain.ValidateItemLinkURL; itemLinkAnchor's own comment is where the
+// render-time defense-in-depth against it lives.
+type ItemLinkView struct {
+	ID    string
+	Label string
+	URL   string
+}
+
+// ItemLinksView is the view-layer model for NSTR-38's labeled-links
+// section: the item's own links plus the ids/token every add/edit/delete
+// form on the section needs.
+type ItemLinksView struct {
+	ItemID    string
+	CSRFToken string
+	Links     []ItemLinkView
+	// FormError shows the mapped error from a rejected add/edit/delete
+	// (e.g. a rejected URL scheme). Empty means no error is shown.
+	FormError string
+}
+
+// itemLinksID is the DOM id every add/edit/delete mutation's HTMX outerHTML
+// swap targets — this section's own fragment boundary. Distinct from
+// itemDetailID (item_detail.templ), so a link mutation redraws only this
+// section, never the placement panel above it, and distinct from NSTR-37's
+// own item-photos id (Sprint 5 reconciliation R4: the two sections' DOM ids,
+// routes, and tables are all disjoint).
+const itemLinksID = "item-links"
+
+// ItemLinksSection renders an item's labeled URLs plus the add-link form:
+// NSTR-38's self-contained addition to the item detail page. Included by
+// item_detail.templ with exactly one @-include line — the reconciled
+// sharing arrangement (Sprint 5 reconciliation R3) that lets this section
+// and NSTR-37's own coexist in ItemDetail's single outer div without either
+// ticket touching the other's markup. adapter.ItemsWebHandlers.renderDetail
+// reloads this section's data on every full detail render, including after
+// a check-out/return, because ItemDetail's outer div is swapped as a whole
+// on those operations.
+templ ItemLinksSection(view ItemLinksView) {
+	<div id={ itemLinksID } class="flex flex-col gap-3 border-t border-border px-[26px] py-5">
+		<h3 class="text-sm font-bold text-text-secondary">Links</h3>
+		if view.FormError != "" {
+			<p role="alert" class="rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+		}
+		if len(view.Links) == 0 {
+			<p class="text-sm text-text-faint">No links yet.</p>
+		}
+		<ul class="flex flex-col gap-2">
+			for _, l := range view.Links {
+				@itemLinkRow(view.ItemID, view.CSRFToken, l)
+			}
+		</ul>
+		@itemLinkAddForm(view.ItemID, view.CSRFToken)
+	</div>
+}
+
+// itemLinkRow renders one link: a display row (the clickable link plus
+// edit/delete controls) or, once the visitor clicks edit, an inline edit
+// form in its place — an Alpine x-data toggle scoped to this one row, the
+// same per-element pattern apiKeySecretReveal's own copy-button state uses.
+templ itemLinkRow(itemID, csrfToken string, l ItemLinkView) {
+	<li x-data="{ editing: false }" class="flex flex-col gap-2 rounded-card border border-border p-3">
+		<div x-show="!editing" class="flex items-center justify-between gap-3">
+			@itemLinkAnchor(l)
+			<div class="flex shrink-0 items-center gap-1">
+				<button
+					type="button"
+					x-on:click="editing = true"
+					aria-label={ "Edit " + l.Label }
+					class="rounded-button p-1.5 text-text-faint hover:bg-surface-raised hover:text-text-secondary"
+				>
+					@IconPencil("h-[14px] w-[14px]")
+				</button>
+				@itemLinkDeleteForm(itemID, csrfToken, l)
+			</div>
+		</div>
+		<div x-show="editing" x-cloak>
+			@itemLinkEditForm(itemID, csrfToken, l)
+		</div>
+	</li>
+}
+
+// itemLinkAnchor renders the stored link itself — the one place in this
+// section a user-supplied URL reaches an href. templ.URL is REQUIRED here,
+// never templ.SafeURL: SafeURL bypasses templ's own scheme sanitization
+// entirely, which would make this line the XSS hole domain.ValidateItemLinkURL
+// exists to prevent from ever being stored in the first place. templ.URL is
+// defense-in-depth behind that domain validator — an unsafe scheme that
+// somehow reached this far still renders as
+// "about:invalid#TemplFailedSanitizationURL" rather than executing.
+// target="_blank" rel="noopener noreferrer" closes the tabnabbing hole a
+// bare target="_blank" leaves open. No favicon, preview, or other request to
+// the linked host is ever made at render time — the appliance must render
+// with the internet down, and this anchor is a link the user clicks, never
+// a resource the page loads.
+templ itemLinkAnchor(l ItemLinkView) {
+	<a
+		href={ templ.URL(l.URL) }
+		target="_blank"
+		rel="noopener noreferrer"
+		class="truncate text-sm font-semibold text-primary-deep hover:underline"
+	>
+		{ l.Label }
+	</a>
+}
+
+// itemLinkDeleteForm renders one link's delete control, HTMX-posted to
+// ItemsWebHandlers.DeleteLink and swapped into this section's own outerHTML
+// — never the whole item-detail fragment (see ItemLinksSection's own doc).
+templ itemLinkDeleteForm(itemID, csrfToken string, l ItemLinkView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + itemID + "/links/" + l.ID + "/delete") }
+		hx-post={ "/items/" + itemID + "/links/" + l.ID + "/delete" }
+		hx-target={ "#" + itemLinksID }
+		hx-swap="outerHTML"
+	>
+		<input type="hidden" name="csrf_token" value={ csrfToken }/>
+		<button
+			type="submit"
+			aria-label={ "Delete " + l.Label }
+			class="rounded-button p-1.5 text-text-faint hover:bg-red-50 hover:text-red-600"
+		>
+			@IconTrash("h-[14px] w-[14px]")
+		</button>
+	</form>
+}
+
+// itemLinkEditForm renders one link's inline edit control (label + url),
+// HTMX-posted to ItemsWebHandlers.EditLink and swapped into this section's
+// own outerHTML.
+templ itemLinkEditForm(itemID, csrfToken string, l ItemLinkView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + itemID + "/links/" + l.ID) }
+		hx-post={ "/items/" + itemID + "/links/" + l.ID }
+		hx-target={ "#" + itemLinksID }
+		hx-swap="outerHTML"
+		class="flex flex-col gap-2 sm:flex-row sm:items-center"
+	>
+		<input type="hidden" name="csrf_token" value={ csrfToken }/>
+		<label class="sr-only" for={ "link-label-" + l.ID }>Label</label>
+		<input
+			id={ "link-label-" + l.ID }
+			type="text"
+			name="label"
+			value={ l.Label }
+			required
+			class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text focus:border-primary focus:outline-none"
+		/>
+		<label class="sr-only" for={ "link-url-" + l.ID }>URL</label>
+		<input
+			id={ "link-url-" + l.ID }
+			type="url"
+			name="url"
+			value={ l.URL }
+			required
+			class="flex-1 rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text focus:border-primary focus:outline-none"
+		/>
+		<button type="submit" class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+			Save
+		</button>
+	</form>
+}
+
+// itemLinkAddForm renders the section's add-link control, HTMX-posted to
+// ItemsWebHandlers.AddLink and swapped into this section's own outerHTML.
+templ itemLinkAddForm(itemID, csrfToken string) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + itemID + "/links") }
+		hx-post={ "/items/" + itemID + "/links" }
+		hx-target={ "#" + itemLinksID }
+		hx-swap="outerHTML"
+		class="flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center"
+	>
+		<input type="hidden" name="csrf_token" value={ csrfToken }/>
+		<label class="sr-only" for="new-link-label">Label</label>
+		<input
+			id="new-link-label"
+			type="text"
+			name="label"
+			placeholder="Label (e.g. Owner's manual)"
+			required
+			class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+		/>
+		<label class="sr-only" for="new-link-url">URL</label>
+		<input
+			id="new-link-url"
+			type="url"
+			name="url"
+			placeholder="https://"
+			required
+			class="flex-1 rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+		/>
+		<button type="submit" class="flex items-center justify-center gap-1 rounded-button bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-primary-deep">
+			@IconPlus("h-[14px] w-[14px]")
+			Add link
+		</button>
+	</form>
+}

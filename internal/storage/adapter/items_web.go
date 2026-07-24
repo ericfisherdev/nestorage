@@ -63,6 +63,7 @@ type ItemsWebHandlers struct {
 	items      itemQueryService
 	operations itemOperator
 	bins       itemBinLister
+	links      itemLinkOperator
 	sm         *scs.SessionManager
 	layout     requestLayoutFunc
 	logger     *slog.Logger
@@ -76,6 +77,7 @@ type ItemsWebHandlersDeps struct {
 	Items      itemQueryService
 	Operations itemOperator
 	Bins       itemBinLister
+	Links      itemLinkOperator
 	SM         *scs.SessionManager
 	Layout     requestLayoutFunc
 	Logger     *slog.Logger
@@ -94,6 +96,9 @@ func NewItemsWebHandlers(deps ItemsWebHandlersDeps) *ItemsWebHandlers {
 	if deps.Bins == nil {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil itemBinLister")
 	}
+	if deps.Links == nil {
+		panic("storage/adapter: NewItemsWebHandlers requires a non-nil itemLinkOperator")
+	}
 	if deps.SM == nil {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil session manager")
 	}
@@ -104,7 +109,7 @@ func NewItemsWebHandlers(deps ItemsWebHandlersDeps) *ItemsWebHandlers {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil logger")
 	}
 	return &ItemsWebHandlers{
-		items: deps.Items, operations: deps.Operations, bins: deps.Bins,
+		items: deps.Items, operations: deps.Operations, bins: deps.Bins, links: deps.Links,
 		sm: deps.SM, layout: deps.Layout, logger: deps.Logger,
 	}
 }
@@ -115,6 +120,9 @@ func (h *ItemsWebHandlers) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /items/{id}", h.Detail)
 	mux.HandleFunc("POST /items/{id}/check-out", h.CheckOut)
 	mux.HandleFunc("POST /items/{id}/return", h.Return)
+	mux.HandleFunc("POST /items/{id}/links", h.AddLink)
+	mux.HandleFunc("POST /items/{id}/links/{linkID}", h.EditLink)
+	mux.HandleFunc("POST /items/{id}/links/{linkID}/delete", h.DeleteLink)
 }
 
 // Search handles GET /search: the full shell page (heading, type-ahead box,
@@ -237,7 +245,20 @@ func (h *ItemsWebHandlers) renderDetail(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	// NSTR-38: a separate query alongside the existing ReturnBins load below
+	// (never a change to FindVisibleDetail/ItemDetailResult, which NSTR-37
+	// is reserved to extend on its own) — reloaded on every full detail
+	// render, including after a check-out/return, since ItemDetail's outer
+	// div is swapped as a whole on those operations (see
+	// web/components/item_links.templ's own doc).
+	links, err := h.links.ListForItem(r.Context(), viewer, id)
+	if err != nil {
+		h.handleItemGetError(w, r, err, "items: detail: list links")
+		return
+	}
+
 	view := buildItemDetailView(*result, session.CSRFToken(r.Context(), h.sm), formError)
+	view.Links = buildItemLinksView(id, links, view.CSRFToken, "")
 	if !view.InBin {
 		bins, err := h.bins.ListVisible(r.Context(), viewer)
 		if err != nil {

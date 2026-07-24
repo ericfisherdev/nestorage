@@ -46,3 +46,22 @@ func ParseItemID(s string) (ItemID, error) {
 	}
 	return ItemID(u), nil
 }
+
+// ItemLinkID uniquely identifies a labeled URL attached to an item.
+type ItemLinkID uuid.UUID
+
+// NewItemLinkID returns a new time-ordered (UUIDv7) item link id, mirroring
+// NewItemID's rationale: better B-tree index locality than a random v4 id.
+func NewItemLinkID() ItemLinkID { return ItemLinkID(uuid.Must(uuid.NewV7())) }
+
+// String returns the canonical UUID string.
+func (id ItemLinkID) String() string { return uuid.UUID(id).String() }
+
+// ParseItemLinkID parses a canonical UUID string into an ItemLinkID.
+func ParseItemLinkID(s string) (ItemLinkID, error) {
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return ItemLinkID{}, fmt.Errorf("parse item link id: %w", err)
+	}
+	return ItemLinkID(u), nil
+}

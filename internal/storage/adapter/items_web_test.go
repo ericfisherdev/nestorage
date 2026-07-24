@@ -99,6 +99,77 @@ func (f *fakeItemBinLister) ListVisible(_ context.Context, _ identity.Principal)
 	return f.views, nil
 }
 
+// fakeItemLinkOperator is an in-memory itemLinkOperator fake for
+// ItemsWebHandlers' hermetic unit tests, mirroring fakeItemLinkRepo's own
+// shape (internal/storage/app's own test fake) but scoped by
+// domain.ItemID rather than by the item/link relationship the domain
+// repository enforces — the web layer never distinguishes "unknown link" by
+// item, it always trusts the mapped error the service already carries.
+type fakeItemLinkOperator struct {
+	links map[domain.ItemLinkID]domain.ItemLink
+
+	addErr      error
+	editErr     error
+	removeErr   error
+	listErr     error
+	addCalls    int
+	editCalls   int
+	removeCalls int
+}
+
+func newFakeItemLinkOperator() *fakeItemLinkOperator {
+	return &fakeItemLinkOperator{links: make(map[domain.ItemLinkID]domain.ItemLink)}
+}
+
+func (f *fakeItemLinkOperator) Add(_ context.Context, _ identity.Principal, itemID domain.ItemID, label, rawURL string) (*domain.ItemLink, error) {
+	f.addCalls++
+	if f.addErr != nil {
+		return nil, f.addErr
+	}
+	l := domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: itemID, Label: label, URL: rawURL, Position: len(f.links)}
+	f.links[l.ID] = l
+	return &l, nil
+}
+
+func (f *fakeItemLinkOperator) Edit(_ context.Context, _ identity.Principal, _ domain.ItemID, linkID domain.ItemLinkID, label, rawURL string) error {
+	f.editCalls++
+	if f.editErr != nil {
+		return f.editErr
+	}
+	l, ok := f.links[linkID]
+	if !ok {
+		return domain.ErrItemLinkNotFound
+	}
+	l.Label, l.URL = label, rawURL
+	f.links[linkID] = l
+	return nil
+}
+
+func (f *fakeItemLinkOperator) Remove(_ context.Context, _ identity.Principal, _ domain.ItemID, linkID domain.ItemLinkID) error {
+	f.removeCalls++
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	if _, ok := f.links[linkID]; !ok {
+		return domain.ErrItemLinkNotFound
+	}
+	delete(f.links, linkID)
+	return nil
+}
+
+func (f *fakeItemLinkOperator) ListForItem(_ context.Context, _ identity.Principal, itemID domain.ItemID) ([]domain.ItemLink, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	links := make([]domain.ItemLink, 0)
+	for _, l := range f.links {
+		if l.ItemID == itemID {
+			links = append(links, l)
+		}
+	}
+	return links, nil
+}
+
 // itemsWebHarness bundles a running ItemsWebHandlers server and a client
 // carrying its session cookie across requests, mirroring binsWebHarness'
 // own shape.
@@ -107,16 +178,17 @@ type itemsWebHarness struct {
 	client *http.Client
 	items  *fakeItemQueryService
 	ops    *fakeItemOperator
+	links  *fakeItemLinkOperator
 }
 
-func newItemsWebHarness(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister) *itemsWebHarness {
+func newItemsWebHarness(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator) *itemsWebHarness {
 	t.Helper()
 	sm := scs.New()
 	handlers := adapter.NewItemsWebHandlers(adapter.ItemsWebHandlersDeps{
-		Items: items, Operations: ops, Bins: bins, SM: sm, Layout: testLayout, Logger: testLogger(),
+		Items: items, Operations: ops, Bins: bins, Links: links, SM: sm, Layout: testLayout, Logger: testLogger(),
 	})
 	server := newPrincipalServer(t, sm, viewer, handlers.Routes)
-	return &itemsWebHarness{server: server, client: newCSRFClient(t), items: items, ops: ops}
+	return &itemsWebHarness{server: server, client: newCSRFClient(t), items: items, ops: ops, links: links}
 }
 
 func (h *itemsWebHarness) getCSRF(t *testing.T, path string) string {
@@ -170,9 +242,9 @@ func checkedOutDetail(id domain.ItemID, holder identity.UserID) domain.ItemDetai
 }
 
 func TestNewItemsWebHandlers_NilDependenciesPanic(t *testing.T) {
-	items, ops, bins := newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}
+	items, ops, bins, links := newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator()
 	sm := scs.New()
-	base := adapter.ItemsWebHandlersDeps{Items: items, Operations: ops, Bins: bins, SM: sm, Layout: testLayout, Logger: testLogger()}
+	base := adapter.ItemsWebHandlersDeps{Items: items, Operations: ops, Bins: bins, Links: links, SM: sm, Layout: testLayout, Logger: testLogger()}
 
 	tests := []struct {
 		name   string
@@ -181,6 +253,7 @@ func TestNewItemsWebHandlers_NilDependenciesPanic(t *testing.T) {
 		{"nil query service", func(d *adapter.ItemsWebHandlersDeps) { d.Items = nil }},
 		{"nil operator", func(d *adapter.ItemsWebHandlersDeps) { d.Operations = nil }},
 		{"nil bin lister", func(d *adapter.ItemsWebHandlersDeps) { d.Bins = nil }},
+		{"nil link operator", func(d *adapter.ItemsWebHandlersDeps) { d.Links = nil }},
 		{"nil session manager", func(d *adapter.ItemsWebHandlersDeps) { d.SM = nil }},
 		{"nil layout", func(d *adapter.ItemsWebHandlersDeps) { d.Layout = nil }},
 		{"nil logger", func(d *adapter.ItemsWebHandlersDeps) { d.Logger = nil }},
@@ -203,7 +276,7 @@ func TestItemsWebHandlers_Detail_InBin_RendersCheckOutControl(t *testing.T) {
 	items := newFakeItemQueryService()
 	id := domain.NewItemID()
 	items.addDetail(inBinDetail(id, "BIN-A01"))
-	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/items/" + id.String())
 	if err != nil {
@@ -232,7 +305,7 @@ func TestItemsWebHandlers_Detail_CheckedOut_RendersHolderSinceAndReturnBins(t *t
 	items.addDetail(checkedOutDetail(id, identity.NewUserID()))
 	binID := domain.NewBinID()
 	bins := &fakeItemBinLister{views: []app.BinView{{Bin: domain.Bin{ID: binID, Code: "BIN-A01", Name: "Winter Clothes"}}}}
-	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, bins)
+	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, bins, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/items/" + id.String())
 	if err != nil {
@@ -256,7 +329,7 @@ func TestItemsWebHandlers_Detail_CheckedOut_RendersHolderSinceAndReturnBins(t *t
 }
 
 func TestItemsWebHandlers_Detail_NotFound(t *testing.T) {
-	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/items/" + domain.NewItemID().String())
 	if err != nil {
@@ -272,7 +345,7 @@ func TestItemsWebHandlers_Detail_FullNavigation_WrapsInLayout(t *testing.T) {
 	items := newFakeItemQueryService()
 	id := domain.NewItemID()
 	items.addDetail(inBinDetail(id, "BIN-A01"))
-	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/items/" + id.String())
 	if err != nil {
@@ -289,7 +362,7 @@ func TestItemsWebHandlers_Detail_HTMXRequest_NoLayout(t *testing.T) {
 	items := newFakeItemQueryService()
 	id := domain.NewItemID()
 	items.addDetail(inBinDetail(id, "BIN-A01"))
-	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	req, err := http.NewRequest(http.MethodGet, h.server.URL+"/items/"+id.String(), nil)
 	if err != nil {
@@ -312,7 +385,7 @@ func TestItemsWebHandlers_Detail_BinListError(t *testing.T) {
 	id := domain.NewItemID()
 	items.addDetail(checkedOutDetail(id, identity.NewUserID()))
 	bins := &fakeItemBinLister{err: errors.New("boom")}
-	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, bins)
+	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, bins, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/items/" + id.String())
 	if err != nil {
@@ -325,7 +398,7 @@ func TestItemsWebHandlers_Detail_BinListError(t *testing.T) {
 }
 
 func TestItemsWebHandlers_Detail_BadID(t *testing.T) {
-	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/items/not-a-uuid")
 	if err != nil {
@@ -342,7 +415,7 @@ func TestItemsWebHandlers_CheckOut_CSRFRejected(t *testing.T) {
 	id := domain.NewItemID()
 	items.addDetail(inBinDetail(id, "BIN-A01"))
 	ops := &fakeItemOperator{}
-	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{}, newFakeItemLinkOperator())
 	h.getCSRF(t, "/items/"+id.String()) // establishes the session cookie
 
 	form := url.Values{"csrf_token": {"wrong-token"}}
@@ -360,7 +433,7 @@ func TestItemsWebHandlers_CheckOut_Success_RerendersDetail(t *testing.T) {
 	id := domain.NewItemID()
 	items.addDetail(inBinDetail(id, "BIN-A01"))
 	ops := &fakeItemOperator{}
-	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{}, newFakeItemLinkOperator())
 	csrf := h.getCSRF(t, "/items/"+id.String())
 
 	form := url.Values{"csrf_token": {csrf}}
@@ -381,7 +454,7 @@ func TestItemsWebHandlers_CheckOut_OperationRejected(t *testing.T) {
 	id := domain.NewItemID()
 	items.addDetail(inBinDetail(id, "BIN-A01"))
 	ops := &fakeItemOperator{removeErr: domain.ErrHolderRequired}
-	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{}, newFakeItemLinkOperator())
 	csrf := h.getCSRF(t, "/items/"+id.String())
 
 	form := url.Values{"csrf_token": {csrf}}
@@ -399,7 +472,7 @@ func TestItemsWebHandlers_CheckOut_UnmappedError_Returns500(t *testing.T) {
 	id := domain.NewItemID()
 	items.addDetail(inBinDetail(id, "BIN-A01"))
 	ops := &fakeItemOperator{removeErr: errors.New("boom")}
-	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{}, newFakeItemLinkOperator())
 	csrf := h.getCSRF(t, "/items/"+id.String())
 
 	form := url.Values{"csrf_token": {csrf}}
@@ -415,7 +488,7 @@ func TestItemsWebHandlers_Return_Success(t *testing.T) {
 	items.addDetail(checkedOutDetail(id, identity.NewUserID()))
 	ops := &fakeItemOperator{}
 	bins := &fakeItemBinLister{views: []app.BinView{{Bin: domain.Bin{ID: domain.NewBinID(), Code: "BIN-A01", Name: "Winter Clothes"}}}}
-	h := newItemsWebHarness(t, testViewer(), items, ops, bins)
+	h := newItemsWebHarness(t, testViewer(), items, ops, bins, newFakeItemLinkOperator())
 	csrf := h.getCSRF(t, "/items/"+id.String())
 
 	form := url.Values{"csrf_token": {csrf}, "bin_id": {domain.NewBinID().String()}}
@@ -434,7 +507,7 @@ func TestItemsWebHandlers_Return_InvalidBinID_Rejected(t *testing.T) {
 	items.addDetail(checkedOutDetail(id, identity.NewUserID()))
 	ops := &fakeItemOperator{}
 	bins := &fakeItemBinLister{views: []app.BinView{{Bin: domain.Bin{ID: domain.NewBinID(), Code: "BIN-A01", Name: "Winter Clothes"}}}}
-	h := newItemsWebHarness(t, testViewer(), items, ops, bins)
+	h := newItemsWebHarness(t, testViewer(), items, ops, bins, newFakeItemLinkOperator())
 	csrf := h.getCSRF(t, "/items/"+id.String())
 
 	form := url.Values{"csrf_token": {csrf}, "bin_id": {"not-a-uuid"}}
@@ -456,7 +529,7 @@ func TestItemsWebHandlers_Return_OperationRejected(t *testing.T) {
 	items.addDetail(checkedOutDetail(id, identity.NewUserID()))
 	ops := &fakeItemOperator{returnErr: domain.ErrItemNotCheckedOut}
 	bins := &fakeItemBinLister{}
-	h := newItemsWebHarness(t, testViewer(), items, ops, bins)
+	h := newItemsWebHarness(t, testViewer(), items, ops, bins, newFakeItemLinkOperator())
 	csrf := h.getCSRF(t, "/items/"+id.String())
 
 	form := url.Values{"csrf_token": {csrf}, "bin_id": {domain.NewBinID().String()}}
@@ -474,7 +547,7 @@ func TestItemsWebHandlers_Return_CSRFRejected(t *testing.T) {
 	id := domain.NewItemID()
 	items.addDetail(checkedOutDetail(id, identity.NewUserID()))
 	ops := &fakeItemOperator{}
-	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, ops, &fakeItemBinLister{}, newFakeItemLinkOperator())
 	h.getCSRF(t, "/items/"+id.String())
 
 	form := url.Values{"csrf_token": {"wrong-token"}, "bin_id": {domain.NewBinID().String()}}
@@ -488,7 +561,7 @@ func TestItemsWebHandlers_Return_CSRFRejected(t *testing.T) {
 }
 
 func TestItemsWebHandlers_Search_EmptyQuery_ShowsTypeToSearch(t *testing.T) {
-	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/search")
 	if err != nil {
@@ -509,7 +582,7 @@ func TestItemsWebHandlers_Search_WithResults(t *testing.T) {
 	items.searchResults = []domain.ItemSearchResult{
 		{ID: domain.NewItemID(), Name: "Camping stove", Quantity: 1, State: domain.StateInBin, BinCode: "BIN-A01", LocationName: "Garage"},
 	}
-	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/search?q=stove")
 	if err != nil {
@@ -529,7 +602,7 @@ func TestItemsWebHandlers_Search_WithResults(t *testing.T) {
 }
 
 func TestItemsWebHandlers_Search_HTMXRequest_FragmentOnly(t *testing.T) {
-	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	req, err := http.NewRequest(http.MethodGet, h.server.URL+"/search?q=st", nil)
 	if err != nil {
@@ -554,7 +627,7 @@ func TestItemsWebHandlers_Search_HTMXRequest_FragmentOnly(t *testing.T) {
 }
 
 func TestItemsWebHandlers_Search_FullNavigation_WrapsInLayout(t *testing.T) {
-	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/search")
 	if err != nil {
@@ -573,7 +646,7 @@ func TestItemsWebHandlers_Search_FullNavigation_WrapsInLayout(t *testing.T) {
 func TestItemsWebHandlers_Search_ServiceError(t *testing.T) {
 	items := newFakeItemQueryService()
 	items.searchErr = errors.New("boom")
-	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{})
+	h := newItemsWebHarness(t, testViewer(), items, &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator())
 
 	resp, err := h.client.Get(h.server.URL + "/search?q=stove")
 	if err != nil {

@@ -41,6 +41,11 @@ type ItemDetailView struct {
 	// (e.g. the item was already checked out by someone else). Empty means
 	// no error is shown.
 	FormError string
+	// Links is NSTR-38's own labeled-links section, populated by
+	// adapter.ItemsWebHandlers.renderDetail alongside ReturnBins — a
+	// separate query, not an extension of the read model above, per Sprint
+	// 5 reconciliation R3.
+	Links ItemLinksView
 }
 
 // itemDetailID is the DOM id the check-out/return controls target for
@@ -67,6 +72,7 @@ templ ItemDetail(view ItemDetailView) {
 		} else {
 			@itemCheckedOutPanel(view)
 		}
+		@ItemLinksSection(view.Links)
 	</div>
 }
 
