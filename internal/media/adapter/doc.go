@@ -6,4 +6,7 @@
 // an S3-backed PhotoStore alongside LocalPhotoStore in this same package,
 // reusing photo_validation.go's shared staging/key-building helpers and
 // rerunning the same conformance suite (conformance_test.go) against it.
+// NSTR-36 adds ExifScrubber (exif_scrub.go), the domain.PhotoScrubber
+// implementation PhotoService runs on staged bytes before PhotoStore.Put
+// ever sees them.
 package adapter

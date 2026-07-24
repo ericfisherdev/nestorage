@@ -40,8 +40,8 @@ func (f *fakeItemGetter) Get(_ context.Context, _ identity.Principal, itemID sto
 }
 
 // fakeValidator is the domain.PhotoValidator test double: it stages r into
-// a real temp file (so PhotoService's hashFile/os.Open calls behave exactly
-// as they would against the real adapter), or returns a canned error.
+// a real temp file (so PhotoService's os.ReadFile call behaves exactly as it
+// would against the real adapter), or returns a canned error.
 type fakeValidator struct {
 	err         error
 	contentType string
@@ -65,6 +65,28 @@ func (v *fakeValidator) ValidateAndStage(_ context.Context, r io.Reader, _ int64
 		contentType = domain.ContentTypeJPEG
 	}
 	return domain.StagedUpload{Path: tmp.Name(), ContentType: contentType, SizeBytes: n}, nil
+}
+
+// fakeScrubber is the domain.PhotoScrubber test double: a pass-through by
+// default. Upload's test fixtures below are plain byte strings ("some image
+// bytes", "x", ...), not real JPEG/PNG data, so the real ExifScrubber cannot
+// run against them — this fake stands in for the whole dependency the same
+// way fakeValidator stands in for PhotoValidator. recordedData/
+// recordedContentType capture the last call's arguments for assertions; err
+// forces a canned failure.
+type fakeScrubber struct {
+	err                 error
+	recordedData        []byte
+	recordedContentType string
+}
+
+func (s *fakeScrubber) Scrub(_ context.Context, data []byte, contentType string) ([]byte, error) {
+	s.recordedData = append([]byte(nil), data...)
+	s.recordedContentType = contentType
+	if s.err != nil {
+		return nil, s.err
+	}
+	return data, nil
 }
 
 // fakeStore is the domain.PhotoStore test double: an in-memory ref -> bytes
@@ -272,7 +294,7 @@ func newViewer() identity.Principal {
 
 func TestPhotoService_Upload_ItemNotVisible(t *testing.T) {
 	items := newFakeItemGetter() // nothing visible
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, newFakeRepo(nil), items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -287,7 +309,7 @@ func TestPhotoService_Upload_ValidatorErrorPropagates(t *testing.T) {
 	itemID := storagedomain.NewItemID()
 	items := newFakeItemGetter(itemID)
 	wantErr := domain.ErrUnsupportedMediaType
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{err: wantErr}, newFakeRepo(nil), items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{err: wantErr}, &fakeScrubber{}, newFakeRepo(nil), items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -303,7 +325,7 @@ func TestPhotoService_Upload_Success(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	store := newFakeStore()
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -337,7 +359,7 @@ func TestPhotoService_Upload_DedupReturnsExistingWithoutCreate(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	store := newFakeStore()
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -370,7 +392,7 @@ func TestPhotoService_Open(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	store := newFakeStore()
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -404,7 +426,7 @@ func TestPhotoService_Open_WrongItemNotFound(t *testing.T) {
 	items := newFakeItemGetter(itemA, itemB)
 	store := newFakeStore()
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -427,7 +449,7 @@ func TestPhotoService_DirectURLAndSupportsDirectURL(t *testing.T) {
 	store := newFakeStore()
 	store.supportsDirect = true
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -457,7 +479,7 @@ func TestPhotoService_Delete_Ordering(t *testing.T) {
 	store := newFakeStore()
 	var events []string
 	repo := newFakeRepo(&events)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -485,7 +507,7 @@ func TestPhotoService_Delete_Ordering(t *testing.T) {
 
 func TestPhotoService_Delete_NotVisibleItem(t *testing.T) {
 	items := newFakeItemGetter()
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, newFakeRepo(nil), items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -500,7 +522,7 @@ func TestPhotoService_SetPrimary(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	store := newFakeStore()
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -537,7 +559,7 @@ func TestPhotoService_Reorder(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	store := newFakeStore()
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -566,7 +588,7 @@ func TestPhotoService_Reorder(t *testing.T) {
 
 func TestPhotoService_Reorder_NotVisibleItem(t *testing.T) {
 	items := newFakeItemGetter()
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, newFakeRepo(nil), items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -578,7 +600,7 @@ func TestPhotoService_Reorder_NotVisibleItem(t *testing.T) {
 
 func TestPhotoService_ListForItem_NotVisibleItem(t *testing.T) {
 	items := newFakeItemGetter()
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, newFakeRepo(nil), items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -593,7 +615,7 @@ func TestPhotoService_ListForItem_RepoErrorPropagates(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	repo := newFakeRepo(nil)
 	repo.listErr = errors.New("boom")
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -604,7 +626,7 @@ func TestPhotoService_ListForItem_RepoErrorPropagates(t *testing.T) {
 
 func TestPhotoService_SetPrimary_NotVisibleItem(t *testing.T) {
 	items := newFakeItemGetter()
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, newFakeRepo(nil), items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -616,7 +638,7 @@ func TestPhotoService_SetPrimary_NotVisibleItem(t *testing.T) {
 
 func TestPhotoService_DirectURL_NotVisibleItem(t *testing.T) {
 	items := newFakeItemGetter()
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, newFakeRepo(nil), items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -631,7 +653,7 @@ func TestPhotoService_DirectURL_StoreErrorPropagates(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	store := newFakeStore()
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -652,7 +674,7 @@ func TestPhotoService_Delete_StoreErrorPropagates(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	store := newFakeStore()
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(store, &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(store, &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -677,7 +699,7 @@ func TestPhotoService_Upload_FindByStorageRefUnexpectedErrorPropagates(t *testin
 	items := newFakeItemGetter(itemID)
 	repo := newFakeRepo(nil)
 	repo.findErr = errors.New("boom")
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -694,7 +716,7 @@ func TestPhotoService_Upload_CreateErrorPropagates(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	repo := newFakeRepo(nil)
 	repo.createErr = errors.New("boom")
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -707,7 +729,7 @@ func TestPhotoService_Upload_ListByItemErrorPropagates(t *testing.T) {
 	itemID := storagedomain.NewItemID()
 	items := newFakeItemGetter(itemID)
 	repo := newFakeRepo(nil)
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -722,7 +744,7 @@ func TestPhotoService_Upload_AttachToItemErrorPropagates(t *testing.T) {
 	items := newFakeItemGetter(itemID)
 	repo := newFakeRepo(nil)
 	repo.attachErr = errors.New("boom")
-	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, repo, items, 10<<20, testLogger())
+	svc, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, repo, items, 10<<20, testLogger())
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -734,6 +756,7 @@ func TestPhotoService_Upload_AttachToItemErrorPropagates(t *testing.T) {
 func TestNewPhotoService_NilDependenciesPanic(t *testing.T) {
 	store := newFakeStore()
 	validator := &fakeValidator{}
+	scrubber := &fakeScrubber{}
 	repo := newFakeRepo(nil)
 	items := newFakeItemGetter()
 	logger := testLogger()
@@ -742,11 +765,12 @@ func TestNewPhotoService_NilDependenciesPanic(t *testing.T) {
 		name string
 		fn   func()
 	}{
-		{"nil store", func() { _, _ = app.NewPhotoService(nil, validator, repo, items, 1, logger) }},
-		{"nil validator", func() { _, _ = app.NewPhotoService(store, nil, repo, items, 1, logger) }},
-		{"nil repo", func() { _, _ = app.NewPhotoService(store, validator, nil, items, 1, logger) }},
-		{"nil items", func() { _, _ = app.NewPhotoService(store, validator, repo, nil, 1, logger) }},
-		{"nil logger", func() { _, _ = app.NewPhotoService(store, validator, repo, items, 1, nil) }},
+		{"nil store", func() { _, _ = app.NewPhotoService(nil, validator, scrubber, repo, items, 1, logger) }},
+		{"nil validator", func() { _, _ = app.NewPhotoService(store, nil, scrubber, repo, items, 1, logger) }},
+		{"nil scrubber", func() { _, _ = app.NewPhotoService(store, validator, nil, repo, items, 1, logger) }},
+		{"nil repo", func() { _, _ = app.NewPhotoService(store, validator, scrubber, nil, items, 1, logger) }},
+		{"nil items", func() { _, _ = app.NewPhotoService(store, validator, scrubber, repo, nil, 1, logger) }},
+		{"nil logger", func() { _, _ = app.NewPhotoService(store, validator, scrubber, repo, items, 1, nil) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -761,7 +785,7 @@ func TestNewPhotoService_NilDependenciesPanic(t *testing.T) {
 }
 
 func TestNewPhotoService_NonPositiveMaxUploadBytesRejected(t *testing.T) {
-	_, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, newFakeRepo(nil), newFakeItemGetter(), 0, testLogger())
+	_, err := app.NewPhotoService(newFakeStore(), &fakeValidator{}, &fakeScrubber{}, newFakeRepo(nil), newFakeItemGetter(), 0, testLogger())
 	if err == nil {
 		t.Error("NewPhotoService(maxUploadBytes=0) error = nil, want an error")
 	}
