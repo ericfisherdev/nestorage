@@ -26,6 +26,7 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identityapp "github.com/ericfisherdev/nestorage/internal/identity/app"
+	mediabootstrap "github.com/ericfisherdev/nestorage/internal/media/bootstrap"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
@@ -35,6 +36,13 @@ import (
 // shutdownTimeout bounds how long in-flight requests have to drain on
 // shutdown.
 const shutdownTimeout = 15 * time.Second
+
+// mediaBootstrapTimeout bounds mediabootstrap.NewPhotoStore's S3 backend
+// reachability check (HeadBucket) — see that function's own doc for why the
+// local backend ignores this deadline entirely. Mirrors the DB pool's
+// identical fail-fast-at-boot rationale below: a network-unreachable S3
+// endpoint fails serve() promptly instead of hanging.
+const mediaBootstrapTimeout = 15 * time.Second
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -75,6 +83,22 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
+
+	// NSTR-35: resolve the configured domain.PhotoStore backend now, at
+	// boot — a bounded-timeout context so a misconfigured or unreachable S3
+	// endpoint fails serve() with a clear message (AC 3) rather than
+	// surfacing on a household's first photo upload, mirroring the pool
+	// connectivity check just above. Not yet wired into any handler (NSTR-37
+	// composes PhotoService and its routes over whatever this resolves to);
+	// logged here so the selected backend is visible in every boot's logs
+	// regardless.
+	mediaCtx, cancelMedia := context.WithTimeout(context.Background(), mediaBootstrapTimeout)
+	photoStore, err := mediabootstrap.NewPhotoStore(mediaCtx, cfg.Media)
+	cancelMedia()
+	if err != nil {
+		return err
+	}
+	logger.Info("photo storage backend ready", "backend", cfg.Media.Backend, "direct_url", photoStore.SupportsDirectURL())
 
 	registry := metrics.NewRegistry()
 	// "nestorage" namespaces every metric this process emits, so Nestova and

@@ -165,6 +165,14 @@ jobs:
       # database per package. localhost is correct, not the service label:
       # these steps run directly on the runner, not inside a container.
       NESTORAGE_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/nestorage_test?sslmode=disable
+      # The disposable MinIO container the "Start MinIO" step below launches
+      # (NSTR-35) -- test-only credentials, thrown away with the runner at
+      # the end of the job. localhost, not a service label: MinIO runs via a
+      # plain `docker run` step, not a services: container (see that step's
+      # own comment for why).
+      NESTORAGE_TEST_S3_ENDPOINT: http://localhost:59001
+      NESTORAGE_TEST_S3_ACCESS_KEY_ID: nestorage
+      NESTORAGE_TEST_S3_SECRET_ACCESS_KEY: nestorage-ci-minio
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -190,7 +198,33 @@ jobs:
           restore-keys: |
             go-test-gated-${{ runner.os }}-
 
-      - name: Test (gated, needs Postgres)
+      - name: Start MinIO (for the S3-gated suite)
+        # Digest-pinned like every image in this file (see the postgres
+        # service's identical rationale). A plain `docker run -d`, not a
+        # services: entry: GitHub Actions' service-container support has no
+        # way to pass the `server /data` command MinIO's image requires.
+        # Readiness is polled against the same health endpoint
+        # compose.yaml's minio service checks, since there is no services:
+        # health-gate to block subsequent steps on here.
+        run: |
+          docker run -d --name minio \
+            -p 127.0.0.1:59001:9000 \
+            -e MINIO_ROOT_USER="$NESTORAGE_TEST_S3_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$NESTORAGE_TEST_S3_SECRET_ACCESS_KEY" \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e \
+            server /data
+          for _ in $(seq 1 30); do
+            if docker exec minio curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+              echo "MinIO is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::MinIO did not become healthy in time"
+          docker logs minio
+          exit 1
+
+      - name: Test (gated, needs Postgres and MinIO)
         run: make test-gated
 
       - name: Upload gated coverage profile

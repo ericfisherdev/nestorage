@@ -27,6 +27,11 @@ func TestServe_Lifecycle(t *testing.T) {
 	// test, not dev: dev would attempt to load a developer's own .env from
 	// this package's directory, which this test must not depend on.
 	t.Setenv("APP_ENV", "test")
+	// NSTR-35: serve() now resolves the local PhotoStore at boot (the
+	// MEDIA_STORAGE_BACKEND default); without an explicit MEDIA_ROOT it
+	// would create a stray ./media directory relative to this package,
+	// rather than confining it to the test's own disposable temp dir.
+	t.Setenv("MEDIA_ROOT", t.TempDir())
 
 	port := freePort(t)
 	t.Setenv("PORT", fmt.Sprintf("%d", port))
