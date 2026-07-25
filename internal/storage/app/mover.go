@@ -10,29 +10,58 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/storage/domain"
 )
 
-// BinStore is the narrow port (ISP) a binTransactor's transactional closure
-// receives: only the row-locked read and location-swap update BinMover.Move
-// builds on — the bin-move analog of ItemStore (operations.go). Satisfied
-// by a *domain.BinRepository constructed over a pgx transaction (a
-// superset — see domain.BinRepository.GetForUpdate/Move for the exact
-// contract this mirrors). Exported, unlike this file's other ports, because
-// adapter.PostgresUnitOfWork's WithinBinTx method must spell this type by
-// name to satisfy binTransactor's identical method signature.
+// BinStore is the narrow port (ISP) BinTxStores.Bins exposes to a
+// binTransactor's transactional closure: only the row-locked read and
+// location-swap update BinMover.Move builds on — the bin-move analog of
+// ItemStore (operations.go). Satisfied by a *domain.BinRepository
+// constructed over a pgx transaction (a superset — see
+// domain.BinRepository.GetForUpdate/Move for the exact contract this
+// mirrors). Exported, unlike this file's other ports, because
+// adapter.PostgresUnitOfWork must spell it by name to construct
+// BinTxStores.
 type BinStore interface {
 	GetForUpdate(ctx context.Context, id domain.BinID) (*domain.Bin, error)
 	Move(ctx context.Context, id domain.BinID, target domain.LocationID, now time.Time) (int64, error)
 }
 
-// binTransactor runs fn inside one transaction against a tx-bound BinStore,
-// committing when fn returns nil and rolling back — with no partial write —
-// on any error fn returns, including a failed domain transition guard. The
-// bin-move analog of transactor (operations.go): adapter.PostgresUnitOfWork
+// BinItemIDLister is the narrow port (ISP) BinTxStores.Items exposes to fan
+// out NSTR-41's moved events: every item currently sitting in the bin being
+// relocated, unscoped by visibility — the audit record must not depend on
+// what the mover's own visibility-scoped reads would show (see
+// domain.ItemRepository.ListIDsByBin's own doc). It returns
+// domain.ItemRef, not a bare domain.ItemID, despite the "IDs" name: each
+// fanned-out EventMoved row needs an item_name snapshot (item_event's own
+// NOT NULL column), and domain.ItemRepository.ListByBin — the method that
+// already carries a name — is barred here because it is visibility-scoped.
+// Satisfied by *domain.ItemRepository (a superset).
+type BinItemIDLister interface {
+	ListIDsByBin(ctx context.Context, binID domain.BinID) ([]domain.ItemRef, error)
+}
+
+// BinTxStores bundles the tx-bound stores a binTransactor's closure
+// operates on: BinStore for the location swap, BinItemIDLister to fan out
+// one item_event row per item in the bin, EventAppender to append them. A
+// struct bundle (NSTR-41's reconciliation R1), not positional parameters,
+// mirroring OperationStores' own rationale (operations.go). Exported
+// because adapter.PostgresUnitOfWork must spell it by name to satisfy
+// binTransactor.
+type BinTxStores struct {
+	Bins   BinStore
+	Items  BinItemIDLister
+	Events EventAppender
+}
+
+// binTransactor runs fn inside one transaction against a BinTxStores
+// bundle, committing when fn returns nil and rolling back — with no
+// partial write, including any item_event rows fn appended — on any error
+// fn returns, including a failed domain transition guard. The bin-move
+// analog of transactor (operations.go): adapter.PostgresUnitOfWork
 // supplies the real pgx transaction, with the bin row locked FOR UPDATE for
 // its duration so a second, concurrent move of the same bin blocks rather
 // than racing. Named for its single WithinBinTx method, per the same
 // single-method-interface convention binFinder documents.
 type binTransactor interface {
-	WithinBinTx(ctx context.Context, fn func(BinStore) error) error
+	WithinBinTx(ctx context.Context, fn func(BinTxStores) error) error
 }
 
 // locationFinder is the narrow port (ISP) BinMover depends on to confirm a
@@ -46,9 +75,11 @@ type locationFinder interface {
 // MoveResult carries the facts a completed bin move leaves behind: which bin
 // moved, where it moved from and to, who moved it, and when. Returned from
 // every successful BinMover.Move — deliberately, per the ticket's own
-// rationale — so the later item-history epic (Sprint 6) can record the move
-// without this ticket taking a dependency on any unbuilt history package;
-// this return value is the seam that epic wires into.
+// rationale, so the later item-history epic can record the move without
+// this ticket taking a dependency on any unbuilt history package; this
+// return value is the seam that epic wires into. NSTR-41 wires that seam
+// itself: Move appends an EventMoved row per item, sourced from the same
+// bin/from/to values MoveResult reports.
 type MoveResult struct {
 	BinID          domain.BinID
 	FromLocationID domain.LocationID
@@ -96,16 +127,21 @@ func NewBinMover(uow binTransactor, bins binFinder, locs locationFinder, clock f
 
 // Move relocates binID to target on actor's behalf. Items are untouched by
 // construction: they carry bin_id, not location_id, so they ride along
-// implicitly with the bin they already sit in.
+// implicitly with the bin they already sit in. In the same transaction as
+// the location swap, Move appends one EventMoved row per item currently in
+// the bin (NSTR-41's reconciliation R4: 'moved' means the bin's containing
+// location changed, not the item's own bin — bin_id/bin_label on every
+// fanned-out row stay the containing bin, unchanged by the move).
 //
 // Returns a wrapped domain.ErrBinNotFound when binID is unknown or not
 // visible to actor; domain.ErrBinAlreadyInLocation (unwrapped by MoveTo, but
 // wrapped here like every other error this method returns, so
 // errors.Is still finds it) when target is binID's current location; or a
-// wrapped domain.ErrLocationNotFound when target is unknown or not visible
-// to actor. The no-op guard runs before the target-visibility check: moving
-// to the bin's own current location needs no further validation, since that
-// location is already known to exist and be visible (the bin sits in it).
+// wrapped domain.ErrLocationNotFound when target — or, defensively, the
+// bin's own current location — is unknown or not visible to actor. The
+// no-op guard runs before the target-visibility check: moving to the bin's
+// own current location needs no further validation, since that location is
+// already known to exist and be visible (the bin sits in it).
 func (m *BinMover) Move(ctx context.Context, actor identity.Principal, binID domain.BinID, target domain.LocationID) (MoveResult, error) {
 	bin, err := m.bins.FindVisibleByID(ctx, actor, binID)
 	if err != nil {
@@ -117,21 +153,28 @@ func (m *BinMover) Move(ctx context.Context, actor identity.Principal, binID dom
 		return MoveResult{}, fmt.Errorf("storage: move bin: %w", err)
 	}
 
-	if _, err := m.locs.FindVisibleByID(ctx, actor, target); err != nil {
+	fromLoc, err := m.locs.FindVisibleByID(ctx, actor, from)
+	if err != nil {
+		return MoveResult{}, fmt.Errorf("storage: move bin: %w", err)
+	}
+	toLoc, err := m.locs.FindVisibleByID(ctx, actor, target)
+	if err != nil {
 		return MoveResult{}, fmt.Errorf("storage: move bin: %w", err)
 	}
 
 	now := m.clock()
-	err = m.uow.WithinBinTx(ctx, func(bins BinStore) error {
-		locked, txErr := bins.GetForUpdate(ctx, binID)
+	err = m.uow.WithinBinTx(ctx, func(stores BinTxStores) error {
+		locked, txErr := stores.Bins.GetForUpdate(ctx, binID)
 		if txErr != nil {
 			return txErr
 		}
 		if txErr = locked.MoveTo(target); txErr != nil {
 			return txErr
 		}
-		_, txErr = bins.Move(ctx, binID, target, now)
-		return txErr
+		if _, txErr = stores.Bins.Move(ctx, binID, target, now); txErr != nil {
+			return txErr
+		}
+		return m.appendMoveEvents(ctx, stores, actor, bin, from, fromLoc, target, toLoc)
 	})
 	if err != nil {
 		return MoveResult{}, fmt.Errorf("storage: move bin: %w", err)
@@ -145,6 +188,32 @@ func (m *BinMover) Move(ctx context.Context, actor identity.Principal, binID dom
 		MovedBy:        actor.UserID,
 		MovedAt:        now,
 	}, nil
+}
+
+// appendMoveEvents fans out one EventMoved row per item currently in bin,
+// inside the same transaction as the location swap (see binTransactor's own
+// doc): NSTR-40's item_event_move_check requires all four location
+// snapshot fields set on every 'moved' row, and the audit record must
+// include every item in the bin, not only what the mover's own
+// visibility-scoped reads would show (see BinItemIDLister's own doc).
+func (m *BinMover) appendMoveEvents(ctx context.Context, stores BinTxStores, actor identity.Principal, bin *domain.Bin, from domain.LocationID, fromLoc *domain.Location, to domain.LocationID, toLoc *domain.Location) error {
+	refs, err := stores.Items.ListIDsByBin(ctx, bin.ID)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		event := domain.NewItemEvent(domain.NewItemEventID(), ref.ID, ref.Name, domain.EventMoved, actor)
+		event.BinID, event.BinLabel = &bin.ID, binLabel(bin)
+		event.FromLocationID, event.FromLocationLabel = &from, fromLoc.Name
+		event.ToLocationID, event.ToLocationLabel = &to, toLoc.Name
+		if err := event.Validate(); err != nil {
+			return err
+		}
+		if err := stores.Events.Append(ctx, &event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // logAction writes one INFO-level audit line for a completed move, mirroring

@@ -19,13 +19,18 @@ import (
 // repositories item's foreign keys require, over ONE derived database —
 // this shares locationFixture's and binFixture's "storage" suffix (the
 // suffix is per *package*, not per aggregate; see binFixture's own doc for
-// why splitting it would defeat the harness's isolation).
+// why splitting it would defeat the harness's isolation). NSTR-41 adds
+// events: an ItemEventRepository over the same pool, so this fixture's own
+// gated suites (operations_gated_test.go, mover_gated_test.go,
+// item_uow_gated_test.go) can assert on item_event rows without a second,
+// isolation-defeating NewIsolatedPool call.
 type itemFixture struct {
 	pool      *pgxpool.Pool
 	repo      *adapter.ItemRepository
 	bins      *adapter.BinRepository
 	locations *adapter.LocationRepository
 	users     *identityadapter.UserRepository
+	events    *adapter.ItemEventRepository
 }
 
 func newItemFixture(t *testing.T) *itemFixture {
@@ -37,6 +42,7 @@ func newItemFixture(t *testing.T) *itemFixture {
 		bins:      adapter.NewBinRepository(pool),
 		locations: adapter.NewLocationRepository(pool),
 		users:     identityadapter.NewUserRepository(pool),
+		events:    adapter.NewItemEventRepository(pool),
 	}
 }
 

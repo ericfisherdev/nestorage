@@ -37,10 +37,12 @@ type itemQueryService interface {
 // the detail page's check-out/return controls, satisfied by
 // *app.OperationService (a superset, via RemoveFromBin/ReturnToBin). This
 // wires NSTR-29's existing service; it does not reimplement checking an item
-// in or out.
+// in or out. NSTR-41 adds the note parameter both methods now take (the
+// item_event row's free-text note) — CheckOut/Return pass nil until a form
+// collects one (see their own doc).
 type itemOperator interface {
-	RemoveFromBin(ctx context.Context, actor identity.Principal, itemID domain.ItemID) (app.Operation, error)
-	ReturnToBin(ctx context.Context, actor identity.Principal, itemID domain.ItemID, binID domain.BinID) (app.Operation, error)
+	RemoveFromBin(ctx context.Context, actor identity.Principal, itemID domain.ItemID, note *string) (app.Operation, error)
+	ReturnToBin(ctx context.Context, actor identity.Principal, itemID domain.ItemID, binID domain.BinID, note *string) (app.Operation, error)
 }
 
 // itemBinLister is the narrow port (ISP) ItemsWebHandlers depends on to
@@ -176,6 +178,9 @@ func (h *ItemsWebHandlers) Detail(w http.ResponseWriter, r *http.Request) {
 // way — a successful check-out has the same fragment shape to redraw
 // (holder panel instead of bin panel), and a rejected one (e.g. an
 // integration principal, or a lost race) re-renders with FormError set.
+// Passes a nil note: no form on this page collects one yet (NSTR-41's own
+// file-level plan), so every check-out's item_event.note is unset until a
+// later ticket adds the control.
 func (h *ItemsWebHandlers) CheckOut(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.pathItemID(w, r)
 	if !ok {
@@ -186,7 +191,7 @@ func (h *ItemsWebHandlers) CheckOut(w http.ResponseWriter, r *http.Request) {
 	}
 	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
 
-	if _, err := h.operations.RemoveFromBin(r.Context(), viewer, id); err != nil {
+	if _, err := h.operations.RemoveFromBin(r.Context(), viewer, id, nil); err != nil {
 		status, msg, mapped := mapItemOperationError(err)
 		if !mapped {
 			h.logger.ErrorContext(r.Context(), "items: check out", "error", err)
@@ -202,6 +207,7 @@ func (h *ItemsWebHandlers) CheckOut(w http.ResponseWriter, r *http.Request) {
 // Return handles POST /items/{id}/return: CSRF, parse the target bin_id from
 // the return control's picker, NSTR-29's OperationService.ReturnToBin, then
 // re-render the detail fragment either way — see CheckOut's own doc for why.
+// Passes a nil note for the same reason CheckOut does.
 func (h *ItemsWebHandlers) Return(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.pathItemID(w, r)
 	if !ok {
@@ -217,7 +223,7 @@ func (h *ItemsWebHandlers) Return(w http.ResponseWriter, r *http.Request) {
 		h.renderDetail(w, r, viewer, id, http.StatusUnprocessableEntity, msgInvalidBin)
 		return
 	}
-	if _, err := h.operations.ReturnToBin(r.Context(), viewer, id, binID); err != nil {
+	if _, err := h.operations.ReturnToBin(r.Context(), viewer, id, binID, nil); err != nil {
 		status, msg, mapped := mapItemOperationError(err)
 		if !mapped {
 			h.logger.ErrorContext(r.Context(), "items: return", "error", err)

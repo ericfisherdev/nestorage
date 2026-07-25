@@ -125,7 +125,7 @@ func TestOperationService_RemoveFromBin_ChecksOutBinnedItem(t *testing.T) {
 	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
 
 	time.Sleep(2 * time.Millisecond)
-	op, err := svc.RemoveFromBin(testCtx(t), actor, it.ID)
+	op, err := svc.RemoveFromBin(testCtx(t), actor, it.ID, nil)
 	if err != nil {
 		t.Fatalf("RemoveFromBin: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestOperationService_RemoveFromBin_IntegrationPrincipalRejected(t *testing.
 	svc := newOperationService(f)
 	actor := identity.NewIntegrationPrincipal("Nestova")
 
-	_, err := svc.RemoveFromBin(testCtx(t), actor, it.ID)
+	_, err := svc.RemoveFromBin(testCtx(t), actor, it.ID, nil)
 	if !errors.Is(err, domain.ErrHolderRequired) {
 		t.Errorf("RemoveFromBin(integration principal) = %v, want ErrHolderRequired", err)
 	}
@@ -184,7 +184,7 @@ func TestOperationService_ReturnToBin_ReturnsHeldItem(t *testing.T) {
 	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
 
 	time.Sleep(2 * time.Millisecond)
-	op, err := svc.ReturnToBin(testCtx(t), actor, it.ID, bin)
+	op, err := svc.ReturnToBin(testCtx(t), actor, it.ID, bin, nil)
 	if err != nil {
 		t.Fatalf("ReturnToBin: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestOperationService_ReturnToBin_NotCheckedOutRejected(t *testing.T) {
 	svc := newOperationService(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
 
-	_, err := svc.ReturnToBin(testCtx(t), actor, it.ID, binB)
+	_, err := svc.ReturnToBin(testCtx(t), actor, it.ID, binB, nil)
 	if !errors.Is(err, domain.ErrItemNotCheckedOut) {
 		t.Errorf("ReturnToBin(not checked out) = %v, want ErrItemNotCheckedOut", err)
 	}
@@ -286,11 +286,11 @@ func TestOperationService_RemoveFromBin_ConcurrentAttemptsOnlyOneWins(t *testing
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, results[0] = svc.RemoveFromBin(context.Background(), actorA, it.ID)
+		_, results[0] = svc.RemoveFromBin(context.Background(), actorA, it.ID, nil)
 	}()
 	go func() {
 		defer wg.Done()
-		_, results[1] = svc.RemoveFromBin(context.Background(), actorB, it.ID)
+		_, results[1] = svc.RemoveFromBin(context.Background(), actorB, it.ID, nil)
 	}()
 	wg.Wait()
 
@@ -329,4 +329,89 @@ func TestNewPostgresUnitOfWork_NilPoolPanics(t *testing.T) {
 		}
 	}()
 	adapter.NewPostgresUnitOfWork(nil)
+}
+
+// TestOperationAndEventCommitTogether is NSTR-41's own required atomicity
+// proof, commit direction: a successful AddToBin leaves BOTH the placement
+// change and exactly one added row, over a real pgx transaction rather than
+// the app package's simulated-rollback fake.
+func TestOperationAndEventCommitTogether(t *testing.T) {
+	f := newItemFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
+	holder := f.seedUser(t, identity.RoleMember)
+	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
+	if err := f.repo.Create(testCtx(t), it); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	svc := newOperationService(f)
+	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
+
+	if _, err := svc.AddToBin(testCtx(t), actor, it.ID, bin); err != nil {
+		t.Fatalf("AddToBin: %v", err)
+	}
+
+	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
+	if err != nil {
+		t.Fatalf("Get after AddToBin: %v", err)
+	}
+	if got.CurrentBinID == nil || *got.CurrentBinID != bin {
+		t.Errorf("placement change did not commit: CurrentBinID = %v, want %v", got.CurrentBinID, bin)
+	}
+
+	events, err := f.events.ListByItem(testCtx(t), it.ID, domain.HistoryPage{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListByItem: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != domain.EventAdded {
+		t.Fatalf("ListByItem = %+v, want exactly one added event", events)
+	}
+	if events[0].BinID == nil || *events[0].BinID != bin {
+		t.Errorf("added event BinID = %v, want %v", events[0].BinID, bin)
+	}
+}
+
+// TestOperationAndEventRollBackTogether is NSTR-41's own required
+// atomicity proof, rollback direction: a failed operation (a domain guard
+// failure — ErrItemAlreadyInBin — firing mid-transaction, after
+// GetForUpdate but before Move/Append ever run) leaves neither the state
+// change nor any event row, over a real pgx transaction.
+func TestOperationAndEventRollBackTogether(t *testing.T) {
+	f := newItemFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
+	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
+	it := newItem("Stove", binA, creator)
+	if err := f.repo.Create(testCtx(t), it); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	svc := newOperationService(f)
+	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+
+	_, err := svc.AddToBin(testCtx(t), actor, it.ID, binB)
+	if !errors.Is(err, domain.ErrItemAlreadyInBin) {
+		t.Fatalf("AddToBin(already in bin) = %v, want ErrItemAlreadyInBin", err)
+	}
+
+	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
+	if err != nil {
+		t.Fatalf("Get after rejected AddToBin: %v", err)
+	}
+	if got.CurrentBinID == nil || *got.CurrentBinID != binA {
+		t.Error("rejected AddToBin must leave the placement unchanged")
+	}
+
+	events, err := f.events.ListByItem(testCtx(t), it.ID, domain.HistoryPage{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListByItem: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("rejected AddToBin must leave no event row: got %+v", events)
+	}
 }

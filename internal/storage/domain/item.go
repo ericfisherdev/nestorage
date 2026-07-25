@@ -94,6 +94,18 @@ func (i *Item) State() PlacementState {
 	}
 }
 
+// ItemRef is the minimal item identity ItemRepository.ListIDsByBin
+// returns: an id plus its current name. Name rides along despite the
+// method's "IDs" name because NSTR-41's fanned-out EventMoved rows need an
+// item_name snapshot (item_event.item_name is NOT NULL), and ListByBin —
+// the method that already carries a name — cannot be used there: it is
+// visibility-scoped, and the audit record must not depend on what a
+// particular viewer may see (see ListIDsByBin's own doc).
+type ItemRef struct {
+	ID   ItemID
+	Name string
+}
+
 // ItemRepository is the outbound port for persisting and retrieving items,
 // scoped throughout (on its read paths) by a viewer identity.Principal so
 // visibility is enforced in the query itself rather than as an
@@ -183,4 +195,12 @@ type ItemRepository interface {
 	// since it has no bin/location to join (see ItemSearchResult's own
 	// doc). Returns an empty slice, not an error, when nothing matches.
 	SearchVisible(ctx context.Context, viewer identity.Principal, query string, limit int) ([]ItemSearchResult, error)
+	// ListIDsByBin returns every item currently sitting in binID, unscoped
+	// by visibility — NSTR-41's app.BinMover.Move fans out one EventMoved
+	// row per item in a relocated bin, and that audit record must not
+	// depend on what the mover's own visibility-scoped reads (ListByBin)
+	// would show: a private bin's contents still get a moved event when
+	// its bin relocates. Returns an empty slice, not an error, when binID
+	// holds no items.
+	ListIDsByBin(ctx context.Context, binID BinID) ([]ItemRef, error)
 }

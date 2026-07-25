@@ -27,21 +27,27 @@ func NewPostgresUnitOfWork(pool *pgxpool.Pool) *PostgresUnitOfWork {
 	return &PostgresUnitOfWork{pool: pool}
 }
 
-// WithinTx runs fn inside one transaction, passing it an ItemRepository
-// bound to that transaction so fn's GetForUpdate/Move calls share the same
-// row lock and either both commit or both roll back. Mirrors
-// identity/adapter.Provisioner.CreateFirstAdmin's begin/defer-rollback/
-// commit shape: the deferred Rollback is a no-op once Commit has already
-// succeeded, and otherwise undoes anything fn wrote before returning its
-// error.
-func (u *PostgresUnitOfWork) WithinTx(ctx context.Context, fn func(app.ItemStore) error) error {
+// WithinTx runs fn inside one transaction, passing it an app.OperationStores
+// bundle — an ItemRepository and an ItemEventRepository, both bound to that
+// transaction — so fn's GetForUpdate/Move/Append calls share the same row
+// lock and either all commit or all roll back (NSTR-41: the placement
+// change and the item_event row that records it must never disagree).
+// Mirrors identity/adapter.Provisioner.CreateFirstAdmin's begin/
+// defer-rollback/commit shape: the deferred Rollback is a no-op once Commit
+// has already succeeded, and otherwise undoes anything fn wrote before
+// returning its error.
+func (u *PostgresUnitOfWork) WithinTx(ctx context.Context, fn func(app.OperationStores) error) error {
 	tx, err := u.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("storage/adapter: begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := fn(NewItemRepository(tx)); err != nil {
+	stores := app.OperationStores{
+		Items:  NewItemRepository(tx),
+		Events: NewItemEventRepository(tx),
+	}
+	if err := fn(stores); err != nil {
 		return err
 	}
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
@@ -16,18 +17,23 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil))
 }
 
-// fakeItemRepo is an in-memory itemRepository fake for ItemService's
-// hermetic unit tests. The *Err fields let a test simulate a repository
-// failure for exactly the method under test, without needing a real
-// database.
+// fakeItemRepo is an in-memory fake satisfying BOTH of ItemService's ports:
+// itemRepository (Get/ListByBin, the non-transactional reads) and
+// ItemLifecycleStore (Create/GetForUpdate/Update/Delete, the tx-bound
+// writes) — mirroring how a single *adapter.ItemRepository backs both in
+// production, just bound to the pool for one and a pgx.Tx for the other.
+// Get/GetForUpdate return a copy so a caller's in-place mutation (Edit's
+// read-modify-write) can never corrupt the fake's own stored state ahead of
+// Update, the same rationale fakeItemStore's own doc gives.
 type fakeItemRepo struct {
 	items map[domain.ItemID]*domain.Item
 
-	createErr error
-	getErr    error
-	updateErr error
-	listErr   error
-	deleteErr error
+	createErr       error
+	getErr          error
+	getForUpdateErr error
+	updateErr       error
+	listErr         error
+	deleteErr       error
 }
 
 func newFakeItemRepo() *fakeItemRepo {
@@ -38,7 +44,8 @@ func (f *fakeItemRepo) Create(_ context.Context, it *domain.Item) error {
 	if f.createErr != nil {
 		return f.createErr
 	}
-	f.items[it.ID] = it
+	cp := *it
+	f.items[it.ID] = &cp
 	return nil
 }
 
@@ -50,7 +57,20 @@ func (f *fakeItemRepo) Get(_ context.Context, _ identity.Principal, id domain.It
 	if !ok {
 		return nil, domain.ErrItemNotFound
 	}
-	return it, nil
+	cp := *it
+	return &cp, nil
+}
+
+func (f *fakeItemRepo) GetForUpdate(_ context.Context, id domain.ItemID) (*domain.Item, error) {
+	if f.getForUpdateErr != nil {
+		return nil, f.getForUpdateErr
+	}
+	it, ok := f.items[id]
+	if !ok {
+		return nil, domain.ErrItemNotFound
+	}
+	cp := *it
+	return &cp, nil
 }
 
 func (f *fakeItemRepo) Update(_ context.Context, it *domain.Item) error {
@@ -89,57 +109,142 @@ func (f *fakeItemRepo) Delete(_ context.Context, id domain.ItemID) error {
 	return nil
 }
 
+// fakeItemTxUnitOfWork runs fn directly against a shared fakeItemRepo (as
+// ItemTxStores.Items) and a fakeEventAppender, restoring the repo's items
+// map to a pre-fn snapshot on error — mirrors fakeUnitOfWork/
+// fakeBinUnitOfWork's own rollback simulation (operations_test.go/
+// mover_test.go). A whole-map snapshot, not a single struct field, because
+// Create/Delete change which keys exist, not just their values.
+type fakeItemTxUnitOfWork struct {
+	store  *fakeItemRepo
+	events *fakeEventAppender
+}
+
+func (u *fakeItemTxUnitOfWork) WithinItemTx(_ context.Context, fn func(app.ItemTxStores) error) error {
+	before := snapshotItems(u.store.items)
+	err := fn(app.ItemTxStores{Items: u.store, Events: u.events})
+	if err != nil {
+		u.store.items = before
+	}
+	return err
+}
+
+func snapshotItems(items map[domain.ItemID]*domain.Item) map[domain.ItemID]*domain.Item {
+	cp := make(map[domain.ItemID]*domain.Item, len(items))
+	for id, it := range items {
+		v := *it
+		cp[id] = &v
+	}
+	return cp
+}
+
+// newTestItemService wires an ItemService over a fresh fakeItemRepo and
+// fakeEventAppender, returning the appender alongside the service so a
+// test that cares which events were appended can inspect it directly.
+func newTestItemService(repo *fakeItemRepo) (*app.ItemService, *fakeEventAppender) {
+	events := &fakeEventAppender{}
+	uow := &fakeItemTxUnitOfWork{store: repo, events: events}
+	return app.NewItemService(repo, uow, testLogger()), events
+}
+
+func strPtr(s string) *string { return &s }
+
 func TestNewItemService_PanicsOnNilDeps(t *testing.T) {
+	repo := newFakeItemRepo()
+	uow := &fakeItemTxUnitOfWork{store: repo, events: &fakeEventAppender{}}
+
 	tests := []struct {
 		name  string
-		build func() (repo *fakeItemRepo, logger *slog.Logger)
+		build func()
 	}{
-		{"nil repository", func() (*fakeItemRepo, *slog.Logger) { return nil, testLogger() }},
-		{"nil logger", func() (*fakeItemRepo, *slog.Logger) { return newFakeItemRepo(), nil }},
+		{"nil itemRepository", func() { app.NewItemService(nil, uow, testLogger()) }},
+		{"nil itemTransactor", func() { app.NewItemService(repo, nil, testLogger()) }},
+		{"nil logger", func() { app.NewItemService(repo, uow, nil) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo, logger := tt.build()
 			defer func() {
 				if recover() == nil {
 					t.Error("NewItemService did not panic")
 				}
 			}()
-			if repo == nil {
-				app.NewItemService(nil, logger)
-			} else {
-				app.NewItemService(repo, logger)
-			}
+			tt.build()
 		})
 	}
 }
 
 func TestItemService_Create(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
 	binID := domain.NewBinID()
-	creator := identity.NewUserID()
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
-	it, err := svc.Create(context.Background(), "Camping stove", nil, 1, binID, creator)
+	it, err := svc.Create(context.Background(), "Camping stove", nil, 1, binID, actor)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if it.CurrentBinID == nil || *it.CurrentBinID != binID {
 		t.Errorf("Create: CurrentBinID = %v, want %v", it.CurrentBinID, binID)
 	}
-	if it.CreatedBy != creator {
-		t.Errorf("Create: CreatedBy = %v, want %v", it.CreatedBy, creator)
+	if it.CreatedBy != actor.UserID {
+		t.Errorf("Create: CreatedBy = %v, want %v", it.CreatedBy, actor.UserID)
 	}
 	if _, ok := repo.items[it.ID]; !ok {
 		t.Error("Create did not persist the item via the repository")
 	}
 }
 
+// TestCreateEmitsCreatedEvent proves NSTR-41's per-operation event contract
+// for ItemService.Create: exactly one EventCreated row, attributed to actor.
+func TestCreateEmitsCreatedEvent(t *testing.T) {
+	repo := newFakeItemRepo()
+	svc, events := newTestItemService(repo)
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+
+	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(events.events) != 1 {
+		t.Fatalf("Create appended %d events, want exactly 1", len(events.events))
+	}
+	got := events.events[0]
+	if got.Kind != domain.EventCreated {
+		t.Errorf("event.Kind = %v, want %v", got.Kind, domain.EventCreated)
+	}
+	if got.ItemID != it.ID {
+		t.Errorf("event.ItemID = %v, want %v", got.ItemID, it.ID)
+	}
+	if got.ActorLabel != actor.Actor() {
+		t.Errorf("event.ActorLabel = %q, want %q", got.ActorLabel, actor.Actor())
+	}
+}
+
+// TestCreateEventFailureAbortsCreate proves atomicity: a failing
+// EventAppender makes Create return an error and leaves the fake store
+// observing a rollback — the item row Create inserted is gone too, exactly
+// as a real pgx transaction's rollback would undo it.
+func TestCreateEventFailureAbortsCreate(t *testing.T) {
+	repo := newFakeItemRepo()
+	events := &fakeEventAppender{appendErr: errors.New("boom")}
+	uow := &fakeItemTxUnitOfWork{store: repo, events: events}
+	svc := app.NewItemService(repo, uow, testLogger())
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+
+	_, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
+	if err == nil {
+		t.Fatal("Create with a failing EventAppender = nil error, want one")
+	}
+	if len(repo.items) != 0 {
+		t.Error("a failing Append must roll back the insert too: no item row should remain")
+	}
+}
+
 func TestItemService_Create_ValidationRejected(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
 	binID := domain.NewBinID()
-	creator := identity.NewUserID()
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
 	tests := []struct {
 		name     string
@@ -153,7 +258,7 @@ func TestItemService_Create_ValidationRejected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := svc.Create(context.Background(), tt.itemName, nil, tt.quantity, binID, creator)
+			_, err := svc.Create(context.Background(), tt.itemName, nil, tt.quantity, binID, actor)
 			if !errors.Is(err, tt.wantErr) {
 				t.Errorf("Create(%q, %d) error = %v, want %v", tt.itemName, tt.quantity, err, tt.wantErr)
 			}
@@ -167,9 +272,10 @@ func TestItemService_Create_ValidationRejected(t *testing.T) {
 func TestItemService_Create_RepositoryErrorWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
 	repo.createErr = domain.ErrBinNotFound
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
-	_, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), identity.NewUserID())
+	_, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("Create() error = %v, want wrapped ErrBinNotFound", err)
 	}
@@ -177,15 +283,16 @@ func TestItemService_Create_RepositoryErrorWrapped(t *testing.T) {
 
 func TestItemService_Edit(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
 	binID := domain.NewBinID()
-	it, err := svc.Create(context.Background(), "Stove", nil, 1, binID, identity.NewUserID())
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	it, err := svc.Create(context.Background(), "Stove", nil, 1, binID, actor)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	desc := "Two-burner camping stove"
-	if err := svc.Edit(context.Background(), it.ID, "Camping stove", &desc, 2); err != nil {
+	if err := svc.Edit(context.Background(), it.ID, "Camping stove", &desc, 2, actor); err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
 
@@ -198,23 +305,157 @@ func TestItemService_Edit(t *testing.T) {
 	}
 }
 
+// TestEditEmitsEditedEventWithChangedFields is table-driven across which
+// editable fields actually differ — NSTR-41's Sprint 6 decision:
+// ChangedFields names precisely the fields that differed, no more no less.
+func TestEditEmitsEditedEventWithChangedFields(t *testing.T) {
+	baseDesc := "original description"
+	tests := []struct {
+		name        string
+		newName     string
+		newDesc     *string
+		newQuantity int
+		want        []domain.EditedField
+	}{
+		{"name only", "Renamed stove", strPtr(baseDesc), 1, []domain.EditedField{domain.FieldName}},
+		{"quantity only", "Stove", strPtr(baseDesc), 5, []domain.EditedField{domain.FieldQuantity}},
+		{"description only", "Stove", strPtr("new description"), 1, []domain.EditedField{domain.FieldDescription}},
+		{"all three", "Renamed", strPtr("new description"), 9, []domain.EditedField{domain.FieldName, domain.FieldDescription, domain.FieldQuantity}},
+		{"description set to nil", "Stove", nil, 1, []domain.EditedField{domain.FieldDescription}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeItemRepo()
+			svc, events := newTestItemService(repo)
+			actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+			it, err := svc.Create(context.Background(), "Stove", strPtr(baseDesc), 1, domain.NewBinID(), actor)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+
+			if err := svc.Edit(context.Background(), it.ID, tt.newName, tt.newDesc, tt.newQuantity, actor); err != nil {
+				t.Fatalf("Edit: %v", err)
+			}
+
+			if len(events.events) != 2 {
+				t.Fatalf("expected 2 events (created + edited), got %d: %+v", len(events.events), events.events)
+			}
+			got := events.events[1]
+			if got.Kind != domain.EventEdited {
+				t.Fatalf("Kind = %v, want %v", got.Kind, domain.EventEdited)
+			}
+			if !slices.Equal(got.ChangedFields, tt.want) {
+				t.Errorf("ChangedFields = %v, want %v", got.ChangedFields, tt.want)
+			}
+		})
+	}
+}
+
+// TestEditWithNoChangesEmitsNoEvent proves the Sprint 6 decision's negative
+// case: resubmitting identical values still writes (Update runs
+// unconditionally) but appends no event — "the log records changes, not
+// requests to change."
+func TestEditWithNoChangesEmitsNoEvent(t *testing.T) {
+	repo := newFakeItemRepo()
+	svc, events := newTestItemService(repo)
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	desc := "same description"
+	it, err := svc.Create(context.Background(), "Stove", &desc, 1, domain.NewBinID(), actor)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := svc.Edit(context.Background(), it.ID, "Stove", &desc, 1, actor); err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+
+	if len(events.events) != 1 {
+		t.Errorf("Edit with no changes appended %d events beyond Create's, want 0", len(events.events)-1)
+	}
+}
+
+// TestEditEventFailureAbortsEdit proves atomicity: a failing EventAppender
+// makes Edit return an error and leaves the fake store observing a
+// rollback — the field change Update already wrote does not land.
+func TestEditEventFailureAbortsEdit(t *testing.T) {
+	repo := newFakeItemRepo()
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	svc, events := newTestItemService(repo)
+	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	events.appendErr = errors.New("boom")
+
+	newDesc := "renamed"
+	if err := svc.Edit(context.Background(), it.ID, "Renamed stove", &newDesc, 2, actor); err == nil {
+		t.Fatal("Edit with a failing EventAppender = nil error, want one")
+	}
+
+	got := repo.items[it.ID]
+	if got.Name != "Stove" || got.Quantity != 1 {
+		t.Errorf("a failing Append must roll back the field change too: got %+v", got)
+	}
+}
+
+// TestEditEventAttribution is table-driven across the three credential
+// kinds, mirroring TestOperationService_EventAttribution's own rationale
+// for why "session" and "device-token" exercise the same code path.
+func TestEditEventAttribution(t *testing.T) {
+	tests := []struct {
+		name  string
+		actor identity.Principal
+	}{
+		{"session principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")},
+		{"device-token principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Bob")},
+		{"integration principal", identity.NewIntegrationPrincipal("Nestova")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeItemRepo()
+			svc, events := newTestItemService(repo)
+			it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), tt.actor)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+
+			if err := svc.Edit(context.Background(), it.ID, "Renamed", nil, 1, tt.actor); err != nil {
+				t.Fatalf("Edit: %v", err)
+			}
+
+			edited := events.events[len(events.events)-1]
+			if edited.ActorKind != tt.actor.Kind {
+				t.Errorf("ActorKind = %v, want %v", edited.ActorKind, tt.actor.Kind)
+			}
+			if edited.ActorUserID != tt.actor.UserID {
+				t.Errorf("ActorUserID = %v, want %v", edited.ActorUserID, tt.actor.UserID)
+			}
+			if edited.ActorLabel != tt.actor.Actor() {
+				t.Errorf("ActorLabel = %q, want %q", edited.ActorLabel, tt.actor.Actor())
+			}
+		})
+	}
+}
+
 func TestItemService_Edit_ValidationRejected(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
-	if err := svc.Edit(context.Background(), domain.NewItemID(), "", nil, 1); !errors.Is(err, domain.ErrItemNameRequired) {
+	if err := svc.Edit(context.Background(), domain.NewItemID(), "", nil, 1, actor); !errors.Is(err, domain.ErrItemNameRequired) {
 		t.Errorf("Edit(blank name) error = %v, want ErrItemNameRequired", err)
 	}
-	if err := svc.Edit(context.Background(), domain.NewItemID(), "Stove", nil, 0); !errors.Is(err, domain.ErrInvalidQuantity) {
+	if err := svc.Edit(context.Background(), domain.NewItemID(), "Stove", nil, 0, actor); !errors.Is(err, domain.ErrInvalidQuantity) {
 		t.Errorf("Edit(zero quantity) error = %v, want ErrInvalidQuantity", err)
 	}
 }
 
 func TestItemService_Edit_NotFoundWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
-	err := svc.Edit(context.Background(), domain.NewItemID(), "Stove", nil, 1)
+	err := svc.Edit(context.Background(), domain.NewItemID(), "Stove", nil, 1, actor)
 	if !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("Edit(unknown) error = %v, want wrapped ErrItemNotFound", err)
 	}
@@ -222,10 +463,11 @@ func TestItemService_Edit_NotFoundWrapped(t *testing.T) {
 
 func TestItemService_Get(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
-	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), identity.NewUserID())
+	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -241,7 +483,7 @@ func TestItemService_Get(t *testing.T) {
 
 func TestItemService_Get_NotFoundWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
 
 	_, err := svc.Get(context.Background(), viewer, domain.NewItemID())
@@ -252,14 +494,15 @@ func TestItemService_Get_NotFoundWrapped(t *testing.T) {
 
 func TestItemService_ListInBin(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 	binID := domain.NewBinID()
 
-	if _, err := svc.Create(context.Background(), "Stove", nil, 1, binID, identity.NewUserID()); err != nil {
+	if _, err := svc.Create(context.Background(), "Stove", nil, 1, binID, actor); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := svc.Create(context.Background(), "Lantern", nil, 1, domain.NewBinID(), identity.NewUserID()); err != nil {
+	if _, err := svc.Create(context.Background(), "Lantern", nil, 1, domain.NewBinID(), actor); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -274,14 +517,15 @@ func TestItemService_ListInBin(t *testing.T) {
 
 func TestItemService_Delete(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
-	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), identity.NewUserID())
+	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := svc.Delete(context.Background(), it.ID); err != nil {
+	if err := svc.Delete(context.Background(), it.ID, actor); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, ok := repo.items[it.ID]; ok {
@@ -289,11 +533,42 @@ func TestItemService_Delete(t *testing.T) {
 	}
 }
 
+// TestDeleteEmitsDeletedEvent proves NSTR-41's per-operation event contract
+// for ItemService.Delete: exactly one EventDeleted row (in addition to
+// Create's own EventCreated row), carrying the item's name as it was
+// before the row was removed — item_event.item_id carries no foreign key
+// specifically so this snapshot outlives the deleting transaction (see
+// 00012_item_event.sql's own comment).
+func TestDeleteEmitsDeletedEvent(t *testing.T) {
+	repo := newFakeItemRepo()
+	svc, events := newTestItemService(repo)
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := svc.Delete(context.Background(), it.ID, actor); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(events.events) != 2 {
+		t.Fatalf("Delete appended events = %+v, want [created, deleted]", events.events)
+	}
+	got := events.events[1]
+	if got.Kind != domain.EventDeleted {
+		t.Errorf("event.Kind = %v, want %v", got.Kind, domain.EventDeleted)
+	}
+	if got.ItemName != "Stove" {
+		t.Errorf("event.ItemName = %q, want %q (snapshot before the row was removed)", got.ItemName, "Stove")
+	}
+}
+
 func TestItemService_Delete_NotFoundWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
-	svc := app.NewItemService(repo, testLogger())
+	svc, _ := newTestItemService(repo)
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
-	err := svc.Delete(context.Background(), domain.NewItemID())
+	err := svc.Delete(context.Background(), domain.NewItemID(), actor)
 	if !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("Delete(unknown) error = %v, want wrapped ErrItemNotFound", err)
 	}
