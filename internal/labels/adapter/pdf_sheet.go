@@ -142,7 +142,15 @@ func (r *PDFSheetRenderer) Render(ctx context.Context, size domain.LabelSize, la
 		cellOnPage++
 	}
 
-	return domain.Document{ContentType: pdfContentType, Data: pdf.GetBytesPdf()}, nil
+	// GetBytesPdfReturnErr, not GetBytesPdf: the latter calls log.Fatalf
+	// (os.Exit) on any finalization error, which would take the whole
+	// process down over a single malformed document — the one place this
+	// package would otherwise let an error escape Render's own contract.
+	data, err := pdf.GetBytesPdfReturnErr()
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("labels: pdf sheet: finalize document: %w", err)
+	}
+	return domain.Document{ContentType: pdfContentType, Data: data}, nil
 }
 
 // CellOrigin returns cell index cellOnPage's upper-left corner, in
