@@ -67,6 +67,27 @@ func ParseItemEventID(s string) (ItemEventID, error) {
 	return ItemEventID(u), nil
 }
 
+// ReturnRequestID uniquely identifies a household member's ask for a
+// checked-out item back (NSTR-43).
+type ReturnRequestID uuid.UUID
+
+// NewReturnRequestID returns a new time-ordered (UUIDv7) return request id,
+// mirroring NewItemEventID's rationale: better B-tree index locality than a
+// random v4 id.
+func NewReturnRequestID() ReturnRequestID { return ReturnRequestID(uuid.Must(uuid.NewV7())) }
+
+// String returns the canonical UUID string.
+func (id ReturnRequestID) String() string { return uuid.UUID(id).String() }
+
+// ParseReturnRequestID parses a canonical UUID string into a ReturnRequestID.
+func ParseReturnRequestID(s string) (ReturnRequestID, error) {
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return ReturnRequestID{}, fmt.Errorf("parse return request id: %w", err)
+	}
+	return ReturnRequestID(u), nil
+}
+
 // ItemLinkID uniquely identifies a labeled URL attached to an item.
 type ItemLinkID uuid.UUID
 

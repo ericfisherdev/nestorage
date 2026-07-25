@@ -156,6 +156,11 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// the shared pool, the same non-transactional-read shape every other
 	// repository above it already has, and is NSTR-42's own read source.
 	itemEventRepo := storageadapter.NewItemEventRepository(pool)
+	// NSTR-43's own return-request repository, pool-bound for
+	// ReturnRequestService.ListForItem's plain read — the same dual
+	// construction (pool-bound for reads, tx-bound inside WithinTx/
+	// WithinReturnRequestTx for writers) itemEventRepo already has above.
+	returnRequestRepo := storageadapter.NewReturnRequestRepository(pool)
 	storageUOW := storageadapter.NewPostgresUnitOfWork(pool)
 
 	// NSTR-37's own PhotoService composition, now that itemRepo exists to
@@ -186,9 +191,19 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// ItemLinkService backs the detail page's labeled-links section, over
 	// itemRepo too — every one of its methods authorizes through the same
 	// visibility-scoped Get every other item-adjacent service already uses.
-	operationService := storageapp.NewOperationService(storageUOW, binRepo, logger)
+	// NSTR-43's own no-op ReturnRequestNotifier: this ticket ships the port
+	// and its NopReturnRequestNotifier implementation; NSTR-44 swaps in the
+	// real one here, at composition-root time, with no change to
+	// OperationService or ReturnRequestService's own code (R10).
+	returnRequestNotifier := storageapp.NopReturnRequestNotifier{}
+	operationService := storageapp.NewOperationService(storageUOW, binRepo, identityRepo, returnRequestNotifier, logger)
 	itemQueryService := storageapp.NewItemQueryService(itemRepo, logger)
 	itemLinkService := storageapp.NewItemLinkService(itemLinkRepo, itemRepo, logger)
+	// NSTR-43's ReturnRequestService: itemRepo for the same visibility-scoped
+	// authorization every other item-adjacent service uses, returnRequestRepo
+	// for its own non-transactional ListForItem read, storageUOW's fourth
+	// method (WithinReturnRequestTx) for Request/Cancel's own transaction.
+	returnRequestService := storageapp.NewReturnRequestService(itemRepo, returnRequestRepo, storageUOW, returnRequestNotifier, logger)
 
 	shellData := newShellDataService(identityRepo, binService, locationService)
 
@@ -201,7 +216,8 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	)
 	itemsWeb := storageadapter.NewItemsWebHandlers(storageadapter.ItemsWebHandlersDeps{
 		Items: itemQueryService, Operations: operationService, Bins: binService, Links: itemLinkService, Photos: photoService, Events: itemEventRepo,
-		SM: sm, Layout: newStorageLayout(shellData, searchPageTitle, logger), Logger: logger,
+		ReturnRequests: returnRequestService,
+		SM:             sm, Layout: newStorageLayout(shellData, searchPageTitle, logger), Logger: logger,
 	})
 	// NSTR-37's own web handlers: no Layout dependency (see
 	// mediaadapter.PhotosWebHandlers' own doc for why every route it serves

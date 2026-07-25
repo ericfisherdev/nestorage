@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	"github.com/ericfisherdev/nestorage/internal/storage/domain"
@@ -31,17 +32,40 @@ type binFinder interface {
 	FindVisibleByID(ctx context.Context, viewer identity.Principal, id domain.BinID) (*domain.Bin, error)
 }
 
+// ReturnRequestFulfiller is the narrow port (ISP) OperationStores.ReturnRequests
+// exposes to a transactor's transactional closure: only the
+// held-to-bin-fulfilment method OperationService.transition needs (NSTR-43).
+// Deliberately excludes Create/Cancel — those are ReturnRequestService's own,
+// differently-shaped ReturnRequestLifecycleStore port (return_request.go),
+// reached through a separate transaction. Satisfied by a
+// *domain.ReturnRequestRepository (a superset) constructed over a pgx
+// transaction. Exported, like ItemStore, because adapter.PostgresUnitOfWork
+// must spell it by name to satisfy transactor.
+type ReturnRequestFulfiller interface {
+	FulfillOpenForItem(ctx context.Context, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error)
+}
+
+// userLabelResolver is the narrow port (ISP) OperationService depends on to
+// resolve a fulfilled return request's requester into the display name
+// ReturnRequestNotification.RequesterLabel carries, satisfied by
+// identity.UserRepository (a superset, via FindByID). Named for the single
+// method it exposes, mirroring binFinder's own naming rationale.
+type userLabelResolver interface {
+	FindByID(ctx context.Context, id identity.UserID) (*identity.User, error)
+}
+
 // OperationStores bundles the tx-bound stores a transactor's closure
 // operates on: ItemStore for the placement swap, EventAppender for the
-// item_event row that records it in the same transaction. A struct bundle
-// (NSTR-41's reconciliation R1), not positional parameters, so NSTR-43 can
-// later add a ReturnRequests field without re-widening WithinTx's own
-// signature — open for extension, closed for modification. Exported
-// because adapter.PostgresUnitOfWork must spell it by name to satisfy
-// transactor.
+// item_event row that records it in the same transaction, and (NSTR-43)
+// ReturnRequestFulfiller for flipping any open return request the placement
+// swap satisfies. A struct bundle (NSTR-41's reconciliation R1), not
+// positional parameters — open for extension, closed for modification.
+// Exported because adapter.PostgresUnitOfWork must spell it by name to
+// satisfy transactor.
 type OperationStores struct {
-	Items  ItemStore
-	Events EventAppender
+	Items          ItemStore
+	Events         EventAppender
+	ReturnRequests ReturnRequestFulfiller
 }
 
 // transactor runs fn inside one transaction against an OperationStores
@@ -74,18 +98,21 @@ func (v OperationVerb) String() string { return string(v) }
 
 // Operation records a completed add/remove/return: which verb ran, the item
 // afterward, the bin acted on (nil for RemoveFromBin, which has no
-// destination bin), and the acting principal's display label and user id.
-// This is deliberately returned from every OperationService method — per
-// the ticket's own rationale, this service is the single place these state
-// transitions happen, so the later item-history epic can hook events from
-// here without OperationService depending on any event/history package
-// itself.
+// destination bin), the acting principal's display label and user id, and
+// (NSTR-43) any open return requests the placement swap just fulfilled —
+// nil/empty for every RemoveFromBin, and for an AddToBin/ReturnToBin that
+// resolved no open requests. This is deliberately returned from every
+// OperationService method — per the ticket's own rationale, this service is
+// the single place these state transitions happen, so the later
+// item-history epic can hook events from here without OperationService
+// depending on any event/history package itself.
 type Operation struct {
-	Verb   OperationVerb
-	Item   *domain.Item
-	BinID  *domain.BinID
-	Actor  string
-	UserID identity.UserID
+	Verb                    OperationVerb
+	Item                    *domain.Item
+	BinID                   *domain.BinID
+	Actor                   string
+	UserID                  identity.UserID
+	FulfilledReturnRequests []domain.ReturnRequest
 }
 
 // OperationService implements the three item placement transitions this
@@ -98,27 +125,38 @@ type Operation struct {
 // ErrItemAlreadyCheckedOut/ErrItemNotCheckedOut). NSTR-41 extends every
 // transition to append the matching item_event row (added/removed/
 // returned) inside that same transaction, so the placement change and its
-// audit record commit or roll back together.
+// audit record commit or roll back together. NSTR-43 further extends
+// AddToBin/ReturnToBin (any held-to-bin transition) to flip every open
+// return request on the item to fulfilled inside that same transaction, and
+// to notify the fulfilled requesters best-effort once it commits.
 type OperationService struct {
-	uow    transactor
-	bins   binFinder
-	logger *slog.Logger
+	uow      transactor
+	bins     binFinder
+	users    userLabelResolver
+	notifier ReturnRequestNotifier
+	logger   *slog.Logger
 }
 
 // NewOperationService constructs OperationService. Every dependency is
 // required; a missing one panics at construction time, matching every other
 // constructor in this codebase (see NewItemService).
-func NewOperationService(uow transactor, bins binFinder, logger *slog.Logger) *OperationService {
+func NewOperationService(uow transactor, bins binFinder, users userLabelResolver, notifier ReturnRequestNotifier, logger *slog.Logger) *OperationService {
 	if uow == nil {
 		panic("storage/app: NewOperationService requires a non-nil transactor")
 	}
 	if bins == nil {
 		panic("storage/app: NewOperationService requires a non-nil binFinder")
 	}
+	if users == nil {
+		panic("storage/app: NewOperationService requires a non-nil userLabelResolver")
+	}
+	if notifier == nil {
+		panic("storage/app: NewOperationService requires a non-nil ReturnRequestNotifier")
+	}
 	if logger == nil {
 		panic("storage/app: NewOperationService requires a non-nil logger")
 	}
-	return &OperationService{uow: uow, bins: bins, logger: logger}
+	return &OperationService{uow: uow, bins: bins, users: users, notifier: notifier, logger: logger}
 }
 
 // AddToBin places itemID into binID on actor's behalf, clearing any holder,
@@ -134,7 +172,7 @@ func (s *OperationService) AddToBin(ctx context.Context, actor identity.Principa
 		return Operation{}, fmt.Errorf("storage: add to bin: %w", err)
 	}
 
-	it, err := s.transition(ctx, itemID,
+	it, fulfilled, err := s.transition(ctx, itemID,
 		func(it *domain.Item) error { return it.EnterBin(bin.ID) },
 		domain.PlacementInBin(bin.ID),
 		func(_ context.Context, _ placementSnapshot, it *domain.Item) (domain.ItemEvent, error) {
@@ -148,7 +186,7 @@ func (s *OperationService) AddToBin(ctx context.Context, actor identity.Principa
 	}
 
 	s.logAction(ctx, "item added to bin", itemID, "bin_id", bin.ID.String())
-	return Operation{Verb: OperationAdd, Item: it, BinID: &bin.ID, Actor: actor.Actor(), UserID: actor.UserID}, nil
+	return Operation{Verb: OperationAdd, Item: it, BinID: &bin.ID, Actor: actor.Actor(), UserID: actor.UserID, FulfilledReturnRequests: fulfilled}, nil
 }
 
 // RemoveFromBin checks itemID out to actor, clearing its current bin, and
@@ -159,13 +197,15 @@ func (s *OperationService) AddToBin(ctx context.Context, actor identity.Principa
 // account api key integration principal has no person behind it to
 // attribute the hold to — a wrapped domain.ErrItemNotFound when itemID is
 // unknown, or a wrapped domain.ErrItemAlreadyCheckedOut when itemID is
-// already held.
+// already held. RemoveFromBin's transition destination is a holder, never a
+// bin, so it can never fulfil a return request (NSTR-43's own held-to-bin
+// rule) — the fulfilled slice transition returns is discarded here.
 func (s *OperationService) RemoveFromBin(ctx context.Context, actor identity.Principal, itemID domain.ItemID, note *string) (Operation, error) {
 	if actor.Kind != identity.KindUser {
 		return Operation{}, domain.ErrHolderRequired
 	}
 
-	it, err := s.transition(ctx, itemID,
+	it, _, err := s.transition(ctx, itemID,
 		func(it *domain.Item) error { return it.CheckOut(actor.UserID) },
 		domain.PlacementHeldBy(actor.UserID),
 		func(ctx context.Context, before placementSnapshot, it *domain.Item) (domain.ItemEvent, error) {
@@ -218,7 +258,7 @@ func (s *OperationService) ReturnToBin(ctx context.Context, actor identity.Princ
 		return Operation{}, fmt.Errorf("storage: return to bin: %w", err)
 	}
 
-	it, err := s.transition(ctx, itemID,
+	it, fulfilled, err := s.transition(ctx, itemID,
 		func(it *domain.Item) error { return it.ReturnTo(bin.ID) },
 		domain.PlacementInBin(bin.ID),
 		func(_ context.Context, _ placementSnapshot, it *domain.Item) (domain.ItemEvent, error) {
@@ -233,7 +273,7 @@ func (s *OperationService) ReturnToBin(ctx context.Context, actor identity.Princ
 	}
 
 	s.logAction(ctx, "item returned to bin", itemID, "bin_id", bin.ID.String())
-	return Operation{Verb: OperationReturn, Item: it, BinID: &bin.ID, Actor: actor.Actor(), UserID: actor.UserID}, nil
+	return Operation{Verb: OperationReturn, Item: it, BinID: &bin.ID, Actor: actor.Actor(), UserID: actor.UserID, FulfilledReturnRequests: fulfilled}, nil
 }
 
 // placementSnapshot captures an item's placement fields before a domain
@@ -242,9 +282,10 @@ func (s *OperationService) ReturnToBin(ctx context.Context, actor identity.Princ
 // so a caller that needs the PRE-transition bin (RemoveFromBin's removed
 // event) must read it before the guard runs, not after (NSTR-41's
 // reconciliation R5). Captured once per transition and handed to every
-// buildEvent closure — R5 also flags this as the same snapshot NSTR-43 will
-// need for its own guard-time "was this item held" question, so it is taken
-// exactly once rather than a second time per feature.
+// buildEvent closure. R5 also flags this as the same snapshot NSTR-43 reads
+// for its own guard-time "was this item held" question (before.HeldBy) — it
+// is taken exactly once per transition, never a second time for
+// fulfilment's sake.
 type placementSnapshot struct {
 	BinID  *domain.BinID
 	HeldBy *identity.UserID
@@ -270,14 +311,27 @@ func snapshotPlacement(it *domain.Item) placementSnapshot {
 // together (NSTR-41's atomicity contract: no outbox, one pgx.Tx). Factored
 // out so AddToBin/RemoveFromBin/ReturnToBin differ only in which guard,
 // destination placement, and event builder they supply.
+//
+// NSTR-43: when dst names a bin AND the item was held before the guard ran
+// (before.HeldBy != nil — true for AddToBin and ReturnToBin, the only two
+// callers whose dst ever names a bin; never for RemoveFromBin), transition
+// also flips every open return request on itemID to fulfilled, in the same
+// transaction, via OperationStores.ReturnRequests.FulfillOpenForItem — the
+// held-to-bin rule the ticket calls for, reusing the placementSnapshot
+// RemoveFromBin's own removed-event already needs rather than taking a
+// second one. On successful commit, it fans the fulfilled requests out to
+// ReturnRequestNotifier.ReturnRequestsFulfilled post-commit and
+// best-effort (see notifyFulfilled's own doc) before returning them to the
+// caller for Operation.FulfilledReturnRequests.
 func (s *OperationService) transition(
 	ctx context.Context,
 	itemID domain.ItemID,
 	guard func(*domain.Item) error,
 	dst domain.Placement,
 	buildEvent func(ctx context.Context, before placementSnapshot, it *domain.Item) (domain.ItemEvent, error),
-) (*domain.Item, error) {
+) (*domain.Item, []domain.ReturnRequest, error) {
 	var it *domain.Item
+	var fulfilled []domain.ReturnRequest
 	err := s.uow.WithinTx(ctx, func(stores OperationStores) error {
 		var txErr error
 		it, txErr = stores.Items.GetForUpdate(ctx, itemID)
@@ -303,12 +357,66 @@ func (s *OperationService) transition(
 		if txErr = event.Validate(); txErr != nil {
 			return txErr
 		}
-		return stores.Events.Append(ctx, &event)
+		if txErr = stores.Events.Append(ctx, &event); txErr != nil {
+			return txErr
+		}
+
+		if dst.BinID != nil && before.HeldBy != nil {
+			fulfilled, txErr = stores.ReturnRequests.FulfillOpenForItem(ctx, itemID, it.PlacementChangedAt)
+			if txErr != nil {
+				return txErr
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return it, nil
+	s.notifyFulfilled(ctx, it, fulfilled)
+	return it, fulfilled, nil
+}
+
+// notifyFulfilled tells ReturnRequestNotifier about every request fulfilled
+// fanned out of a just-committed transition, post-commit and
+// best-effort — a resolution failure here must never fail (nor, since the
+// transaction already committed, be capable of rolling back) the placement
+// operation that already succeeded. Does nothing when fulfilled is empty,
+// which is the common case (RemoveFromBin, and any AddToBin/ReturnToBin
+// with no open requests on the item).
+func (s *OperationService) notifyFulfilled(ctx context.Context, it *domain.Item, fulfilled []domain.ReturnRequest) {
+	if len(fulfilled) == 0 {
+		return
+	}
+	notifications := make([]ReturnRequestNotification, 0, len(fulfilled))
+	for _, req := range fulfilled {
+		notifications = append(notifications, s.buildFulfilledNotification(ctx, it, req))
+	}
+	s.notifier.ReturnRequestsFulfilled(ctx, notifications)
+}
+
+// buildFulfilledNotification projects one fulfilled domain.ReturnRequest
+// into a ReturnRequestNotification, resolving the requester's display name
+// via userLabelResolver — the requester is a different person from actor
+// (the one who just performed the placement change) for every notification
+// built here, so unlike ReturnRequestService.Request (which already has its
+// own actor's label at hand), this is the one call site that needs a live
+// identity lookup. A resolution failure is logged and leaves
+// RequesterLabel "" rather than aborting the whole notify fan-out — one
+// requester's name being unavailable must not silence every other
+// requester's notification.
+func (s *OperationService) buildFulfilledNotification(ctx context.Context, it *domain.Item, req domain.ReturnRequest) ReturnRequestNotification {
+	label := ""
+	if user, err := s.users.FindByID(ctx, req.RequesterID); err != nil {
+		s.logger.WarnContext(ctx, "storage: return request: resolve requester label", "return_request_id", req.ID.String(), "error", err)
+	} else {
+		label = user.DisplayName
+	}
+	return ReturnRequestNotification{
+		RequestID: req.ID, ItemID: it.ID, ItemName: it.Name,
+		RequesterID: req.RequesterID, RequesterLabel: label,
+		HolderID: req.HolderID, Message: req.Message,
+		CreatedAt: req.CreatedAt, ResolvedAt: req.ResolvedAt,
+	}
 }
 
 // logAction writes one INFO-level audit line for a completed operation,

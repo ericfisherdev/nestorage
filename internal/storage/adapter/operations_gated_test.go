@@ -24,14 +24,17 @@ func testOpsLogger() *slog.Logger {
 
 // newOperationService wires an app.OperationService against real Postgres
 // via f's own pool and BinRepository: a PostgresUnitOfWork for the
-// transactional GetForUpdate/Move pair these operations run through, and
-// f.bins directly (an OperationService dependency, not tx-scoped — bin
-// visibility needs no row lock of its own). The same wiring
-// cmd/server/main.go will do once NSTR-31 exposes this service through a
-// handler.
+// transactional GetForUpdate/Move pair these operations run through, f.bins
+// directly (an OperationService dependency, not tx-scoped — bin visibility
+// needs no row lock of its own), f.users to resolve a fulfilled request's
+// requester label (NSTR-43), and a no-op notifier — none of this suite's
+// tests assert on notification delivery, only on DB state, so the real
+// NopReturnRequestNotifier main.go itself wires is enough here too. The
+// same wiring cmd/server/main.go will do once NSTR-31 exposes this service
+// through a handler.
 func newOperationService(f *itemFixture) *app.OperationService {
 	uow := adapter.NewPostgresUnitOfWork(f.pool)
-	return app.NewOperationService(uow, f.bins, testOpsLogger())
+	return app.NewOperationService(uow, f.bins, f.users, app.NopReturnRequestNotifier{}, testOpsLogger())
 }
 
 func TestOperationService_AddToBin_MovesHeldItemIntoBin(t *testing.T) {
@@ -413,5 +416,48 @@ func TestOperationAndEventRollBackTogether(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Errorf("rejected AddToBin must leave no event row: got %+v", events)
+	}
+}
+
+// TestOperationService_ReturnToBin_FulfillsOpenReturnRequest is NSTR-43's
+// own held-to-bin proof over a real transaction: an open return_request row
+// seeded directly (bypassing app.ReturnRequestService, since this suite is
+// about OperationService only) is flipped to fulfilled, with resolved_at
+// set, in the SAME transaction as ReturnToBin's placement swap, and
+// surfaced on Operation.FulfilledReturnRequests.
+func TestOperationService_ReturnToBin_FulfillsOpenReturnRequest(t *testing.T) {
+	f := newItemFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
+	holder := f.seedUser(t, identity.RoleMember)
+	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
+	if err := f.repo.Create(testCtx(t), it); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	requester := f.seedUser(t, identity.RoleMember)
+	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
+	if err := f.requests.Create(testCtx(t), req); err != nil {
+		t.Fatalf("seed return request: %v", err)
+	}
+
+	svc := newOperationService(f)
+	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
+
+	op, err := svc.ReturnToBin(testCtx(t), actor, it.ID, bin, nil)
+	if err != nil {
+		t.Fatalf("ReturnToBin: %v", err)
+	}
+	if len(op.FulfilledReturnRequests) != 1 || op.FulfilledReturnRequests[0].ID != req.ID {
+		t.Fatalf("Operation.FulfilledReturnRequests = %+v, want exactly [%v]", op.FulfilledReturnRequests, req.ID)
+	}
+
+	got, err := f.requests.ListByItem(testCtx(t), it.ID)
+	if err != nil {
+		t.Fatalf("ListByItem after ReturnToBin: %v", err)
+	}
+	if len(got) != 1 || got[0].Status != domain.ReturnRequestStatusFulfilled || got[0].ResolvedAt == nil {
+		t.Fatalf("persisted request = %+v, want status fulfilled with ResolvedAt set", got)
 	}
 }

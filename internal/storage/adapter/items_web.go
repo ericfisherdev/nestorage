@@ -62,15 +62,16 @@ type itemBinLister interface {
 // mounted behind RequireAuthenticated by the composition root
 // (cmd/server/main.go).
 type ItemsWebHandlers struct {
-	items      itemQueryService
-	operations itemOperator
-	bins       itemBinLister
-	links      itemLinkOperator
-	photos     primaryPhotoRefLister
-	events     itemEventLister
-	sm         *scs.SessionManager
-	layout     requestLayoutFunc
-	logger     *slog.Logger
+	items          itemQueryService
+	operations     itemOperator
+	bins           itemBinLister
+	links          itemLinkOperator
+	photos         primaryPhotoRefLister
+	events         itemEventLister
+	returnRequests returnRequestOperator
+	sm             *scs.SessionManager
+	layout         requestLayoutFunc
+	logger         *slog.Logger
 }
 
 // ItemsWebHandlersDeps groups NewItemsWebHandlers' dependencies into one
@@ -78,15 +79,16 @@ type ItemsWebHandlers struct {
 // own rationale (SonarCloud's go:S107). Every field is still injected
 // explicitly by the composition root (cmd/server/main.go).
 type ItemsWebHandlersDeps struct {
-	Items      itemQueryService
-	Operations itemOperator
-	Bins       itemBinLister
-	Links      itemLinkOperator
-	Photos     primaryPhotoRefLister
-	Events     itemEventLister
-	SM         *scs.SessionManager
-	Layout     requestLayoutFunc
-	Logger     *slog.Logger
+	Items          itemQueryService
+	Operations     itemOperator
+	Bins           itemBinLister
+	Links          itemLinkOperator
+	Photos         primaryPhotoRefLister
+	Events         itemEventLister
+	ReturnRequests returnRequestOperator
+	SM             *scs.SessionManager
+	Layout         requestLayoutFunc
+	Logger         *slog.Logger
 }
 
 // NewItemsWebHandlers constructs ItemsWebHandlers. All dependencies are
@@ -111,6 +113,9 @@ func NewItemsWebHandlers(deps ItemsWebHandlersDeps) *ItemsWebHandlers {
 	if deps.Events == nil {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil itemEventLister")
 	}
+	if deps.ReturnRequests == nil {
+		panic("storage/adapter: NewItemsWebHandlers requires a non-nil returnRequestOperator")
+	}
 	if deps.SM == nil {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil session manager")
 	}
@@ -122,7 +127,8 @@ func NewItemsWebHandlers(deps ItemsWebHandlersDeps) *ItemsWebHandlers {
 	}
 	return &ItemsWebHandlers{
 		items: deps.Items, operations: deps.Operations, bins: deps.Bins, links: deps.Links, photos: deps.Photos, events: deps.Events,
-		sm: deps.SM, layout: deps.Layout, logger: deps.Logger,
+		returnRequests: deps.ReturnRequests,
+		sm:             deps.SM, layout: deps.Layout, logger: deps.Logger,
 	}
 }
 
@@ -136,6 +142,8 @@ func (h *ItemsWebHandlers) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /items/{id}/links/{linkID}", h.EditLink)
 	mux.HandleFunc("POST /items/{id}/links/{linkID}/delete", h.DeleteLink)
 	mux.HandleFunc("GET /items/{id}/history", h.History)
+	mux.HandleFunc("POST /items/{id}/return-requests", h.RequestReturn)
+	mux.HandleFunc("POST /items/{id}/return-requests/{requestID}/cancel", h.CancelReturnRequest)
 }
 
 // Search handles GET /search: the full shell page (heading, type-ahead box,
@@ -285,6 +293,17 @@ func (h *ItemsWebHandlers) renderDetail(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		view.ReturnBins = buildBinOptions(bins)
+
+		// NSTR-43: the return-request control only ever matters for a
+		// checked-out item, so it is loaded only in this branch alongside
+		// ReturnBins — an in-bin item has no holder to request a return
+		// from and no open request of its own to show a cancel control for.
+		requests, err := h.returnRequests.ListForItem(r.Context(), viewer, id)
+		if err != nil {
+			h.handleItemGetError(w, r, err, "items: detail: list return requests")
+			return
+		}
+		view.ReturnRequests = buildReturnRequestSectionView(result.Item, viewer, requests, view.CSRFToken)
 	}
 
 	content := components.ItemDetail(view)

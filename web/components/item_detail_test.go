@@ -72,6 +72,24 @@ func TestItemDetail_FormError_Rendered(t *testing.T) {
 	}
 }
 
+// TestItemDetail_CheckedOut_IncludesReturnRequestSection proves
+// item_detail.templ actually wires ReturnRequestSection into the checked-out
+// panel (NSTR-43) — a regression this test alone can catch, since
+// return_request_test.go only exercises the section templ in isolation.
+func TestItemDetail_CheckedOut_IncludesReturnRequestSection(t *testing.T) {
+	view := components.ItemDetailView{
+		CSRFToken: "tok", ID: "item-1", Name: "Sleeping bag", Quantity: 1, InBin: false,
+		Holder:         components.OwnerView{Name: "Maya", Initials: "M", Color: components.OwnerIndigo},
+		HeldSince:      "Jul 20, 2026",
+		ReturnRequests: components.ReturnRequestSectionView{ItemID: "item-1", CSRFToken: "tok", CanRequest: true},
+	}
+	out := renderString(t, components.ItemDetail(view))
+
+	if !strings.Contains(out, "Request return") {
+		t.Errorf("ItemDetail() did not render the return-request section: %s", out)
+	}
+}
+
 func TestItemDetail_NoDescription_OmitsDescriptionParagraph(t *testing.T) {
 	view := components.ItemDetailView{ID: "item-1", Name: "Stove", InBin: true}
 	out := renderString(t, components.ItemDetail(view))
