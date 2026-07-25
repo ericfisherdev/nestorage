@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/alexedwards/scs/v2"
+
 	"github.com/ericfisherdev/nestcore/httpserver/middleware"
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	labelsapp "github.com/ericfisherdev/nestorage/internal/labels/app"
 	"github.com/ericfisherdev/nestorage/internal/labels/domain"
+	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 	storagedomain "github.com/ericfisherdev/nestorage/internal/storage/domain"
 )
 
@@ -24,58 +27,149 @@ import (
 // identical rationale).
 const errInternalServerError = "internal server error"
 
-// errBadRequest is the message Download answers with for every malformed
-// input it rejects before ever calling batches — a malformed path id, a
-// missing size, an unparsable offset, or (via handleRenderError) a size/
-// offset the batch renderer itself rejected. Named once, not repeated per
-// call site (SonarCloud flagged the four-way duplication, go:S1192).
+// errBadRequest is the message every route in this package answers with for
+// a malformed input rejected before ever calling a service — a malformed
+// path id, a missing size, an unparsable offset, or an unrecognized print
+// target. Named once, not repeated per call site (SonarCloud flagged the
+// four-way duplication, go:S1192).
 const errBadRequest = "bad request"
 
 // batchRenderer is the narrow port (ISP) LabelsWebHandlers depends on,
-// satisfied by *labelsapp.BatchService.
+// satisfied by *labelsapp.BatchService. Both Download (NSTR-50) and Print
+// (NSTR-51) render through this same service — see printTarget's own doc
+// (print_web.go) for why NSTR-51's screen, even when printing a single bin,
+// resolves to a LocationID before calling it.
 type batchRenderer interface {
 	RenderLocationBatch(ctx context.Context, viewer identity.Principal, locationID storagedomain.LocationID, sizeID domain.LabelSizeID, startOffset int, baseURL string) (*labelsapp.BatchDocument, error)
 }
 
-// LabelsWebHandlers serves NSTR-50's batch label download: GET
-// /locations/{id}/labels.pdf. Mirrors storageadapter.LocationsWebHandlers'
-// shape (constructor panics on nil deps, unexported narrow port over
-// *labelsapp.BatchService) but carries no session manager or layout: every
-// route here answers a plain file download, never an HTML page, so there is
-// nothing to render into and no form to CSRF-check (see Routes' own doc).
+// binGetter is the narrow port (ISP) LabelsWebHandlers depends on to
+// resolve a bin-scoped print target, satisfied by *storageapp.BinService (a
+// superset, via GetByID). A bin viewer may not see 404s here exactly as
+// GetByID's own visibility contract promises, matching NSTR-50's own
+// filtering.
+type binGetter interface {
+	GetByID(ctx context.Context, viewer identity.Principal, id storagedomain.BinID) (*storageapp.BinView, error)
+}
+
+// locationGetter is the narrow port (ISP) LabelsWebHandlers depends on to
+// resolve a location-scoped print target (and a bin-scoped one's own
+// containing location), satisfied by *storageapp.LocationService (a
+// superset, via Get).
+type locationGetter interface {
+	Get(ctx context.Context, viewer identity.Principal, id storagedomain.LocationID) (*storagedomain.Location, error)
+}
+
+// locationBinLister is the narrow port (ISP) LabelsWebHandlers depends on to
+// build the print screen's own preview (which bin occupies which cell, and
+// how many sheets the batch needs), satisfied by *storageapp.BinService (a
+// superset, via ListVisibleByLocation) — a second, independent read from the
+// same visibility-scoped query batchRenderer's own RenderLocationBatch
+// performs internally, since the preview must answer without ever spending
+// PDF-render time and must stay correct for a size/offset combination the
+// user has not yet submitted.
+type locationBinLister interface {
+	ListVisibleByLocation(ctx context.Context, viewer identity.Principal, locationID storagedomain.LocationID) ([]storageapp.BinView, error)
+}
+
+// LabelsWebHandlers serves NSTR-50's batch label download (GET
+// /locations/{id}/labels.pdf) and NSTR-51's print screen (GET /labels/print,
+// GET /labels/print/preview, POST /labels/print). Mirrors
+// storageadapter.BinsWebHandlers' own shape: narrow service interfaces
+// (ISP), an injected requestLayoutFunc, the session manager for CSRF on the
+// one mutating route, a logger; the constructor panics on any nil
+// dependency (DIP + fail-fast). Every route is registered on its own mux,
+// mounted behind RequireAuthenticated by the composition root
+// (cmd/server/shell.go).
 type LabelsWebHandlers struct {
-	batches batchRenderer
-	logger  *slog.Logger
+	bins         binGetter
+	locations    locationGetter
+	locationBins locationBinLister
+	sizes        *domain.Registry
+	preferences  domain.SizePreferenceRepository
+	batches      batchRenderer
+	sm           *scs.SessionManager
+	layout       requestLayoutFunc
+	logger       *slog.Logger
 	// publicBaseURL is PUBLIC_BASE_URL (corecfg.ServerConfig.PublicBaseURL),
 	// resolved per request against resolveBaseURL for each label's QR deep
 	// link (NSTR-48). Empty is a legitimate, common value — it means
-	// "derive the origin from each request instead" — so, unlike batches
-	// and logger, NewLabelsWebHandlers does not panic on it being unset;
-	// mirrors storageadapter.BinsWebHandlers.publicBaseURL's identical
-	// rationale.
+	// "derive the origin from each request instead" — so, unlike every
+	// other field above, NewLabelsWebHandlers does not panic on it being
+	// unset; mirrors storageadapter.BinsWebHandlers.publicBaseURL's
+	// identical rationale.
 	publicBaseURL string
 }
 
-// NewLabelsWebHandlers constructs LabelsWebHandlers. batches and logger are
-// required; a missing one panics at construction time, matching every
-// other WebHandlers constructor in this codebase.
-func NewLabelsWebHandlers(batches batchRenderer, logger *slog.Logger, publicBaseURL string) *LabelsWebHandlers {
-	if batches == nil {
-		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil batchRenderer")
-	}
-	if logger == nil {
-		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil logger")
-	}
-	return &LabelsWebHandlers{batches: batches, logger: logger, publicBaseURL: publicBaseURL}
+// LabelsWebHandlersDeps groups NewLabelsWebHandlers' dependencies into one
+// value instead of a growing parameter list — mirrors
+// storageadapter.BinsWebHandlersDeps' own rationale (see its doc). Every
+// field is still injected explicitly by the composition root
+// (cmd/server/main.go); this is a grouping of constructor arguments, not a
+// service locator.
+type LabelsWebHandlersDeps struct {
+	Bins         binGetter
+	Locations    locationGetter
+	LocationBins locationBinLister
+	Sizes        *domain.Registry
+	Preferences  domain.SizePreferenceRepository
+	Batches      batchRenderer
+	SM           *scs.SessionManager
+	Layout       requestLayoutFunc
+	Logger       *slog.Logger
+	// PublicBaseURL is PUBLIC_BASE_URL — see LabelsWebHandlers.publicBaseURL's
+	// own doc for why this is the one field NewLabelsWebHandlers allows empty.
+	PublicBaseURL string
 }
 
-// Routes registers the batch label download route on mux. GET, not POST:
-// rendering a batch is a read (it persists nothing), so it carries none of
-// a mutation's CSRF requirement, and a GET is what lets the browser treat
-// the response as a plain download and NSTR-51's print action link straight
-// to it.
+// NewLabelsWebHandlers constructs LabelsWebHandlers. Every dependency but
+// PublicBaseURL is required; a missing one panics at construction time,
+// matching every other WebHandlers constructor in this codebase.
+func NewLabelsWebHandlers(deps LabelsWebHandlersDeps) *LabelsWebHandlers {
+	if deps.Bins == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil binGetter")
+	}
+	if deps.Locations == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil locationGetter")
+	}
+	if deps.LocationBins == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil locationBinLister")
+	}
+	if deps.Sizes == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil *domain.Registry")
+	}
+	if deps.Preferences == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil domain.SizePreferenceRepository")
+	}
+	if deps.Batches == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil batchRenderer")
+	}
+	if deps.SM == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil session manager")
+	}
+	if deps.Layout == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil layout func")
+	}
+	if deps.Logger == nil {
+		panic("labels/adapter: NewLabelsWebHandlers requires a non-nil logger")
+	}
+	return &LabelsWebHandlers{
+		bins: deps.Bins, locations: deps.Locations, locationBins: deps.LocationBins,
+		sizes: deps.Sizes, preferences: deps.Preferences, batches: deps.Batches,
+		sm: deps.SM, layout: deps.Layout, logger: deps.Logger, publicBaseURL: deps.PublicBaseURL,
+	}
+}
+
+// Routes registers every route this handler group serves on mux: NSTR-50's
+// batch download (a GET — rendering a batch persists nothing, so it carries
+// none of a mutation's CSRF requirement) and NSTR-51's print screen (whose
+// one mutating route, POST /labels/print, does carry that requirement — see
+// Print's own doc, print_web.go).
 func (h *LabelsWebHandlers) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /locations/{id}/labels.pdf", h.Download)
+	mux.HandleFunc("GET /labels/print", h.PrintScreen)
+	mux.HandleFunc("GET /labels/print/preview", h.PrintPreview)
+	mux.HandleFunc("POST /labels/print", h.Print)
 }
 
 // Download handles GET /locations/{id}/labels.pdf: parses the path id and
@@ -109,19 +203,7 @@ func (h *LabelsWebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 		h.handleRenderError(w, r, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", batch.ContentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", batch.Filename))
-	// Content-Length is set explicitly: batch.Data is a fully materialized
-	// []byte at this point (the renderer already built the whole document
-	// in memory), so its size is known up front — without this header,
-	// net/http falls back to chunked transfer encoding and the browser
-	// loses determinate download progress for no reason.
-	w.Header().Set("Content-Length", strconv.Itoa(len(batch.Data)))
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(batch.Data); err != nil {
-		h.logger.ErrorContext(r.Context(), "labels: write batch response", "error", err)
-	}
+	writeDocumentResponse(w, r, h.logger, batch.Document, batch.Filename, "labels: write batch response")
 }
 
 // parseStartOffset parses the offset query parameter: "" defaults to 0 (the
@@ -145,8 +227,7 @@ func parseStartOffset(raw string) (offset int, ok bool) {
 
 // handleRenderError maps a failed RenderLocationBatch call to the plain-text
 // response NSTR-50's plan specifies — there is no page to re-render a form
-// error into, unlike storageadapter.LocationsWebHandlers' own error
-// mapping.
+// error into, unlike Print's own error mapping (mapPrintError, print_web.go).
 func (h *LabelsWebHandlers) handleRenderError(w http.ResponseWriter, r *http.Request, err error) {
 	var tooLarge *domain.BatchTooLargeError
 	switch {
@@ -164,9 +245,29 @@ func (h *LabelsWebHandlers) handleRenderError(w http.ResponseWriter, r *http.Req
 	}
 }
 
-// resolveBaseURL resolves the origin BinDeepLinkURL builds each label's QR
-// deep link against. A duplicate of storageadapter.resolveBaseURL — not a
-// shared import of it — deliberately: that function is unexported to
+// writeDocumentResponse streams doc as an attachment download named
+// filename — the response-writing tail Download and Print (POST
+// /labels/print) share, since both ultimately answer with the exact same
+// shape of response: a fully materialized document plus its suggested
+// filename.
+func writeDocumentResponse(w http.ResponseWriter, r *http.Request, logger *slog.Logger, doc domain.Document, filename string, op string) {
+	w.Header().Set("Content-Type", doc.ContentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	// Content-Length is set explicitly: doc.Data is a fully materialized
+	// []byte at this point (the renderer already built the whole document
+	// in memory), so its size is known up front — without this header,
+	// net/http falls back to chunked transfer encoding and the browser
+	// loses determinate download progress for no reason.
+	w.Header().Set("Content-Length", strconv.Itoa(len(doc.Data)))
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(doc.Data); err != nil {
+		logger.ErrorContext(r.Context(), op, "error", err)
+	}
+}
+
+// resolveBaseURL resolves the origin app.BinDeepLinkURL builds each label's
+// QR deep link against. A duplicate of storageadapter.resolveBaseURL — not
+// a shared import of it — deliberately: that function is unexported to
 // storage/adapter's own package, and this bounded context does not reach
 // into another one's adapter internals to save a dozen lines (labels is "a
 // fresh bounded context, not an extension of storage", per this package's
