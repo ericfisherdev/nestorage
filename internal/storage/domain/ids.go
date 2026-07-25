@@ -47,6 +47,26 @@ func ParseItemID(s string) (ItemID, error) {
 	return ItemID(u), nil
 }
 
+// ItemEventID uniquely identifies an entry in the append-only item event log
+// (NSTR-40).
+type ItemEventID uuid.UUID
+
+// NewItemEventID returns a new time-ordered (UUIDv7) item event id, mirroring
+// NewItemID's rationale: better B-tree index locality than a random v4 id.
+func NewItemEventID() ItemEventID { return ItemEventID(uuid.Must(uuid.NewV7())) }
+
+// String returns the canonical UUID string.
+func (id ItemEventID) String() string { return uuid.UUID(id).String() }
+
+// ParseItemEventID parses a canonical UUID string into an ItemEventID.
+func ParseItemEventID(s string) (ItemEventID, error) {
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return ItemEventID{}, fmt.Errorf("parse item event id: %w", err)
+	}
+	return ItemEventID(u), nil
+}
+
 // ItemLinkID uniquely identifies a labeled URL attached to an item.
 type ItemLinkID uuid.UUID
 

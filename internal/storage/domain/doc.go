@@ -7,7 +7,10 @@
 // ReturnTo) alongside Placement rather than a new file, since they are
 // Item-shaped rules over the same placement model. NSTR-30 adds Bin's own
 // transition method, MoveTo, in bin.go rather than a new file, for the same
-// reason. Persistence adapters live in the sibling adapter package; the
-// application services that orchestrate these transitions transactionally
-// live in the sibling app package.
+// reason. NSTR-40 adds the append-only ItemEvent aggregate (item_event.go):
+// EventKind/EditedField typed enums, the ItemEventRepository port, and the
+// HistoryPage/HistoryCursor keyset-paging types NSTR-41/42/43 build on.
+// Persistence adapters live in the sibling adapter package; the application
+// services that orchestrate these transitions transactionally live in the
+// sibling app package.
 package domain
