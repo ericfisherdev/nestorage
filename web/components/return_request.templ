@@ -1,0 +1,83 @@
+package components
+
+// ReturnRequestSectionView is the item detail page's return-request
+// section view model (NSTR-43): either the "ask for it back" form (when the
+// viewer may raise one) or the "you already asked" indicator with a cancel
+// control — mutually exclusive, mirroring ItemDetailView's own InBin/Holder
+// exclusivity. Rendered only while the item is checked out; item_detail.templ
+// includes it unconditionally in the checked-out panel and lets
+// CanRequest/OpenRequestID decide whether anything appears at all.
+type ReturnRequestSectionView struct {
+	ItemID    string
+	CSRFToken string
+	// CanRequest is true when the item is checked out, the viewer is not
+	// its current holder, and the viewer has no open request on it
+	// already.
+	CanRequest bool
+	// OpenRequestID is the viewer's own open request's id, non-empty
+	// exactly when they have one — the cancel control's target.
+	OpenRequestID string
+}
+
+// ReturnRequestSection renders NSTR-43's request/cancel control, included by
+// item_detail.templ's own checked-out panel. Renders nothing when neither
+// CanRequest nor OpenRequestID is set (the common case for an in-bin item,
+// or an item's own holder viewing it).
+templ ReturnRequestSection(view ReturnRequestSectionView) {
+	if view.CanRequest {
+		@returnRequestForm(view)
+	} else if view.OpenRequestID != "" {
+		@returnRequestCancelForm(view)
+	}
+}
+
+// returnRequestForm renders the "ask for it back" control, HTMX-posted to
+// ItemsWebHandlers.RequestReturn and swapped into the whole item detail
+// fragment's own outerHTML — mirroring checkOutForm/returnForm's own shape
+// (item_detail.templ), never a section-only swap like item_links.templ's
+// own controls, since a successful request flips this same section to its
+// cancel-control state.
+templ returnRequestForm(view ReturnRequestSectionView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + view.ItemID + "/return-requests") }
+		hx-post={ "/items/" + view.ItemID + "/return-requests" }
+		hx-target={ "#" + itemDetailID }
+		hx-swap="outerHTML"
+		class="flex flex-wrap items-center gap-2 px-[26px] pb-4"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<label class="sr-only" for="return-request-message">Message (optional)</label>
+		<input
+			id="return-request-message"
+			type="text"
+			name="message"
+			placeholder="Add a note (optional)"
+			class="rounded-input border border-border-input bg-surface px-3 py-2 text-sm text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
+		/>
+		<button type="submit" class="min-h-[44px] rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+			Request return
+		</button>
+	</form>
+}
+
+// returnRequestCancelForm renders the "you already asked" indicator plus
+// its withdraw control, HTMX-posted to ItemsWebHandlers.CancelReturnRequest
+// and swapped into the whole item detail fragment's own outerHTML — see
+// returnRequestForm's own doc for why.
+templ returnRequestCancelForm(view ReturnRequestSectionView) {
+	<form
+		method="POST"
+		action={ templ.SafeURL("/items/" + view.ItemID + "/return-requests/" + view.OpenRequestID + "/cancel") }
+		hx-post={ "/items/" + view.ItemID + "/return-requests/" + view.OpenRequestID + "/cancel" }
+		hx-target={ "#" + itemDetailID }
+		hx-swap="outerHTML"
+		class="flex flex-wrap items-center gap-2 px-[26px] pb-4"
+	>
+		<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+		<p class="text-sm text-text-secondary">You've asked for this item back.</p>
+		<button type="submit" class="min-h-[44px] rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised">
+			Cancel request
+		</button>
+	</form>
+}

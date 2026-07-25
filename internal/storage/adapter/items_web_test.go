@@ -170,16 +170,68 @@ func (f *fakeItemLinkOperator) ListForItem(_ context.Context, _ identity.Princip
 	return links, nil
 }
 
+// fakeReturnRequestOperator is an in-memory returnRequestOperator fake for
+// ItemsWebHandlers' hermetic unit tests, mirroring fakeItemLinkOperator's
+// own shape: Request/Cancel/ListForItem operate over an in-memory slice
+// keyed by item id, standing in for NSTR-43's real, transactional
+// ReturnRequestService.
+type fakeReturnRequestOperator struct {
+	requests map[domain.ItemID][]domain.ReturnRequest
+
+	requestErr error
+	cancelErr  error
+	listErr    error
+
+	requestCalls int
+	cancelCalls  int
+}
+
+func newFakeReturnRequestOperator() *fakeReturnRequestOperator {
+	return &fakeReturnRequestOperator{requests: make(map[domain.ItemID][]domain.ReturnRequest)}
+}
+
+func (f *fakeReturnRequestOperator) Request(_ context.Context, actor identity.Principal, itemID domain.ItemID, message *string) (*domain.ReturnRequest, error) {
+	f.requestCalls++
+	if f.requestErr != nil {
+		return nil, f.requestErr
+	}
+	req := domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: itemID, RequesterID: actor.UserID, Message: message, Status: domain.ReturnRequestStatusOpen}
+	f.requests[itemID] = append(f.requests[itemID], req)
+	return &req, nil
+}
+
+func (f *fakeReturnRequestOperator) Cancel(_ context.Context, _ identity.Principal, itemID domain.ItemID, requestID domain.ReturnRequestID) error {
+	f.cancelCalls++
+	if f.cancelErr != nil {
+		return f.cancelErr
+	}
+	for i, r := range f.requests[itemID] {
+		if r.ID == requestID {
+			f.requests[itemID][i].Status = domain.ReturnRequestStatusCancelled
+			return nil
+		}
+	}
+	return domain.ErrReturnRequestNotFound
+}
+
+func (f *fakeReturnRequestOperator) ListForItem(_ context.Context, _ identity.Principal, itemID domain.ItemID) ([]domain.ReturnRequest, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return append([]domain.ReturnRequest(nil), f.requests[itemID]...), nil
+}
+
 // itemsWebHarness bundles a running ItemsWebHandlers server and a client
 // carrying its session cookie across requests, mirroring binsWebHarness'
 // own shape.
 type itemsWebHarness struct {
-	server *httptest.Server
-	client *http.Client
-	items  *fakeItemQueryService
-	ops    *fakeItemOperator
-	links  *fakeItemLinkOperator
-	events *fakeEventLister
+	server         *httptest.Server
+	client         *http.Client
+	items          *fakeItemQueryService
+	ops            *fakeItemOperator
+	links          *fakeItemLinkOperator
+	events         *fakeEventLister
+	returnRequests *fakeReturnRequestOperator
 }
 
 func newItemsWebHarness(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator) *itemsWebHarness {
@@ -203,12 +255,24 @@ func newItemsWebHarnessWithPhotos(t *testing.T, viewer identity.Principal, items
 // newItemsWebHarnessWithPhotos' own introduction for NSTR-37's Photos field.
 func newItemsWebHarnessWithPhotosAndEvents(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator, photos *fakePrimaryPhotoRefLister, events *fakeEventLister) *itemsWebHarness {
 	t.Helper()
+	return newItemsWebHarnessFull(t, viewer, items, ops, bins, links, photos, events, newFakeReturnRequestOperator())
+}
+
+// newItemsWebHarnessFull is newItemsWebHarnessWithPhotosAndEvents' own
+// extension point for NSTR-43's own return-request tests, which need a
+// configurable returnRequestOperator rather than the zero-value default
+// (no requests) every pre-existing call site still gets — mirrors
+// newItemsWebHarnessWithPhotosAndEvents' own introduction for NSTR-42's
+// Events field.
+func newItemsWebHarnessFull(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator, photos *fakePrimaryPhotoRefLister, events *fakeEventLister, returnRequests *fakeReturnRequestOperator) *itemsWebHarness {
+	t.Helper()
 	sm := scs.New()
 	handlers := adapter.NewItemsWebHandlers(adapter.ItemsWebHandlersDeps{
-		Items: items, Operations: ops, Bins: bins, Links: links, Photos: photos, Events: events, SM: sm, Layout: testLayout, Logger: testLogger(),
+		Items: items, Operations: ops, Bins: bins, Links: links, Photos: photos, Events: events, ReturnRequests: returnRequests,
+		SM: sm, Layout: testLayout, Logger: testLogger(),
 	})
 	server := newPrincipalServer(t, sm, viewer, handlers.Routes)
-	return &itemsWebHarness{server: server, client: newCSRFClient(t), items: items, ops: ops, links: links, events: events}
+	return &itemsWebHarness{server: server, client: newCSRFClient(t), items: items, ops: ops, links: links, events: events, returnRequests: returnRequests}
 }
 
 func (h *itemsWebHarness) getCSRF(t *testing.T, path string) string {
@@ -266,7 +330,8 @@ func TestNewItemsWebHandlers_NilDependenciesPanic(t *testing.T) {
 	sm := scs.New()
 	base := adapter.ItemsWebHandlersDeps{
 		Items: items, Operations: ops, Bins: bins, Links: links, Photos: &fakePrimaryPhotoRefLister{}, Events: &fakeEventLister{},
-		SM: sm, Layout: testLayout, Logger: testLogger(),
+		ReturnRequests: newFakeReturnRequestOperator(),
+		SM:             sm, Layout: testLayout, Logger: testLogger(),
 	}
 
 	tests := []struct {
@@ -279,6 +344,7 @@ func TestNewItemsWebHandlers_NilDependenciesPanic(t *testing.T) {
 		{"nil link operator", func(d *adapter.ItemsWebHandlersDeps) { d.Links = nil }},
 		{"nil primary photo ref lister", func(d *adapter.ItemsWebHandlersDeps) { d.Photos = nil }},
 		{"nil event lister", func(d *adapter.ItemsWebHandlersDeps) { d.Events = nil }},
+		{"nil return request operator", func(d *adapter.ItemsWebHandlersDeps) { d.ReturnRequests = nil }},
 		{"nil session manager", func(d *adapter.ItemsWebHandlersDeps) { d.SM = nil }},
 		{"nil layout", func(d *adapter.ItemsWebHandlersDeps) { d.Layout = nil }},
 		{"nil logger", func(d *adapter.ItemsWebHandlersDeps) { d.Logger = nil }},

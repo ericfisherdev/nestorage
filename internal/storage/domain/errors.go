@@ -147,4 +147,42 @@ var (
 	// CHECK. NSTR-40's domain mirror of those CHECKs, run before Append ever
 	// reaches the database.
 	ErrInvalidItemEvent = errors.New("storage: invalid item event")
+
+	// ErrReturnRequestNotFound is returned by ReturnRequestRepository.Cancel
+	// when no row matches both id and the requester cancelling it — an
+	// unknown id and one belonging to a different requester are
+	// indistinguishable, the same masking ErrItemNotFound's own doc
+	// requires. app.ReturnRequestService.Cancel also returns it when the
+	// cancelled row's item does not match the item the cancel was made
+	// against (an itemID/requestID URL mismatch).
+	ErrReturnRequestNotFound = errors.New("storage: return request not found")
+
+	// ErrDuplicateReturnRequest is returned by ReturnRequestRepository.Create
+	// when the requester already has an open request on the item — enforced
+	// by the return_request_open_uniq partial unique index.
+	ErrDuplicateReturnRequest = errors.New("storage: an open return request already exists")
+
+	// ErrReturnRequestNotOpen is returned by ReturnRequest.Fulfill/Cancel,
+	// and by ReturnRequestRepository.Cancel, when the request is no longer
+	// open (already fulfilled or cancelled) — a return request has exactly
+	// two terminal states and neither can be re-entered.
+	ErrReturnRequestNotOpen = errors.New("storage: return request is not open")
+
+	// ErrRequesterHoldsItem is returned by app.ReturnRequestService.Request
+	// when the requesting principal is the item's own current holder —
+	// asking for an item back from yourself is not a meaningful request.
+	ErrRequesterHoldsItem = errors.New("storage: you already hold this item")
+
+	// ErrInvalidReturnRequestMessage is returned (wrapped) by
+	// ValidateReturnRequestMessage for a non-nil message that is blank or
+	// longer than MaxReturnRequestMessageRunes — the domain mirror of
+	// return_request_message_check.
+	ErrInvalidReturnRequestMessage = errors.New("storage: invalid return request message")
+
+	// ErrInvalidReturnRequestStatus is returned (wrapped, with the
+	// offending value) by ParseReturnRequestStatus for a string that is not
+	// one of the three known ReturnRequestStatus values — the domain mirror
+	// of return_request_status_check, following ErrInvalidEventKind/
+	// ErrInvalidVisibility's own naming convention.
+	ErrInvalidReturnRequestStatus = errors.New("storage: invalid return request status")
 )

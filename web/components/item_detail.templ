@@ -46,6 +46,11 @@ type ItemDetailView struct {
 	// separate query, not an extension of the read model above, per Sprint
 	// 5 reconciliation R3.
 	Links ItemLinksView
+	// ReturnRequests is NSTR-43's own request/cancel control, populated by
+	// renderDetail alongside ReturnBins (only ever non-zero when InBin is
+	// false, mirroring ReturnBins' own "only matters while checked out"
+	// scoping).
+	ReturnRequests ReturnRequestSectionView
 }
 
 // itemDetailID is the DOM id the check-out/return controls target for
@@ -118,6 +123,7 @@ templ itemCheckedOutPanel(view ItemDetailView) {
 			<span>{ view.Holder.Name } has held this since { view.HeldSince }.</span>
 		</p>
 		@returnForm(view)
+		@ReturnRequestSection(view.ReturnRequests)
 	</div>
 }
 

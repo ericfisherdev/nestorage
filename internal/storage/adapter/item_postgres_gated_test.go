@@ -23,7 +23,9 @@ import (
 // events: an ItemEventRepository over the same pool, so this fixture's own
 // gated suites (operations_gated_test.go, mover_gated_test.go,
 // item_uow_gated_test.go) can assert on item_event rows without a second,
-// isolation-defeating NewIsolatedPool call.
+// isolation-defeating NewIsolatedPool call. NSTR-43 adds requests
+// (ReturnRequestRepository) the same way, for return_request_postgres_
+// gated_test.go and operations_gated_test.go's own fulfilment proof.
 type itemFixture struct {
 	pool      *pgxpool.Pool
 	repo      *adapter.ItemRepository
@@ -31,6 +33,7 @@ type itemFixture struct {
 	locations *adapter.LocationRepository
 	users     *identityadapter.UserRepository
 	events    *adapter.ItemEventRepository
+	requests  *adapter.ReturnRequestRepository
 }
 
 func newItemFixture(t *testing.T) *itemFixture {
@@ -43,6 +46,7 @@ func newItemFixture(t *testing.T) *itemFixture {
 		locations: adapter.NewLocationRepository(pool),
 		users:     identityadapter.NewUserRepository(pool),
 		events:    adapter.NewItemEventRepository(pool),
+		requests:  adapter.NewReturnRequestRepository(pool),
 	}
 }
 
