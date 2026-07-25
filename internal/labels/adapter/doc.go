@@ -14,6 +14,12 @@
 //
 // A later thermal-printer adapter would live in this same package, added
 // purely alongside this file — the domain port is what makes that
-// additive. Wiring PDFSheetRenderer into cmd/server and driving it from a
-// batch-print operation is NSTR-50's job, not this ticket's.
+// additive.
+//
+// NSTR-50 adds this package's other file, labels_web.go: LabelsWebHandlers,
+// the GET /locations/{id}/labels.pdf download handler that wires
+// PDFSheetRenderer (via internal/labels/app.BatchService) into
+// cmd/server's composition root, driving it from a batch-print request
+// rather than the single-bin QR decoration storage/adapter's own bin
+// detail page renders.
 package adapter

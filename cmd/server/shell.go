@@ -12,6 +12,7 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
+	labelsadapter "github.com/ericfisherdev/nestorage/internal/labels/adapter"
 	labelsdomain "github.com/ericfisherdev/nestorage/internal/labels/domain"
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
@@ -269,6 +270,7 @@ type appRouteDeps struct {
 	APIKeyWeb      *identityadapter.APIKeyWebHandlers
 	Bins           *storageadapter.BinsWebHandlers
 	Locations      *storageadapter.LocationsWebHandlers
+	Labels         *labelsadapter.LabelsWebHandlers
 	Items          *storageadapter.ItemsWebHandlers
 	Photos         *mediaadapter.PhotosWebHandlers
 	Notifications  *notifyadapter.InboxWebHandlers
@@ -304,6 +306,11 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		storageMux := http.NewServeMux()
 		deps.Bins.Routes(storageMux)
 		deps.Locations.Routes(storageMux)
+		// NSTR-50's GET /locations/{id}/labels.pdf is more specific than
+		// deps.Locations' own GET /locations/{id}, so net/http.ServeMux
+		// routes a request to the right handler with no conflict between
+		// the two registrations sharing this mux.
+		deps.Labels.Routes(storageMux)
 		deps.Items.Routes(storageMux)
 		deps.Photos.Routes(storageMux)
 		deps.Notifications.Routes(storageMux)
