@@ -270,6 +270,11 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// bins out of a batch, not any filtering in BatchService itself.
 	labelRenderer := labelsadapter.NewPDFSheetRenderer()
 	batchService := labelsapp.NewBatchService(binRepo, locationRepo, labelSizes, labelRenderer, logger)
+	// NSTR-51's own preference composition: SizePreferenceRepository is
+	// pool-bound for the identical reason preferenceRepo (NSTR-45) is — a
+	// remembered label size is never part of another aggregate's
+	// transaction.
+	labelPreferenceRepo := labelsadapter.NewSizePreferenceRepository(pool)
 
 	shellData := newShellDataService(identityRepo, binService, locationService, labelSizes)
 
@@ -280,7 +285,16 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	locationsWeb := storageadapter.NewLocationsWebHandlers(
 		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
 	)
-	labelsWeb := labelsadapter.NewLabelsWebHandlers(batchService, logger, cfg.Server.PublicBaseURL)
+	// NSTR-51's own print screen: binService/locationService double as the
+	// bin lookup, location lookup, and location bin-list ports (each already
+	// a superset via GetByID/Get/ListVisibleByLocation), so this reuses the
+	// exact same visibility-scoped services binsWeb/locationsWeb above do —
+	// a bin or location the principal cannot see 404s here identically.
+	labelsWeb := labelsadapter.NewLabelsWebHandlers(labelsadapter.LabelsWebHandlersDeps{
+		Bins: binService, Locations: locationService, LocationBins: binService,
+		Sizes: labelSizes, Preferences: labelPreferenceRepo, Batches: batchService,
+		SM: sm, Layout: newLabelsPrintLayout(shellData, logger), Logger: logger, PublicBaseURL: cfg.Server.PublicBaseURL,
+	})
 	itemsWeb := storageadapter.NewItemsWebHandlers(storageadapter.ItemsWebHandlersDeps{
 		Items: itemQueryService, Operations: operationService, Bins: binService, Links: itemLinkService, Photos: photoService, Events: itemEventRepo,
 		ReturnRequests: returnRequestService,

@@ -51,6 +51,13 @@ const apiKeySettingsPageTitle = "API key"
 // notificationsPageTitle names NSTR-44's own /notifications inbox page.
 const notificationsPageTitle = "Notifications"
 
+// labelsPrintPageTitle names NSTR-51's own /labels/print screen — a
+// distinct string from the sidebar's "Labels & codes" nav entry (still a
+// placeholder link to a not-yet-built /labels page, per shellNav's own
+// doc), since this ticket's screen is reached from a bin/location detail
+// page's own toolbar, never that nav entry.
+const labelsPrintPageTitle = "Print labels"
+
 // notificationSettingsPageTitle names NSTR-45's own /settings/notifications
 // preferences page — a distinct string from notificationsPageTitle so the
 // two pages' own shell titles never collide, even though both live under
@@ -417,6 +424,15 @@ func newNotificationSettingsLayout(data *shellDataService, logger *slog.Logger) 
 // per specific bin/location the way, say, a per-item title would.
 func newStorageLayout(data *shellDataService, title string, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
 	return newRequestAdminAwareLayout(data, title, logger)
+}
+
+// newLabelsPrintLayout returns the layout func injected into
+// labelsadapter.NewLabelsWebHandlers (see newRequestAdminAwareLayout's own
+// doc) — NSTR-51's /labels/print screen is reachable by any signed-in
+// household member, not only an admin, the same shellNav-reflects-the-
+// actual-viewer shape newStorageLayout already has.
+func newLabelsPrintLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return newRequestAdminAwareLayout(data, labelsPrintPageTitle, logger)
 }
 
 // newNotificationsLayout returns the layout func injected into
