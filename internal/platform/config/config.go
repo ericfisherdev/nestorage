@@ -30,6 +30,10 @@ type Config struct {
 	// Media configures photo storage (NSTR-34) — Nestorage-local, since
 	// nestcore has no media loader.
 	Media MediaConfig
+	// Email configures the opt-in email notification channel (NSTR-89) —
+	// Nestorage-local, since nestcore's own EmailConfig does not fit this
+	// ticket's env var contract (see email.go's own doc).
+	Email EmailConfig
 	// Env is the deployment environment: one of corecfg.EnvDev, EnvTest, or
 	// EnvProd.
 	Env string
@@ -65,6 +69,8 @@ func Load() (Config, error) {
 	errs = append(errs, sessionErrs...)
 	media, mediaErrs := LoadMedia()
 	errs = append(errs, mediaErrs...)
+	email, emailErrs := LoadEmail()
+	errs = append(errs, emailErrs...)
 
 	errs = append(errs, corecfg.ValidateAppEnv(env)...)
 	errs = append(errs, server.Validate()...)
@@ -73,6 +79,7 @@ func Load() (Config, error) {
 	errs = append(errs, tls.Validate()...)
 	errs = append(errs, session.Validate(env)...)
 	errs = append(errs, media.Validate()...)
+	errs = append(errs, email.Validate()...)
 
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("invalid configuration:\n%w", errors.Join(errs...))
@@ -85,6 +92,7 @@ func Load() (Config, error) {
 		HSTS:    hsts,
 		Session: session,
 		Media:   media,
+		Email:   email,
 		Env:     env,
 	}, nil
 }

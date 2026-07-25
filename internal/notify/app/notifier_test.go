@@ -200,7 +200,13 @@ func TestNotifier_ReturnRequested_EnqueueError_NoPanic(t *testing.T) {
 	notifier.ReturnRequested(context.Background(), n)
 }
 
-func TestNotifier_ReturnRequested_EmailOnlyPreference_SkippedNotEnqueued(t *testing.T) {
+// TestNotifier_ReturnRequested_EmailOnlyPreference_WritesPendingEmailRow
+// supersedes NSTR-44's own ...SkippedNotEnqueued version of this test:
+// NSTR-89 extends enqueueChannel's switch with a ChannelEmail case (see
+// that method's own doc), so a preference that resolves to email-only now
+// writes one pending row — for app.Dispatcher to claim — rather than
+// nothing.
+func TestNotifier_ReturnRequested_EmailOnlyPreference_WritesPendingEmailRow(t *testing.T) {
 	enqueuer := &fakeEnqueuer{}
 	prefs := &fakePreferenceReader{channels: []notifydomain.Channel{notifydomain.ChannelEmail}}
 	notifier := notifyapp.NewNotifier(enqueuer, prefs, fixedClock(time.Now()), testLogger())
@@ -208,8 +214,47 @@ func TestNotifier_ReturnRequested_EmailOnlyPreference_SkippedNotEnqueued(t *test
 	n := returnRequestNotification(identity.NewUserID(), "Alex", "Camping stove", nil)
 	notifier.ReturnRequested(context.Background(), n)
 
-	if len(enqueuer.calls) != 0 {
-		t.Errorf("Enqueue called %d times for an email-only preference, want 0 — NSTR-44 delivers no email and writes no pending row", len(enqueuer.calls))
+	if len(enqueuer.calls) != 1 {
+		t.Fatalf("Enqueue called %d times for an email-only preference, want 1", len(enqueuer.calls))
+	}
+	got := enqueuer.calls[0]
+	if got.Channel != notifydomain.ChannelEmail {
+		t.Errorf("Channel = %v, want ChannelEmail", got.Channel)
+	}
+	if got.Status != notifydomain.StatusPending {
+		t.Errorf("Status = %v, want StatusPending (awaiting Dispatcher)", got.Status)
+	}
+	if got.Attempts != 0 {
+		t.Errorf("Attempts = %d, want 0", got.Attempts)
+	}
+	if got.NextAttemptAt != nil {
+		t.Errorf("NextAttemptAt = %v, want nil (immediately due)", got.NextAttemptAt)
+	}
+	if got.SentAt != nil {
+		t.Errorf("SentAt = %v, want nil (not yet delivered)", got.SentAt)
+	}
+	if !strings.Contains(got.Title, "Camping stove") {
+		t.Errorf("Title = %q, want it to name the item (reused from the in-app builder)", got.Title)
+	}
+}
+
+// TestNotifier_ReturnRequested_BothChannelsPreference_WritesBothRows covers
+// a recipient with email enabled getting BOTH an in-app row (born
+// delivered) and a pending email row from the same notify() call.
+func TestNotifier_ReturnRequested_BothChannelsPreference_WritesBothRows(t *testing.T) {
+	enqueuer := &fakeEnqueuer{}
+	prefs := &fakePreferenceReader{channels: []notifydomain.Channel{notifydomain.ChannelInApp, notifydomain.ChannelEmail}}
+	notifier := notifyapp.NewNotifier(enqueuer, prefs, fixedClock(time.Now()), testLogger())
+
+	n := returnRequestNotification(identity.NewUserID(), "Alex", "Camping stove", nil)
+	notifier.ReturnRequested(context.Background(), n)
+
+	if len(enqueuer.calls) != 2 {
+		t.Fatalf("Enqueue called %d times, want 2 (one per channel)", len(enqueuer.calls))
+	}
+	channels := map[notifydomain.Channel]bool{enqueuer.calls[0].Channel: true, enqueuer.calls[1].Channel: true}
+	if !channels[notifydomain.ChannelInApp] || !channels[notifydomain.ChannelEmail] {
+		t.Errorf("channels = %v, want both ChannelInApp and ChannelEmail", channels)
 	}
 }
 
