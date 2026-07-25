@@ -112,6 +112,12 @@ func (h *LabelsWebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", batch.ContentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", batch.Filename))
+	// Content-Length is set explicitly: batch.Data is a fully materialized
+	// []byte at this point (the renderer already built the whole document
+	// in memory), so its size is known up front — without this header,
+	// net/http falls back to chunked transfer encoding and the browser
+	// loses determinate download progress for no reason.
+	w.Header().Set("Content-Length", strconv.Itoa(len(batch.Data)))
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(batch.Data); err != nil {
 		h.logger.ErrorContext(r.Context(), "labels: write batch response", "error", err)
