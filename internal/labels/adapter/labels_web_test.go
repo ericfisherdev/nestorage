@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -144,6 +145,9 @@ func TestLabelsWebHandlers_Download_Success(t *testing.T) {
 	}
 	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, "labels-garage-avery-5160.pdf") {
 		t.Errorf("Content-Disposition = %q, want it to name the batch's filename", got)
+	}
+	if got := resp.Header.Get("Content-Length"); got != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length = %q, want it to match the response body's own length (%d)", got, len(body))
 	}
 	if string(body) != "pdf-bytes" {
 		t.Errorf("body = %q, want the batch's own Data", body)
