@@ -33,6 +33,17 @@ type BinDetailView struct {
 	// FormError shows the mapped error from a rejected delete (e.g. the
 	// bin still holds an item). Empty means no error is shown.
 	FormError string
+	// QRDataURI is the "data:image/png;base64,..." deep-link QR
+	// (NSTR-48), pre-rendered server-side by
+	// BinsWebHandlers.renderDetailView. Empty means render the detail page
+	// without it — either the QR render failed (a non-critical
+	// enhancement, not a page failure) and was logged there, or a future
+	// caller of this view type simply has none to offer.
+	QRDataURI string
+	// DeepLinkURL is the absolute URL QRDataURI encodes (app.BinDeepLinkURL's
+	// own output), shown as a plain-text fallback beneath the QR so the
+	// page still works when a scan fails or a printed label is unavailable.
+	DeepLinkURL string
 }
 
 // binDetailID is the DOM id the edit/delete/move controls target for their
@@ -74,6 +85,7 @@ templ BinDetail(view BinDetailView, move MoveBinView) {
 				</a>
 				@deleteBinForm(view)
 			</div>
+			@binQRBlock(view)
 		</div>
 		if view.FormError != "" {
 			<p role="alert" class="mx-[26px] rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
@@ -104,6 +116,33 @@ templ deleteBinForm(view BinDetailView) {
 			<span class="sr-only">Delete </span>Delete
 		</button>
 	</form>
+}
+
+// binQRBlock renders the bin detail page's deep-link QR (NSTR-48) as an
+// aside beside the header: a scannable code, its bin-code caption in Space
+// Mono (BinCode, matching the header's own), and the underlying URL as
+// plain text so the page still works when a scan fails or the label is
+// unavailable. Renders nothing when QRDataURI is empty — a QR render
+// failure degrades the page rather than failing it (see
+// BinsWebHandlers.renderDetailView's own doc), and NSTR-31's pre-NSTR-48
+// callers of this view type simply leave it unset. White background and
+// padding hold scan contrast regardless of the surrounding theme.
+templ binQRBlock(view BinDetailView) {
+	if view.QRDataURI != "" {
+		<div class="flex flex-col items-center gap-1" data-testid="bin-detail-qr">
+			<img
+				src={ view.QRDataURI }
+				alt={ "QR code linking to bin " + view.Code }
+				width="96"
+				height="96"
+				class="h-24 w-24 rounded-input border border-border bg-white p-2"
+			/>
+			@BinCode(view.Code)
+			<span class="max-w-[140px] truncate text-[11px] text-text-faint" title={ view.DeepLinkURL }>
+				{ view.DeepLinkURL }
+			</span>
+		</div>
+	}
 }
 
 // binItemsList renders the bin's contents as a read-only row per item, or

@@ -10,6 +10,7 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 
+	"github.com/ericfisherdev/nestcore/qrcode"
 	"github.com/ericfisherdev/nestcore/render"
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
@@ -78,6 +79,13 @@ var _ binActivityLister = (*ItemEventRepository)(nil)
 // ItemsWebHandlers.History).
 const binActivityLimit = 10
 
+// binQRModuleSize is the pixels-per-module size the bin detail page's QR
+// (NSTR-48) is rendered at — 8, the size nestcore's qrcode doc names as
+// comfortably scannable at card size. NSTR-49's PDF label renderer picks its
+// own print-resolution size independently; this constant only governs the
+// on-screen decoration this ticket adds.
+const binQRModuleSize = 8
+
 // BinsWebHandlers serves the bin browse/detail/CRUD/move screens
 // (NSTR-31), mirroring identity/adapter/users_web.go's own shape: narrow
 // service interfaces (ISP), an injected requestLayoutFunc, the session manager for
@@ -95,6 +103,13 @@ type BinsWebHandlers struct {
 	sm        *scs.SessionManager
 	layout    requestLayoutFunc
 	logger    *slog.Logger
+	// publicBaseURL is PUBLIC_BASE_URL (corecfg.ServerConfig.PublicBaseURL),
+	// passed through to resolveBaseURL for the bin detail page's QR deep
+	// link (NSTR-48). Empty is a legitimate, common value — it means
+	// "derive the origin from each request instead" — so, unlike every
+	// other field above, NewBinsWebHandlers does not panic on it being
+	// unset.
+	publicBaseURL string
 }
 
 // BinsWebHandlersDeps groups NewBinsWebHandlers' dependencies into one value
@@ -115,6 +130,9 @@ type BinsWebHandlersDeps struct {
 	SM        *scs.SessionManager
 	Layout    requestLayoutFunc
 	Logger    *slog.Logger
+	// PublicBaseURL is PUBLIC_BASE_URL — see BinsWebHandlers.publicBaseURL's
+	// own doc for why this is the one field NewBinsWebHandlers allows empty.
+	PublicBaseURL string
 }
 
 // NewBinsWebHandlers constructs BinsWebHandlers. All dependencies are
@@ -153,7 +171,7 @@ func NewBinsWebHandlers(deps BinsWebHandlersDeps) *BinsWebHandlers {
 	}
 	return &BinsWebHandlers{
 		bins: deps.Bins, mover: deps.Mover, locations: deps.Locations, members: deps.Members, items: deps.Items, photos: deps.Photos, events: deps.Events,
-		sm: deps.SM, layout: deps.Layout, logger: deps.Logger,
+		sm: deps.SM, layout: deps.Layout, logger: deps.Logger, publicBaseURL: deps.PublicBaseURL,
 	}
 }
 
@@ -500,6 +518,17 @@ func (h *BinsWebHandlers) renderDetailView(w http.ResponseWriter, r *http.Reques
 	}
 	photoRefs := loadPrimaryPhotoRefs(r.Context(), h.photos, viewer, itemIDs(items), h.logger, "bins: detail: list primary photo refs")
 
+	deepLink := app.BinDeepLinkURL(resolveBaseURL(r, h.publicBaseURL), view.Bin.Code)
+	qrDataURI, err := qrcode.PNGDataURI(deepLink, binQRModuleSize)
+	if err != nil {
+		// The QR is a decoration, not core to the page: mirrors Nestova's
+		// kiosk non-critical-enhancement precedent (see
+		// kiosk_web.go's deepLinkQR) — log and render the rest of the page
+		// rather than 500ing the whole detail view over it.
+		h.logger.WarnContext(r.Context(), "bins: detail: render QR", "error", err)
+		qrDataURI = ""
+	}
+
 	detail := components.BinDetailView{
 		CSRFToken:    session.CSRFToken(r.Context(), h.sm),
 		ID:           view.Bin.ID.String(),
@@ -510,6 +539,8 @@ func (h *BinsWebHandlers) renderDetailView(w http.ResponseWriter, r *http.Reques
 		Owner:        ownerView(view.Owner),
 		Private:      view.Bin.Visibility.IsPrivate() && view.Bin.CreatedBy == viewer.UserID,
 		Items:        buildItemRows(items, photoRefs),
+		QRDataURI:    qrDataURI,
+		DeepLinkURL:  deepLink,
 	}
 	move := components.MoveBinView{
 		CSRFToken:         detail.CSRFToken,

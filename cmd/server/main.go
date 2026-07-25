@@ -264,7 +264,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 
 	binsWeb := storageadapter.NewBinsWebHandlers(storageadapter.BinsWebHandlersDeps{
 		Bins: binService, Mover: binMover, Locations: locationService, Members: identityRepo, Items: itemService, Photos: photoService, Events: itemEventRepo,
-		SM: sm, Layout: newStorageLayout(shellData, binsPageTitle, logger), Logger: logger,
+		SM: sm, Layout: newStorageLayout(shellData, binsPageTitle, logger), Logger: logger, PublicBaseURL: cfg.Server.PublicBaseURL,
 	})
 	locationsWeb := storageadapter.NewLocationsWebHandlers(
 		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
