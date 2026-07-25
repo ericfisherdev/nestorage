@@ -611,6 +611,15 @@ func TestLabelsWebHandlers_PrintScreen_LocationTarget_Success(t *testing.T) {
 	}
 }
 
+// TestLabelsWebHandlers_PrintScreen_BinTarget_Success pins a bin-scoped
+// request's InitialOffset at 0, same as a location-scoped one, even when
+// the tapped bin is not the location's own first bin (seeded[1] here):
+// NSTR-50's batch startOffset only blanks leading cells before bins[0], it
+// does not choose which label starts printing, so there is no offset value
+// that would land the tapped bin at a fixed cell (see printTarget's own
+// doc). A prior version set InitialOffset to the tapped bin's own list
+// index, which shifted every bin's own position without ever placing the
+// tapped one where expected.
 func TestLabelsWebHandlers_PrintScreen_BinTarget_Success(t *testing.T) {
 	locations, locationBins, bins := newFakeLocationGetter(), newFakeLocationBinLister(), newFakeBinGetter()
 	locationID := storagedomain.NewLocationID()
@@ -632,6 +641,9 @@ func TestLabelsWebHandlers_PrintScreen_BinTarget_Success(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "Print label — Winter tires") {
 		t.Errorf("body missing bin header:\n%s", body)
+	}
+	if !strings.Contains(string(body), `name="offset" value="0"`) {
+		t.Errorf("bin-scoped print screen must start at offset 0, not the tapped bin's own list index:\n%s", body)
 	}
 }
 

@@ -43,12 +43,14 @@ var errBadTarget = errors.New("labels: no single bin or location target given")
 // that this ticket adds none ("this ticket's POST calls the same
 // service"). A bin-scoped request therefore resolves to its own containing
 // location for every subsequent step; what actually distinguishes the two
-// entry points is cosmetic (HeaderTitle) and positional (InitialOffset
-// preselects the tapped bin's own cell in the location's ordered bin list,
-// rather than starting the sheet at cell zero) — the print screen's own
-// LocationName/BinCount make the batch's real, location-wide scope visible
-// either way, so a household member printing "just this one bin" still
-// sees exactly what will land on the sheet.
+// entry points is purely cosmetic (HeaderTitle) — InitialOffset is always 0
+// for both. NSTR-50's own startOffset only blanks leading cells before
+// bins[0] (labelsdomain.LabelRenderer's own doc); it does not choose which
+// label starts printing, so there is no offset value that would land the
+// tapped bin at a fixed cell — the print screen's own LocationName/BinCount
+// make the batch's real, location-wide scope visible either way, so a
+// household member printing "just this one bin" still sees exactly what
+// will land on the sheet.
 type printTarget struct {
 	// BinQuery/LocationQuery echo whichever of the two query parameters the
 	// request actually named, so the print screen's own hidden inputs
@@ -64,9 +66,10 @@ type printTarget struct {
 	// ListVisibleByLocation's own code order — the preview's own per-cell
 	// occupancy source, and len(Bins) is the batch's real label count.
 	Bins []storageapp.BinView
-	// InitialOffset is 0 for a location target, and the tapped bin's own
-	// index within Bins for a bin target — GET /labels/print's own starting
-	// offset before the household member ever taps a different cell.
+	// InitialOffset is always 0 — GET /labels/print's own starting offset
+	// before the household member ever taps a different cell, for both a
+	// bin- and a location-scoped request. See this type's own doc for why a
+	// bin-scoped request cannot preselect its own tapped bin's cell instead.
 	InitialOffset int
 	HeaderTitle   string
 }
@@ -94,7 +97,9 @@ func (h *LabelsWebHandlers) resolveTarget(ctx context.Context, viewer identity.P
 // resolveBinTarget resolves a bin-scoped target: the bin itself (for its
 // own name and containing location id), then that location's own header
 // and bin list — see printTarget's own doc for why the batch this ultimately
-// feeds is location-wide, not filtered to the one bin.
+// feeds is location-wide, not filtered to the one bin, and why InitialOffset
+// is 0 here exactly as it is for a location target rather than the tapped
+// bin's own index in Bins.
 func (h *LabelsWebHandlers) resolveBinTarget(ctx context.Context, viewer identity.Principal, binQuery string) (printTarget, error) {
 	binID, err := storagedomain.ParseBinID(binQuery)
 	if err != nil {
@@ -110,7 +115,7 @@ func (h *LabelsWebHandlers) resolveBinTarget(ctx context.Context, viewer identit
 	}
 	return printTarget{
 		BinQuery: binQuery, LocationID: bin.Bin.LocationID, LocationName: location.Name,
-		Bins: bins, InitialOffset: binOffset(bins, bin.Bin.ID),
+		Bins: bins, InitialOffset: 0,
 		HeaderTitle: "Print label — " + bin.Bin.Name,
 	}, nil
 }
@@ -147,22 +152,6 @@ func (h *LabelsWebHandlers) locationAndBins(ctx context.Context, viewer identity
 		return nil, nil, err
 	}
 	return location, bins, nil
-}
-
-// binOffset returns targetID's own index within bins (ListVisibleByLocation's
-// own code order) — the cell a bin-scoped print screen preselects as its
-// starting offset, so the very first sheet position shown is the requested
-// bin's own label. Returns 0 (the sheet's first cell) if targetID is
-// somehow absent from bins — defensive only; resolveBinTarget's own
-// GetByID/ListVisibleByLocation calls share the identical visibility scope,
-// so this should not happen in practice.
-func binOffset(bins []storageapp.BinView, targetID storagedomain.BinID) int {
-	for i, b := range bins {
-		if b.Bin.ID == targetID {
-			return i
-		}
-	}
-	return 0
 }
 
 // preferredSizeID resolves viewer's remembered label size, falling back to

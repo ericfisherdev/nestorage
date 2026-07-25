@@ -131,17 +131,6 @@ func TestClampOffset(t *testing.T) {
 	}
 }
 
-func TestBinOffset(t *testing.T) {
-	bins := []storageapp.BinView{testBinView("First"), testBinView("Second"), testBinView("Third")}
-
-	if got := binOffset(bins, bins[1].Bin.ID); got != 1 {
-		t.Errorf("binOffset(present) = %d, want 1", got)
-	}
-	if got := binOffset(bins, storagedomain.NewBinID()); got != 0 {
-		t.Errorf("binOffset(absent) = %d, want 0 (defensive fallback)", got)
-	}
-}
-
 func TestParseOffsetOrZero(t *testing.T) {
 	tests := []struct {
 		raw  string

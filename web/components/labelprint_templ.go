@@ -679,13 +679,14 @@ func labelPreviewCellClass(cell LabelPreviewCellView) string {
 	}
 }
 
-// labelPreviewCellAriaLabel names what tapping cell does, for the
-// icon-and-truncated-text button above.
+// labelPreviewCellAriaLabel names what tapping cell does — selecting the
+// cell POSITION printing starts at — for the icon-and-truncated-text button
+// above. Deliberately not the currently occupying bin's own name: occupancy
+// reflows on every offset change (the batch always starts from bins[0] at
+// the new offset), so the bin shown here now will not be the one that lands
+// at this position after the tap.
 func labelPreviewCellAriaLabel(cell LabelPreviewCellView) string {
-	if cell.Filled {
-		return "Start printing at " + cell.BinName
-	}
-	return "Start printing at this cell"
+	return fmt.Sprintf("Start printing at cell %d", cell.Index+1)
 }
 
 // offsetVals renders the htmx hx-vals JSON payload that overrides the
