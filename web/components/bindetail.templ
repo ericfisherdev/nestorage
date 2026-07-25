@@ -77,6 +77,13 @@ templ BinDetail(view BinDetailView, move MoveBinView) {
 			</div>
 			<div class="flex items-center gap-2">
 				<a
+					href={ templ.SafeURL("/labels/print?bin=" + view.ID) }
+					class="flex min-h-[44px] items-center gap-1.5 rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised"
+				>
+					@IconPrinter("h-4 w-4")
+					<span class="sr-only">Print </span>Print label
+				</a>
+				<a
 					href={ templ.SafeURL("/b/" + view.Code + "/edit") }
 					class="flex min-h-[44px] items-center gap-1.5 rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised"
 				>

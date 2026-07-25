@@ -231,3 +231,14 @@ templ IconBell(class string) {
 		<path d="M9.5 17a2.5 2.5 0 0 0 5 0"></path>
 	</svg>
 }
+
+// IconPrinter is the bin/location detail toolbar's "Print label(s)" control
+// glyph (NSTR-51), matching IconPencil/IconTrash's own stroke weight since
+// it sits in the same toolbar row.
+templ IconPrinter(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+		<path d="M6.5 8.5V4h11v4.5"></path>
+		<rect x="3.5" y="8.5" width="17" height="8" rx="1.5"></rect>
+		<path d="M6.5 14h11v6h-11z"></path>
+	</svg>
+}

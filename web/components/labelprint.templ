@@ -1,0 +1,265 @@
+package components
+
+import (
+	"fmt"
+	"strconv"
+)
+
+// LabelSizeOptionView is one registry size's own row in the size picker —
+// display name, cell dimensions in millimetres, and per-sheet count, per
+// NSTR-51's plan. Never a domain type directly (see BinCardView's own doc
+// for the identical rationale): the web adapter projects
+// labelsdomain.LabelSize into this at request time.
+type LabelSizeOptionView struct {
+	ID            string
+	DisplayName   string
+	CellWidthMM   float64
+	CellHeightMM  float64
+	PerSheetCount int
+	Selected      bool
+}
+
+// LabelPreviewCellView is one cell's own position and occupancy on the
+// previewed (always first) sheet. Left/Top/Width/HeightPercent are already
+// resolved to CSS percentages of the page — computed in Go from the exact
+// same NSTR-47 registry geometry and NSTR-49 CellOrigin math the PDF
+// renderer itself uses, which is what makes the preview match the produced
+// PDF by construction rather than by coincidence.
+type LabelPreviewCellView struct {
+	Index                                                int
+	LeftPercent, TopPercent, WidthPercent, HeightPercent float64
+	// Dimmed renders an empty, faded cell — before the chosen start offset,
+	// left blank because a physical sheet already partly used has its
+	// leading labels already peeled off.
+	Dimmed bool
+	// Filled renders an occupied cell — BinCode/BinName/LocationName are the
+	// label that would print there. BinCode renders through the existing
+	// BinCode component so Space Mono stays confined to bin codes, exactly
+	// as everywhere else in this codebase.
+	Filled       bool
+	BinCode      string
+	BinName      string
+	LocationName string
+}
+
+// LabelSheetPreviewView is the live preview fragment's own view model —
+// PrintPreview's response, and LabelPrintPage's initial embed of the same
+// component. BinQuery/LocationQuery/Offset are rendered as this fragment's
+// own hidden inputs, kept inside the swapped content itself so an htmx
+// refresh (a size change or a tapped cell) never leaves the picture and the
+// form's own pending values disagreeing.
+type LabelSheetPreviewView struct {
+	BinQuery      string
+	LocationQuery string
+	SizeID        string
+	Offset        int
+	PageWidthMM   float64
+	PageHeightMM  float64
+	// Cells covers exactly one sheet's worth of cells (size.CellsPerPage) —
+	// only the first sheet is ever previewed, per NSTR-51's plan.
+	Cells []LabelPreviewCellView
+	// Summary is the pre-rendered "N labels across M sheets" line.
+	Summary string
+}
+
+// LabelPrintPageView is the view-layer model for GET /labels/print: the
+// print screen's header, size picker, and live preview, all inside the one
+// form the plain (non-htmx) Print submission posts.
+type LabelPrintPageView struct {
+	CSRFToken string
+	// HeaderTitle names the print target: "Print label — Garage shelf B"
+	// for a bin, "Print labels — Garage" for a location.
+	HeaderTitle string
+	// LocationName/BinCount ground HeaderTitle in what will actually
+	// print — the containing location and how many bins are in it — since
+	// even a bin-scoped request renders that whole location's own batch
+	// (see the web adapter's printTarget doc for why).
+	LocationName string
+	BinCount     int
+	Sizes        []LabelSizeOptionView
+	Preview      LabelSheetPreviewView
+	// FormError shows a rejected Print's mapped error (an invalid size, an
+	// out-of-range offset, or NSTR-50's own batch-size cap) inline. Empty
+	// means no error is shown.
+	FormError string
+}
+
+// labelPrintPreviewID is the DOM id every size change and cell tap targets
+// for its htmx outerHTML swap.
+const labelPrintPreviewID = "label-preview"
+
+// LabelPrintPage renders the full print screen: header, size picker, live
+// preview, and the Print submit button, all inside one native form POST to
+// /labels/print. htmx is used only for the preview fragment (the size
+// picker's own change handler and each preview cell's own tap) — the Print
+// submission itself is a plain form post, never htmx, because htmx's AJAX
+// response cannot trigger a browser's native file-download behavior.
+templ LabelPrintPage(view LabelPrintPageView) {
+	<div class="flex flex-col gap-4">
+		<div class="border-b border-border px-[26px] pb-4 pt-5">
+			<h2 class="text-xl font-extrabold text-text">{ view.HeaderTitle }</h2>
+			<p class="mt-1 flex items-center gap-1 text-sm text-text-faint">
+				@IconPin("h-[14px] w-[14px]")
+				{ view.LocationName } · { binCountLabel(view.BinCount) }
+			</p>
+		</div>
+		<form method="POST" action="/labels/print" class="flex flex-col gap-5 px-[26px] pb-6">
+			<input type="hidden" name="csrf_token" value={ view.CSRFToken }/>
+			if view.FormError != "" {
+				<p role="alert" class="rounded-input border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{ view.FormError }</p>
+			}
+			@labelSizePicker(view.Sizes)
+			@LabelSheetPreview(view.Preview)
+			<button
+				type="submit"
+				class="flex min-h-[44px] items-center justify-center gap-2 self-start rounded-button bg-primary px-5 py-3 text-md font-semibold text-white shadow-primary hover:bg-primary-deep"
+			>
+				@IconPrinter("h-[19px] w-[19px]")
+				Print
+			</button>
+		</form>
+	</div>
+}
+
+// labelSizePicker renders one radio card per registry size. Each card is a
+// label wrapping its own radio (a >=44px touch target throughout), and
+// changing the selection issues an htmx GET of the preview fragment with
+// the whole form's own current state included and the offset reset to 0 —
+// a different size can have a smaller per-sheet capacity than the offset
+// the previous size had selected.
+templ labelSizePicker(sizes []LabelSizeOptionView) {
+	<fieldset class="flex flex-col gap-2">
+		<legend class="mb-1 text-sm font-bold text-text-secondary">Label size</legend>
+		<div class="grid grid-cols-1 gap-2 shell:grid-cols-3">
+			for _, s := range sizes {
+				@labelSizeCard(s)
+			}
+		</div>
+	</fieldset>
+}
+
+templ labelSizeCard(s LabelSizeOptionView) {
+	<label class="flex min-h-[44px] cursor-pointer items-start gap-2 rounded-input border border-border-input p-3 has-[:checked]:border-primary has-[:checked]:bg-owner-indigo-tint">
+		<input
+			type="radio"
+			name="size_id"
+			value={ s.ID }
+			checked?={ s.Selected }
+			class="mt-1 h-4 w-4 accent-primary"
+			hx-get="/labels/print/preview"
+			hx-trigger="change"
+			hx-include="closest form"
+			hx-vals={ offsetVals(0) }
+			hx-target={ "#" + labelPrintPreviewID }
+			hx-swap="outerHTML"
+		/>
+		<span class="flex flex-col">
+			<span class="text-sm font-semibold text-text">{ s.DisplayName }</span>
+			<span class="text-xs text-text-faint">{ cellDimensionLabel(s.CellWidthMM, s.CellHeightMM) } · { strconv.Itoa(s.PerSheetCount) } per sheet</span>
+		</span>
+	</label>
+}
+
+// LabelSheetPreview renders the sheet as a bordered surface sized to size's
+// own page aspect ratio, one absolutely positioned button per cell, and the
+// labels/sheets summary line — the preview fragment PrintPreview's own
+// response is, and LabelPrintPage's initial embed of the identical
+// component. Its own hidden bin/location/offset inputs travel inside this
+// swapped content so an htmx refresh never leaves the visual and the
+// form's own pending values disagreeing.
+templ LabelSheetPreview(view LabelSheetPreviewView) {
+	<div id={ labelPrintPreviewID } class="flex flex-col gap-3">
+		<input type="hidden" name="bin" value={ view.BinQuery }/>
+		<input type="hidden" name="location" value={ view.LocationQuery }/>
+		<input type="hidden" name="offset" value={ strconv.Itoa(view.Offset) }/>
+		<div
+			class="relative w-full max-w-md overflow-hidden rounded-card border border-border bg-white shadow-card"
+			style={ fmt.Sprintf("aspect-ratio: %g / %g", view.PageWidthMM, view.PageHeightMM) }
+		>
+			for _, cell := range view.Cells {
+				@labelPreviewCell(cell)
+			}
+		</div>
+		<p class="text-sm text-text-faint">{ view.Summary }</p>
+	</div>
+}
+
+// labelPreviewCell renders one sheet cell as a tappable button placed by
+// its own precomputed percentages — the preview itself is the start-cell
+// picker, per NSTR-51's plan, so tapping any cell (dimmed, filled, or
+// blank) re-requests the preview with that cell's own index as the new
+// offset.
+templ labelPreviewCell(cell LabelPreviewCellView) {
+	<button
+		type="button"
+		style={ fmt.Sprintf("left:%g%%;top:%g%%;width:%g%%;height:%g%%", cell.LeftPercent, cell.TopPercent, cell.WidthPercent, cell.HeightPercent) }
+		class={ "absolute flex min-h-[44px] flex-col items-start justify-center gap-0.5 overflow-hidden border p-1 text-left text-[10px]", labelPreviewCellClass(cell) }
+		aria-label={ labelPreviewCellAriaLabel(cell) }
+		hx-get="/labels/print/preview"
+		hx-vals={ offsetVals(cell.Index) }
+		hx-include="closest form"
+		hx-target={ "#" + labelPrintPreviewID }
+		hx-swap="outerHTML"
+	>
+		if cell.Filled {
+			@IconLabels("h-3 w-3 flex-none text-mono-accent")
+			@BinCode(cell.BinCode)
+			<span class="w-full truncate font-semibold text-text">{ cell.BinName }</span>
+			<span class="w-full truncate text-text-faint">{ cell.LocationName }</span>
+		}
+	</button>
+}
+
+// labelPreviewCellClass maps a cell's own Dimmed/Filled state to its
+// Tailwind classes: a filled cell reads as a real label, a dimmed one as
+// deliberately skipped, and a plain empty cell (past the batch's own last
+// label, on a sheet with spare capacity) as neither.
+func labelPreviewCellClass(cell LabelPreviewCellView) string {
+	switch {
+	case cell.Filled:
+		return "border-border-input bg-surface-raised"
+	case cell.Dimmed:
+		return "border-dashed border-border bg-surface text-text-faint opacity-50"
+	default:
+		return "border-dashed border-divider-subtle"
+	}
+}
+
+// labelPreviewCellAriaLabel names what tapping cell does, for the
+// icon-and-truncated-text button above.
+func labelPreviewCellAriaLabel(cell LabelPreviewCellView) string {
+	if cell.Filled {
+		return "Start printing at " + cell.BinName
+	}
+	return "Start printing at this cell"
+}
+
+// offsetVals renders the htmx hx-vals JSON payload that overrides the
+// form's own current offset — a size-change reset to 0, or a tapped cell's
+// own index — taking precedence over the stale hidden "offset" input
+// hx-include="closest form" also picks up, per htmx's own hx-vals/hx-include
+// precedence. templ HTML-escapes this like any other attribute value; the
+// browser decodes it back to plain JSON before htmx ever parses it (see
+// templ's own JSON-attribute doc), so the embedded double quotes below need
+// no manual escaping.
+func offsetVals(offset int) string {
+	return fmt.Sprintf(`{"offset":%d}`, offset)
+}
+
+// cellDimensionLabel renders a size's own cell dimensions in millimetres,
+// rounded to the nearest whole millimetre — the size picker's own secondary
+// line is a human glance check ("2 x 4"-ish), not a precision spec.
+func cellDimensionLabel(widthMM, heightMM float64) string {
+	return fmt.Sprintf("%.0f×%.0fmm", widthMM, heightMM)
+}
+
+// binCountLabel formats the print screen's own bin count the way
+// containerCountLabel (storage/adapter) does — "8 bins", "1 bin" — a
+// second, package-local copy since components does not import
+// storage/adapter's own unexported helper.
+func binCountLabel(n int) string {
+	if n == 1 {
+		return "1 bin"
+	}
+	return strconv.Itoa(n) + " bins"
+}
