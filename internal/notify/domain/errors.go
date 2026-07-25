@@ -59,4 +59,12 @@ var (
 	// ErrPreferenceNotFound exists because PreferenceRepository's own doc
 	// requires ListForUser/Get to answer an empty slice, never an error,
 	// for a user with nothing stored.
+
+	// ErrEmailNotConfigured is returned by EmailSender.Send when the
+	// sender cannot deliver at all (NSTR-89) — e.g. the SES sender
+	// constructed with an incomplete configuration. Terminal: Dispatcher
+	// marks the row StatusFailed immediately rather than spending any of
+	// its retry budget on a send that can never succeed until an operator
+	// fixes the configuration and redeploys.
+	ErrEmailNotConfigured = errors.New("notify: email sender not configured")
 )

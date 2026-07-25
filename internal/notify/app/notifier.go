@@ -112,15 +112,20 @@ func (s *Notifier) notify(ctx context.Context, eventType domain.EventType, recip
 }
 
 // enqueueChannel writes one Notification row for a single resolved
-// channel. Only ChannelInApp is deliverable by this ticket — a row is born
-// StatusSent, SentAt stamped by s.clock, Attempts 0, since an in-app row IS
-// its own delivery (Sprint 6 decision CONDITION A). Any other channel
-// (today, only ChannelEmail) is a no-op here: this ticket declares no
-// EmailSender and writes no pending row for it (CONDITION A's own "nothing
-// in this ticket ever writes a pending row"); NSTR-89 extends this switch
-// with its own case once the email half lands. The default case is
-// intentional, not a placeholder — house style requires every enum switch
-// name its unhandled cases explicitly rather than fall through silently.
+// channel. ChannelInApp is born StatusSent, SentAt stamped by s.clock,
+// Attempts 0, since an in-app row IS its own delivery (Sprint 6 decision
+// CONDITION A). ChannelEmail (NSTR-89 extends this switch, as flagged by
+// this method's own pre-NSTR-89 doc) is born StatusPending instead, with
+// NextAttemptAt left nil — immediately due — so app.Dispatcher's next tick
+// claims it; it reuses the SAME title/body the sibling in-app row for this
+// event gets (see templates.go's emailSubject/emailTextBody own doc for why
+// no separate email-specific copy is built here). Writing this row is the
+// full extent of what enqueue time does for email: resolving the
+// recipient's address, rendering, and sending are all Dispatcher's own
+// job, entirely out of the request path that triggered this notification.
+// The default case is intentional, not a placeholder — house style
+// requires every enum switch name its unhandled cases explicitly rather
+// than fall through silently.
 func (s *Notifier) enqueueChannel(ctx context.Context, ch domain.Channel, eventType domain.EventType, recipientID identity.UserID, title, body string, sourceID *uuid.UUID) {
 	switch ch {
 	case domain.ChannelInApp:
@@ -135,8 +140,19 @@ func (s *Notifier) enqueueChannel(ctx context.Context, ch domain.Channel, eventT
 		if err := s.store.Enqueue(ctx, notification); err != nil {
 			s.logger.ErrorContext(ctx, "notify: enqueue in-app notification", "error", err, "event_type", eventType.String())
 		}
+	case domain.ChannelEmail:
+		notification := &domain.Notification{
+			ID: domain.NewNotificationID(), RecipientID: recipientID,
+			Channel: domain.ChannelEmail, EventType: eventType,
+			Title: title, Body: body,
+			Status: domain.StatusPending, Attempts: 0, NextAttemptAt: nil,
+			SourceType: sourceTypeReturnRequest, SourceID: sourceID,
+		}
+		if err := s.store.Enqueue(ctx, notification); err != nil {
+			s.logger.ErrorContext(ctx, "notify: enqueue pending email notification", "error", err, "event_type", eventType.String())
+		}
 	default:
-		// email (and any future channel) is not deliverable by this build.
+		// any future channel is not deliverable by this build.
 	}
 }
 

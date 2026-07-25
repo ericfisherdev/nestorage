@@ -31,6 +31,7 @@ import (
 	mediabootstrap "github.com/ericfisherdev/nestorage/internal/media/bootstrap"
 	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
 	notifyapp "github.com/ericfisherdev/nestorage/internal/notify/app"
+	notifybootstrap "github.com/ericfisherdev/nestorage/internal/notify/bootstrap"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
@@ -47,6 +48,13 @@ const shutdownTimeout = 15 * time.Second
 // identical fail-fast-at-boot rationale below: a network-unreachable S3
 // endpoint fails serve() promptly instead of hanging.
 const mediaBootstrapTimeout = 15 * time.Second
+
+// emailBootstrapTimeout bounds notifybootstrap.NewEmailSender's AWS config
+// load (LoadDefaultConfig may reach out to the EC2/ECS instance metadata
+// service to resolve credentials) — mirrors mediaBootstrapTimeout's
+// identical fail-fast-at-boot rationale; the no-op path (EMAIL_ENABLED
+// false, the default) never reaches AWS at all and returns immediately.
+const emailBootstrapTimeout = 15 * time.Second
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -214,6 +222,25 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	preferenceService := notifyapp.NewPreferenceService(preferenceRepo, logger)
 	returnRequestNotifier := notifyapp.NewNotifier(notificationRepo, preferenceService, time.Now, logger)
 	operationService := storageapp.NewOperationService(storageUOW, binRepo, identityRepo, returnRequestNotifier, logger)
+
+	// NSTR-89's own email composition: resolve the configured domain.EmailSender
+	// now, at boot — bounded-timeout context so a misconfigured EMAIL_ENABLED=true
+	// deployment fails serve() with a clear message rather than surfacing on
+	// the first dispatch attempt, mirroring the media/S3 backend's identical
+	// startup-resolution shape above. Dispatcher's own EmailAddressResolver
+	// dependency is identityRepo itself — its FindByID already has the exact
+	// shape that port declares, so it is passed in directly with no adapter
+	// wrapper (see notify/domain.EmailAddressResolver's own doc).
+	emailCtx, cancelEmail := context.WithTimeout(context.Background(), emailBootstrapTimeout)
+	emailSender, err := notifybootstrap.NewEmailSender(emailCtx, cfg.Email, logger)
+	cancelEmail()
+	if err != nil {
+		return err
+	}
+	emailDispatcher := notifyapp.NewDispatcher(
+		notificationRepo, identityRepo, emailSender, time.Now,
+		cfg.Email.DispatchInterval, cfg.Email.DispatchBatchSize, cfg.Email.MaxAttempts, logger,
+	)
 	itemQueryService := storageapp.NewItemQueryService(itemRepo, logger)
 	itemLinkService := storageapp.NewItemLinkService(itemLinkRepo, itemRepo, logger)
 	// NSTR-43's ReturnRequestService: itemRepo for the same visibility-scoped
@@ -358,11 +385,20 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 
 	// A private cancel so either branch below — a server error or an
 	// already-cancelled ctx — ends up with ctx definitively cancelled before
-	// shutdown proceeds. There are no background workers to drain in this
-	// ticket, but this keeps that guarantee in place for the ones a later
-	// sprint adds against the same ctx.
+	// shutdown proceeds.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// NSTR-89's own background worker: emailDispatcher.Run ticks against
+	// this same ctx, so cancelling it below both stops accepting new HTTP
+	// requests and signals the dispatcher loop to return after its
+	// in-flight batch (see Dispatcher.Run's own doc). dispatcherDone lets
+	// shutdown actually wait for that return instead of racing it.
+	dispatcherDone := make(chan struct{})
+	go func() {
+		defer close(dispatcherDone)
+		emailDispatcher.Run(ctx)
+	}()
 
 	var runErr error
 	select {
@@ -376,6 +412,16 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancelShutdown()
 	shutdownErr := srv.Shutdown(shutdownCtx)
+
+	// Bounded by the same shutdownTimeout the HTTP drain above uses, rather
+	// than blocking indefinitely: Run's own loop returns promptly once ctx
+	// is cancelled (a ticker select, no long-lived work to unwind), so this
+	// is a safety margin, not the expected wait.
+	select {
+	case <-dispatcherDone:
+	case <-time.After(shutdownTimeout):
+		logger.Warn("email dispatcher did not stop within the shutdown timeout")
+	}
 
 	if shutdownErr != nil {
 		return errors.Join(runErr, shutdownErr)
