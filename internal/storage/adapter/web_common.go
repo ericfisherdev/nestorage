@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/a-h/templ"
@@ -205,6 +206,94 @@ func formatStoredDate(t time.Time) string {
 // which bins reach here at all (a non-owner never sees another member's
 // private bin), but an admin CAN see one without being its owner, and
 // "the requester already owns it" is the narrower fact the badge promises.
+// historyActorView projects an item_event row's own attribution snapshot
+// (ActorLabel — never a live identity lookup) into OwnerAvatar's view
+// model, shared by ItemsWebHandlers.History and BinsWebHandlers.Activity
+// (NSTR-42). Every history avatar renders in the neutral shared tint:
+// item_event stores no color for its actor, on purpose — resolving one live
+// from identity would re-couple the append-only log to current household
+// membership, the exact coupling ActorLabel's own name snapshot exists to
+// avoid (a departed member's history must still render correctly).
+func historyActorView(e domain.ItemEvent) components.OwnerView {
+	return components.OwnerView{Name: e.ActorLabel, Initials: holderInitials(e.ActorLabel), Color: components.OwnerShared}
+}
+
+// formatHistoryTime renders an item_event row's own OccurredAt for display —
+// the one place a history row's time.Time is formatted, so the templ layer
+// never receives one directly (formatStoredDate's own contract). Always
+// t.Local(), never UTC, so a non-UTC viewer sees a time that agrees with
+// their own wall clock.
+func formatHistoryTime(t time.Time) string {
+	return t.Local().Format("3:04 PM")
+}
+
+// historyEventSummary builds the timeline/activity-panel action sentence for
+// one item_event row — the single place every EventKind's own phrasing is
+// defined, shared by ItemsWebHandlers.History and BinsWebHandlers.Activity
+// so the two surfaces never drift on wording for the same event. BinLabel
+// is already the formatted "code — name" snapshot (app/events.go's own
+// binLabel helper), not a bare code, so it renders as plain sentence text
+// here rather than through the mono BinCode component — that component is
+// reserved for a genuine bare bin-code field, which no ItemEvent carries a
+// separate one of. moved's own phrasing is Sprint 6 reconciliation R4's
+// binding example ("moved to PANTRY, previously HALL CLOSET"): the
+// containing bin does not change, only the location snapshot fields do.
+// return_requested/return_request_cancelled/edited carry no bin context at
+// all (NULL bin_id/bin_label), so none of their sentences reference one.
+func historyEventSummary(e domain.ItemEvent) string {
+	switch e.Kind {
+	case domain.EventCreated:
+		return "Created"
+	case domain.EventAdded:
+		return "Added to " + e.BinLabel
+	case domain.EventRemoved:
+		return "Checked out from " + e.BinLabel
+	case domain.EventReturned:
+		return "Returned to " + e.BinLabel
+	case domain.EventMoved:
+		return "Moved to " + e.ToLocationLabel + ", previously " + e.FromLocationLabel
+	case domain.EventDeleted:
+		return "Deleted"
+	case domain.EventReturnRequested:
+		return "Requested return"
+	case domain.EventReturnRequestCancelled:
+		return "Return request cancelled"
+	case domain.EventEdited:
+		return "Edited " + joinChangedFieldLabels(e.ChangedFields)
+	default:
+		return "Unknown activity"
+	}
+}
+
+// joinChangedFieldLabels renders an edited event's ChangedFields as "the
+// name", "the name and quantity", or "the name, description, and quantity"
+// — always in the canonical name/description/quantity order (Sprint 6's own
+// binding instruction), regardless of the array's stored order, and never
+// each field's prior value, since item_event does not store one (see
+// domain.EventEdited's own doc).
+func joinChangedFieldLabels(fields []domain.EditedField) string {
+	changed := make(map[domain.EditedField]bool, len(fields))
+	for _, f := range fields {
+		changed[f] = true
+	}
+	var labels []string
+	for _, f := range []domain.EditedField{domain.FieldName, domain.FieldDescription, domain.FieldQuantity} {
+		if changed[f] {
+			labels = append(labels, f.String())
+		}
+	}
+	switch len(labels) {
+	case 0:
+		return "the item"
+	case 1:
+		return "the " + labels[0]
+	case 2:
+		return "the " + labels[0] + " and " + labels[1]
+	default:
+		return "the " + strings.Join(labels[:len(labels)-1], ", ") + ", and " + labels[len(labels)-1]
+	}
+}
+
 func buildBinCard(v app.BinView, locationName string, viewer identity.Principal, tintIndex int) components.BinCardView {
 	return components.BinCardView{
 		Code:         v.Bin.Code,

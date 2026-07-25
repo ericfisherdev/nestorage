@@ -67,6 +67,7 @@ type ItemsWebHandlers struct {
 	bins       itemBinLister
 	links      itemLinkOperator
 	photos     primaryPhotoRefLister
+	events     itemEventLister
 	sm         *scs.SessionManager
 	layout     requestLayoutFunc
 	logger     *slog.Logger
@@ -82,6 +83,7 @@ type ItemsWebHandlersDeps struct {
 	Bins       itemBinLister
 	Links      itemLinkOperator
 	Photos     primaryPhotoRefLister
+	Events     itemEventLister
 	SM         *scs.SessionManager
 	Layout     requestLayoutFunc
 	Logger     *slog.Logger
@@ -106,6 +108,9 @@ func NewItemsWebHandlers(deps ItemsWebHandlersDeps) *ItemsWebHandlers {
 	if deps.Photos == nil {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil primaryPhotoRefLister")
 	}
+	if deps.Events == nil {
+		panic("storage/adapter: NewItemsWebHandlers requires a non-nil itemEventLister")
+	}
 	if deps.SM == nil {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil session manager")
 	}
@@ -116,7 +121,7 @@ func NewItemsWebHandlers(deps ItemsWebHandlersDeps) *ItemsWebHandlers {
 		panic("storage/adapter: NewItemsWebHandlers requires a non-nil logger")
 	}
 	return &ItemsWebHandlers{
-		items: deps.Items, operations: deps.Operations, bins: deps.Bins, links: deps.Links, photos: deps.Photos,
+		items: deps.Items, operations: deps.Operations, bins: deps.Bins, links: deps.Links, photos: deps.Photos, events: deps.Events,
 		sm: deps.SM, layout: deps.Layout, logger: deps.Logger,
 	}
 }
@@ -130,6 +135,7 @@ func (h *ItemsWebHandlers) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /items/{id}/links", h.AddLink)
 	mux.HandleFunc("POST /items/{id}/links/{linkID}", h.EditLink)
 	mux.HandleFunc("POST /items/{id}/links/{linkID}/delete", h.DeleteLink)
+	mux.HandleFunc("GET /items/{id}/history", h.History)
 }
 
 // Search handles GET /search: the full shell page (heading, type-ahead box,

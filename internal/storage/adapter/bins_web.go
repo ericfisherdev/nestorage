@@ -56,6 +56,28 @@ type itemLister interface {
 	ListInBin(ctx context.Context, viewer identity.Principal, binID domain.BinID) ([]domain.Item, error)
 }
 
+// binActivityLister is the narrow port (ISP) BinsWebHandlers depends on for
+// the bin activity panel's fixed-window read, satisfied by
+// *ItemEventRepository (NSTR-40, this package) — the same concrete type
+// itemEventLister's own var _ assertion covers in item_history_web.go, a
+// second, differently-shaped consumer port on the same event read service
+// (each handler group depends only on the methods it uses, per ISP).
+// Method name and signature are NSTR-40's own ListByBin exactly, no viewer
+// parameter for the identical reason itemEventLister carries none: Activity
+// already enforces visibility via h.bins.GetByCode before ever calling this.
+type binActivityLister interface {
+	ListByBin(ctx context.Context, binID domain.BinID, limit int) ([]domain.ItemEvent, error)
+}
+
+// Compile-time assurance *ItemEventRepository satisfies binActivityLister.
+var _ binActivityLister = (*ItemEventRepository)(nil)
+
+// binActivityLimit bounds the bin activity panel to a fixed, non-paginated
+// window (Sprint 6 reconciliation: "no cursor at all") — a bin's full
+// history lives on each item's own paginated timeline instead (see
+// ItemsWebHandlers.History).
+const binActivityLimit = 10
+
 // BinsWebHandlers serves the bin browse/detail/CRUD/move screens
 // (NSTR-31), mirroring identity/adapter/users_web.go's own shape: narrow
 // service interfaces (ISP), an injected requestLayoutFunc, the session manager for
@@ -69,6 +91,7 @@ type BinsWebHandlers struct {
 	members   memberLister
 	items     itemLister
 	photos    primaryPhotoRefLister
+	events    binActivityLister
 	sm        *scs.SessionManager
 	layout    requestLayoutFunc
 	logger    *slog.Logger
@@ -88,6 +111,7 @@ type BinsWebHandlersDeps struct {
 	Members   memberLister
 	Items     itemLister
 	Photos    primaryPhotoRefLister
+	Events    binActivityLister
 	SM        *scs.SessionManager
 	Layout    requestLayoutFunc
 	Logger    *slog.Logger
@@ -115,6 +139,9 @@ func NewBinsWebHandlers(deps BinsWebHandlersDeps) *BinsWebHandlers {
 	if deps.Photos == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil primaryPhotoRefLister")
 	}
+	if deps.Events == nil {
+		panic("storage/adapter: NewBinsWebHandlers requires a non-nil binActivityLister")
+	}
 	if deps.SM == nil {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil session manager")
 	}
@@ -125,7 +152,7 @@ func NewBinsWebHandlers(deps BinsWebHandlersDeps) *BinsWebHandlers {
 		panic("storage/adapter: NewBinsWebHandlers requires a non-nil logger")
 	}
 	return &BinsWebHandlers{
-		bins: deps.Bins, mover: deps.Mover, locations: deps.Locations, members: deps.Members, items: deps.Items, photos: deps.Photos,
+		bins: deps.Bins, mover: deps.Mover, locations: deps.Locations, members: deps.Members, items: deps.Items, photos: deps.Photos, events: deps.Events,
 		sm: deps.SM, layout: deps.Layout, logger: deps.Logger,
 	}
 }
@@ -140,6 +167,7 @@ func (h *BinsWebHandlers) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /b/{code}", h.Update)
 	mux.HandleFunc("POST /bins/{id}/delete", h.Delete)
 	mux.HandleFunc("POST /bins/{id}/move", h.Move)
+	mux.HandleFunc("GET /b/{code}/activity", h.Activity)
 }
 
 // List handles GET /bins: every bin viewer may see, as cards.
@@ -376,6 +404,34 @@ func (h *BinsWebHandlers) Move(w http.ResponseWriter, r *http.Request) {
 	h.renderDetailByID(w, r, viewer, id, http.StatusOK, "")
 }
 
+// Activity handles GET /b/{code}/activity: BinActivityStub's initial
+// hx-trigger="load" fetch (and every later reload of BinDetail's own outer
+// div), rendering the bin's last binActivityLimit events. A bin not visible
+// to viewer 404s here exactly as GetByCode's own doc promises, mirroring
+// Detail's own masking. Unlike ItemsWebHandlers.History, this is always a
+// bare fragment — BinActivityStub is only ever hx-get-loaded into an
+// existing bin detail page, never navigated to directly, mirroring
+// mediaadapter.PhotosWebHandlers.List's own no-full-page shape.
+func (h *BinsWebHandlers) Activity(w http.ResponseWriter, r *http.Request) {
+	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
+
+	view, err := h.bins.GetByCode(r.Context(), viewer, r.PathValue("code"))
+	if err != nil {
+		h.handleGetError(w, r, err, "bins: activity")
+		return
+	}
+	events, err := h.events.ListByBin(r.Context(), view.Bin.ID, binActivityLimit)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "bins: activity: list events", "error", err)
+		http.Error(w, errInternalServerError, http.StatusInternalServerError)
+		return
+	}
+	content := components.BinActivitySection(buildBinActivityView(view.Bin.Code, events))
+	if err := render.Render(r.Context(), w, http.StatusOK, content); err != nil {
+		h.logger.ErrorContext(r.Context(), "bins: render activity", "error", err)
+	}
+}
+
 // pathBinID parses the {id} path value, answering 400 and reporting
 // ok=false on a malformed one.
 func (h *BinsWebHandlers) pathBinID(w http.ResponseWriter, r *http.Request) (domain.BinID, bool) {
@@ -579,6 +635,22 @@ func buildItemRows(items []domain.Item, photoRefs map[domain.ItemID]domain.Photo
 		})
 	}
 	return rows
+}
+
+// buildBinActivityView projects the bin activity panel's own event window
+// into BinActivitySection's view model, sharing historyActorView/
+// historyEventSummary/formatHistoryTime with ItemsWebHandlers.History's own
+// buildHistoryEventView (web_common.go) so the two surfaces never drift on
+// wording for the same event.
+func buildBinActivityView(binCode string, events []domain.ItemEvent) components.BinActivityView {
+	rows := make([]components.BinActivityEventView, 0, len(events))
+	for _, e := range events {
+		rows = append(rows, components.BinActivityEventView{
+			Actor: historyActorView(e), ItemID: e.ItemID.String(), ItemName: e.ItemName,
+			Summary: historyEventSummary(e), Time: formatHistoryTime(e.OccurredAt),
+		})
+	}
+	return components.BinActivityView{BinCode: binCode, Events: rows}
 }
 
 // itemIDs extracts each item's id, in order — the batch loadPrimaryPhotoRefs'

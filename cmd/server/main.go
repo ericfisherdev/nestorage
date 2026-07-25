@@ -150,6 +150,12 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	binRepo := storageadapter.NewBinRepository(pool)
 	itemRepo := storageadapter.NewItemRepository(pool)
 	itemLinkRepo := storageadapter.NewItemLinkRepository(pool)
+	// NSTR-40's event log gets its own read-side repository here, distinct
+	// from the tx-bound ones NSTR-41's writers construct internally
+	// (item_uow.go/mover_uow.go/operations_uow.go) — this one is bound to
+	// the shared pool, the same non-transactional-read shape every other
+	// repository above it already has, and is NSTR-42's own read source.
+	itemEventRepo := storageadapter.NewItemEventRepository(pool)
 	storageUOW := storageadapter.NewPostgresUnitOfWork(pool)
 
 	// NSTR-37's own PhotoService composition, now that itemRepo exists to
@@ -187,14 +193,14 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	shellData := newShellDataService(identityRepo, binService, locationService)
 
 	binsWeb := storageadapter.NewBinsWebHandlers(storageadapter.BinsWebHandlersDeps{
-		Bins: binService, Mover: binMover, Locations: locationService, Members: identityRepo, Items: itemService, Photos: photoService,
+		Bins: binService, Mover: binMover, Locations: locationService, Members: identityRepo, Items: itemService, Photos: photoService, Events: itemEventRepo,
 		SM: sm, Layout: newStorageLayout(shellData, binsPageTitle, logger), Logger: logger,
 	})
 	locationsWeb := storageadapter.NewLocationsWebHandlers(
 		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
 	)
 	itemsWeb := storageadapter.NewItemsWebHandlers(storageadapter.ItemsWebHandlersDeps{
-		Items: itemQueryService, Operations: operationService, Bins: binService, Links: itemLinkService, Photos: photoService,
+		Items: itemQueryService, Operations: operationService, Bins: binService, Links: itemLinkService, Photos: photoService, Events: itemEventRepo,
 		SM: sm, Layout: newStorageLayout(shellData, searchPageTitle, logger), Logger: logger,
 	})
 	// NSTR-37's own web handlers: no Layout dependency (see

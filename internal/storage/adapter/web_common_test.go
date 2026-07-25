@@ -43,6 +43,51 @@ func (f *fakePrimaryPhotoRefLister) ListPrimaryThumbRefs(_ context.Context, _ id
 	return f.refs, nil
 }
 
+// fakeEventLister is a configurable itemEventLister/binActivityLister fake
+// for ItemsWebHandlers/BinsWebHandlers' hermetic unit tests (NSTR-42),
+// shared here since both handler groups' own harnesses need it — mirrors
+// fakePrimaryPhotoRefLister's own shape and rationale (NSTR-37). ItemEvents
+// backs ListByItem for a page.Before == nil (first page) call, EventsAfter
+// backs one for page.Before != nil (a later page) — a fixed, test-supplied
+// answer per call shape rather than a generic keyset simulation, since the
+// keyset ordering/boundary behavior itself is NSTR-40's own gated-test
+// responsibility (item_event_postgres_gated_test.go), not this package's.
+// BinEvents backs ListByBin, truncated to the requested limit exactly as
+// the real repository's own fixed-window query would be.
+type fakeEventLister struct {
+	itemEvents      []domain.ItemEvent
+	itemEventsAfter []domain.ItemEvent
+	itemErr         error
+	itemCalls       []domain.HistoryPage
+
+	binEvents []domain.ItemEvent
+	binErr    error
+	binCalls  int
+}
+
+func (f *fakeEventLister) ListByItem(_ context.Context, _ domain.ItemID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
+	f.itemCalls = append(f.itemCalls, page)
+	if f.itemErr != nil {
+		return nil, f.itemErr
+	}
+	if page.Before != nil {
+		return f.itemEventsAfter, nil
+	}
+	return f.itemEvents, nil
+}
+
+func (f *fakeEventLister) ListByBin(_ context.Context, _ domain.BinID, limit int) ([]domain.ItemEvent, error) {
+	f.binCalls++
+	if f.binErr != nil {
+		return nil, f.binErr
+	}
+	events := f.binEvents
+	if len(events) > limit {
+		events = events[:limit]
+	}
+	return events, nil
+}
+
 // fixedPrincipalResolver is an identityadapter.Resolver that always reports
 // principal for every request, standing in for NSTR-20's real session
 // resolver — CurrentPrincipal's context key is unexported to

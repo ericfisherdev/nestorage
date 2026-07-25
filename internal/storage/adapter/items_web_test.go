@@ -179,6 +179,7 @@ type itemsWebHarness struct {
 	items  *fakeItemQueryService
 	ops    *fakeItemOperator
 	links  *fakeItemLinkOperator
+	events *fakeEventLister
 }
 
 func newItemsWebHarness(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator) *itemsWebHarness {
@@ -192,12 +193,22 @@ func newItemsWebHarness(t *testing.T, viewer identity.Principal, items *fakeItem
 // pre-existing call to newItemsWebHarness still gets.
 func newItemsWebHarnessWithPhotos(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator, photos *fakePrimaryPhotoRefLister) *itemsWebHarness {
 	t.Helper()
+	return newItemsWebHarnessWithPhotosAndEvents(t, viewer, items, ops, bins, links, photos, &fakeEventLister{})
+}
+
+// newItemsWebHarnessWithPhotosAndEvents is newItemsWebHarnessWithPhotos' own
+// extension point for NSTR-42's own history-timeline tests, which need a
+// configurable itemEventLister rather than the zero-value default (no
+// events) every pre-existing call site still gets — mirrors
+// newItemsWebHarnessWithPhotos' own introduction for NSTR-37's Photos field.
+func newItemsWebHarnessWithPhotosAndEvents(t *testing.T, viewer identity.Principal, items *fakeItemQueryService, ops *fakeItemOperator, bins *fakeItemBinLister, links *fakeItemLinkOperator, photos *fakePrimaryPhotoRefLister, events *fakeEventLister) *itemsWebHarness {
+	t.Helper()
 	sm := scs.New()
 	handlers := adapter.NewItemsWebHandlers(adapter.ItemsWebHandlersDeps{
-		Items: items, Operations: ops, Bins: bins, Links: links, Photos: photos, SM: sm, Layout: testLayout, Logger: testLogger(),
+		Items: items, Operations: ops, Bins: bins, Links: links, Photos: photos, Events: events, SM: sm, Layout: testLayout, Logger: testLogger(),
 	})
 	server := newPrincipalServer(t, sm, viewer, handlers.Routes)
-	return &itemsWebHarness{server: server, client: newCSRFClient(t), items: items, ops: ops, links: links}
+	return &itemsWebHarness{server: server, client: newCSRFClient(t), items: items, ops: ops, links: links, events: events}
 }
 
 func (h *itemsWebHarness) getCSRF(t *testing.T, path string) string {
@@ -254,7 +265,7 @@ func TestNewItemsWebHandlers_NilDependenciesPanic(t *testing.T) {
 	items, ops, bins, links := newFakeItemQueryService(), &fakeItemOperator{}, &fakeItemBinLister{}, newFakeItemLinkOperator()
 	sm := scs.New()
 	base := adapter.ItemsWebHandlersDeps{
-		Items: items, Operations: ops, Bins: bins, Links: links, Photos: &fakePrimaryPhotoRefLister{},
+		Items: items, Operations: ops, Bins: bins, Links: links, Photos: &fakePrimaryPhotoRefLister{}, Events: &fakeEventLister{},
 		SM: sm, Layout: testLayout, Logger: testLogger(),
 	}
 
@@ -267,6 +278,7 @@ func TestNewItemsWebHandlers_NilDependenciesPanic(t *testing.T) {
 		{"nil bin lister", func(d *adapter.ItemsWebHandlersDeps) { d.Bins = nil }},
 		{"nil link operator", func(d *adapter.ItemsWebHandlersDeps) { d.Links = nil }},
 		{"nil primary photo ref lister", func(d *adapter.ItemsWebHandlersDeps) { d.Photos = nil }},
+		{"nil event lister", func(d *adapter.ItemsWebHandlersDeps) { d.Events = nil }},
 		{"nil session manager", func(d *adapter.ItemsWebHandlersDeps) { d.SM = nil }},
 		{"nil layout", func(d *adapter.ItemsWebHandlersDeps) { d.Layout = nil }},
 		{"nil logger", func(d *adapter.ItemsWebHandlersDeps) { d.Logger = nil }},
