@@ -11,6 +11,11 @@
 // in later tickets: NSTR-49 adds the gopdf-backed adapter (internal/labels/
 // adapter) and NSTR-50 adds the app-layer batch service (internal/labels/
 // app) that maps visible bins into BinLabel values and enforces its own
-// print-batch cap. This ticket's registry is what NSTR-51's size-selection
-// UI reads via Registry.List.
+// print-batch cap — ErrEmptyBatch, ErrBatchTooLarge/BatchTooLargeError, and
+// the MaxBatchLabels constant that cap is measured against all live here in
+// errors.go, alongside NSTR-47's own sentinels, rather than in the app
+// package that enforces them: the cap is a domain rule the future JSON API
+// (NSTR Sprint 8) must inherit automatically, not handler/service trivia.
+// This ticket's registry is what NSTR-51's size-selection UI reads via
+// Registry.List.
 package domain

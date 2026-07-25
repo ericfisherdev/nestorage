@@ -26,6 +26,8 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identityapp "github.com/ericfisherdev/nestorage/internal/identity/app"
+	labelsadapter "github.com/ericfisherdev/nestorage/internal/labels/adapter"
+	labelsapp "github.com/ericfisherdev/nestorage/internal/labels/app"
 	labelsdomain "github.com/ericfisherdev/nestorage/internal/labels/domain"
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	mediaapp "github.com/ericfisherdev/nestorage/internal/media/app"
@@ -260,6 +262,15 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// method (WithinReturnRequestTx) for Request/Cancel's own transaction.
 	returnRequestService := storageapp.NewReturnRequestService(itemRepo, returnRequestRepo, storageUOW, returnRequestNotifier, logger)
 
+	// NSTR-50's batch label printing: PDFSheetRenderer is NSTR-49's stateless
+	// gopdf adapter (safe to share, see its own doc), BatchService composes
+	// it with labelSizes (built at boot, above) and the same locationRepo/
+	// binRepo every other storage service shares — ListVisibleByLocation's
+	// own SQL visibility predicate is what keeps another member's private
+	// bins out of a batch, not any filtering in BatchService itself.
+	labelRenderer := labelsadapter.NewPDFSheetRenderer()
+	batchService := labelsapp.NewBatchService(binRepo, locationRepo, labelSizes, labelRenderer, logger)
+
 	shellData := newShellDataService(identityRepo, binService, locationService, labelSizes)
 
 	binsWeb := storageadapter.NewBinsWebHandlers(storageadapter.BinsWebHandlersDeps{
@@ -269,6 +280,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	locationsWeb := storageadapter.NewLocationsWebHandlers(
 		locationService, binService, sm, newStorageLayout(shellData, locationsPageTitle, logger), logger,
 	)
+	labelsWeb := labelsadapter.NewLabelsWebHandlers(batchService, logger, cfg.Server.PublicBaseURL)
 	itemsWeb := storageadapter.NewItemsWebHandlers(storageadapter.ItemsWebHandlersDeps{
 		Items: itemQueryService, Operations: operationService, Bins: binService, Links: itemLinkService, Photos: photoService, Events: itemEventRepo,
 		ReturnRequests: returnRequestService,
@@ -373,6 +385,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			APIKeyWeb:      apiKeyWeb,
 			Bins:           binsWeb,
 			Locations:      locationsWeb,
+			Labels:         labelsWeb,
 			Items:          itemsWeb,
 			Photos:         photosWeb,
 			Notifications:  notificationsWeb,
