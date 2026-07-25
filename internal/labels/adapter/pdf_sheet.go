@@ -121,6 +121,17 @@ func (r *PDFSheetRenderer) Render(ctx context.Context, size domain.LabelSize, la
 	pdf.AddPage()
 	cellOnPage := startOffset
 	for _, label := range labels {
+		// Rechecked every iteration, not just once before the loop: a
+		// batch is unbounded (pagination is this renderer's own job, per
+		// the port's doc), so a request-scoped ctx that gets cancelled or
+		// times out mid-batch must stop drawing rather than keep spending
+		// CPU on QR generation, PNG decode, and font measurement for a
+		// response nobody will read. Err() is a cheap read compared to
+		// drawCell's own work, so checking on every label (rather than
+		// throttling to every Nth) costs nothing worth measuring.
+		if err := ctx.Err(); err != nil {
+			return domain.Document{}, err
+		}
 		if cellOnPage >= cellsPerPage {
 			pdf.AddPage()
 			cellOnPage = 0

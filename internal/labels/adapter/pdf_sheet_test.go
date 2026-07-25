@@ -23,6 +23,27 @@ var pageObjectMarker = []byte("/Type /Page\n")
 
 var _ domain.LabelRenderer = (*adapter.PDFSheetRenderer)(nil)
 
+// countingContext is a context.Context whose Err() returns nil for the
+// first passLimit calls and context.Canceled on every call after that.
+// Render calls ctx.Err() once before the loop starts and again on every
+// loop iteration (see pdf_sheet.go's own comment on why): a passLimit high
+// enough to clear the pre-loop check but not the first couple of
+// iterations is what proves the in-loop recheck actually runs, rather than
+// only the one before rendering begins.
+type countingContext struct {
+	context.Context
+	calls     int
+	passLimit int
+}
+
+func (c *countingContext) Err() error {
+	c.calls++
+	if c.calls > c.passLimit {
+		return context.Canceled
+	}
+	return nil
+}
+
 func testLabels(n int) []domain.BinLabel {
 	labels := make([]domain.BinLabel, n)
 	for i := range labels {
@@ -65,6 +86,26 @@ func TestPDFSheetRenderer_Render_InvalidSizeRejected(t *testing.T) {
 	_, err := renderer.Render(context.Background(), invalid, testLabels(1), 0)
 	if !errors.Is(err, domain.ErrInvalidLabelSize) {
 		t.Errorf("Render(invalid size) error = %v, want ErrInvalidLabelSize", err)
+	}
+}
+
+// TestPDFSheetRenderer_Render_ContextCancelledMidLoop covers the AC a
+// human reviewer raised: Render must stop drawing once its context is
+// cancelled or times out, even mid-batch, rather than only checking once
+// before the first label. passLimit: 2 clears the pre-loop check (call 1)
+// and the first iteration's check (call 2), then cancels on the second
+// iteration's check (call 3) — with 5 labels queued, only the first can
+// possibly get drawn.
+func TestPDFSheetRenderer_Render_ContextCancelledMidLoop(t *testing.T) {
+	renderer := adapter.NewPDFSheetRenderer()
+	ctx := &countingContext{Context: context.Background(), passLimit: 2}
+
+	_, err := renderer.Render(ctx, smallLabelSize(), testLabels(5), 0)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Render() error = %v, want context.Canceled", err)
+	}
+	if ctx.calls < 3 {
+		t.Errorf("ctx.Err() was called %d times, want at least 3 (proves the loop rechecks, not just the pre-loop check)", ctx.calls)
 	}
 }
 
