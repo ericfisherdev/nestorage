@@ -169,7 +169,14 @@ func TestPDFSheetRenderer_Render_PaginatesAcrossSheets(t *testing.T) {
 		// Render that silently dropped startOffset would report 1 page
 		// here, not 2 — unlike the "uses up first sheet's last cell" case
 		// above, whose expected page count happens to match either way.
-		{"start offset actually shifts drawing, not just page count", 2, 1, 2},
+		//
+		// This proves pagination honors startOffset; it is not a claim
+		// about the drawn coordinates themselves. It stands in for that
+		// too without parsing a PDF content stream, because drawCell's own
+		// cellOnPage argument (pdf_sheet.go) is the exact same loop
+		// variable this page-overflow check reads — the two can't
+		// diverge, so proving one proves the other.
+		{"start offset shifts pagination, proving it isn't dropped", 2, 1, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
