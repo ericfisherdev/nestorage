@@ -119,6 +119,22 @@ func TestLabelSheetPreview_FilledCellShowsCodeNameAndLocation(t *testing.T) {
 	}
 }
 
+// TestLabelSheetPreview_FilledCellAriaLabelNamesPositionNotOccupant guards
+// against reintroducing a misleading aria-label: tapping a cell reflows
+// every bin from bins[0] at the new offset, so the bin shown in a cell
+// before the tap is never guaranteed to be the one that lands there after —
+// the accessible name must describe the stable cell position, not the
+// transient occupant's name (see labelPreviewCellAriaLabel's own doc).
+func TestLabelSheetPreview_FilledCellAriaLabelNamesPositionNotOccupant(t *testing.T) {
+	out := renderString(t, components.LabelSheetPreview(testLabelPreviewView()))
+	if strings.Contains(out, `aria-label="Start printing at Winter Clothes"`) {
+		t.Errorf("aria-label must not name the occupying bin, which will move on the next tap: %s", out)
+	}
+	if !strings.Contains(out, `aria-label="Start printing at cell 2"`) {
+		t.Errorf("filled cell (index 1) missing its own 1-based position aria-label: %s", out)
+	}
+}
+
 // TestLabelSheetPreview_DimmedCellRendersNoBinDetails verifies a dimmed
 // cell (before the chosen start offset) never renders bin details even if
 // its own view somehow still carried them — the template gates on Filled,
