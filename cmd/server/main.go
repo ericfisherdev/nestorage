@@ -26,6 +26,7 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identityapp "github.com/ericfisherdev/nestorage/internal/identity/app"
+	labelsdomain "github.com/ericfisherdev/nestorage/internal/labels/domain"
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	mediaapp "github.com/ericfisherdev/nestorage/internal/media/app"
 	mediabootstrap "github.com/ericfisherdev/nestorage/internal/media/bootstrap"
@@ -95,6 +96,16 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
+
+	// NSTR-47: construct the label size registry now, at boot — an invalid
+	// builtin geometry (columns/margins that overflow the page) fails serve()
+	// here, rather than surfacing on a household's first print request. No
+	// database or config dependency, so this can run before any other
+	// composition below it.
+	labelSizes, err := labelsdomain.NewRegistry()
+	if err != nil {
+		return err
+	}
 
 	// NSTR-35: resolve the configured domain.PhotoStore backend now, at
 	// boot — a bounded-timeout context so a misconfigured or unreachable S3
@@ -249,7 +260,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// method (WithinReturnRequestTx) for Request/Cancel's own transaction.
 	returnRequestService := storageapp.NewReturnRequestService(itemRepo, returnRequestRepo, storageUOW, returnRequestNotifier, logger)
 
-	shellData := newShellDataService(identityRepo, binService, locationService)
+	shellData := newShellDataService(identityRepo, binService, locationService, labelSizes)
 
 	binsWeb := storageadapter.NewBinsWebHandlers(storageadapter.BinsWebHandlersDeps{
 		Bins: binService, Mover: binMover, Locations: locationService, Members: identityRepo, Items: itemService, Photos: photoService, Events: itemEventRepo,
