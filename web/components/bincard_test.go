@@ -120,6 +120,31 @@ func TestBinDetail_EmptyContentsState(t *testing.T) {
 	}
 }
 
+// TestBinDetail_QRRendersOnlyWhenPresent verifies the deep-link QR
+// (NSTR-48) renders only when BinDetailView.QRDataURI is set — a render
+// failure degrades the page rather than failing it (see
+// BinsWebHandlers.renderDetailView's own doc), so the block must not
+// appear at all when there is no QR to show.
+func TestBinDetail_QRRendersOnlyWhenPresent(t *testing.T) {
+	detail := components.BinDetailView{ID: "1", Code: "BIN-A01", Name: "Winter Clothes", Owner: testOwnerView()}
+	move := components.MoveBinView{BinID: "1", BinCode: "BIN-A01"}
+
+	out := renderString(t, components.BinDetail(detail, move))
+	if strings.Contains(out, `data-testid="bin-detail-qr"`) {
+		t.Errorf("BinDetail with no QRDataURI rendered a QR block: %s", out)
+	}
+
+	detail.QRDataURI = "data:image/png;base64,AAAA"
+	detail.DeepLinkURL = "https://nestorage.example.ts.net/b/BIN-A01"
+	out = renderString(t, components.BinDetail(detail, move))
+	if !strings.Contains(out, `src="data:image/png;base64,AAAA"`) {
+		t.Errorf("BinDetail with QRDataURI set did not render the QR image: %s", out)
+	}
+	if !strings.Contains(out, detail.DeepLinkURL) {
+		t.Errorf("BinDetail with QRDataURI set did not render the deep-link fallback text: %s", out)
+	}
+}
+
 // TestLocationIndex_EmptyState verifies a location index with no locations
 // renders a message instead of an empty grid.
 func TestLocationIndex_EmptyState(t *testing.T) {

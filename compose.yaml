@@ -1,5 +1,10 @@
 # Local development services. Start with: docker compose up -d
 # .env.example's DATABASE_URL placeholder matches this service's credentials.
+#
+# This file only starts Postgres/MinIO — the app binary itself is not a
+# compose service, so PUBLIC_BASE_URL (NSTR-48's bin deep-link/QR origin;
+# see .env.example for the full doc) is set in .env alongside the app's
+# other configuration, not here.
 services:
   postgres:
     image: postgres:17-alpine

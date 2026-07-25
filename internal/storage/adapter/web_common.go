@@ -10,6 +10,7 @@ import (
 	"github.com/a-h/templ"
 	"github.com/alexedwards/scs/v2"
 
+	"github.com/ericfisherdev/nestcore/httpserver/middleware"
 	"github.com/ericfisherdev/nestcore/render"
 
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
@@ -135,6 +136,36 @@ func redirectTo(w http.ResponseWriter, r *http.Request, target string) {
 		return
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// resolveBaseURL resolves the origin app.BinDeepLinkURL builds a printed
+// QR's deep link against: publicBaseURL (PUBLIC_BASE_URL, see
+// corecfg.ServerConfig.PublicBaseURL's own doc) always wins when configured,
+// since a printed label must stay scannable by a phone that is not on the
+// server's own LAN segment — the request's own Host is never the right
+// answer for a code that leaves the building. Otherwise the origin is
+// derived per request: nestcore's middleware.ForwardedHeaders' resolved
+// scheme, falling back to the on-wire TLS state when that middleware did
+// not run, plus r.Host.
+//
+// Port of Nestova's kiosk resolveBaseURL (internal/kiosk/adapter/
+// kiosk_web.go in the nestova repo) — see that function's own doc for the
+// identical rationale this one mirrors. Placed here, rather than as a
+// method on BinsWebHandlers, because NSTR-50/51's label handlers reuse it
+// unchanged.
+func resolveBaseURL(r *http.Request, publicBaseURL string) string {
+	if publicBaseURL != "" {
+		return publicBaseURL
+	}
+	scheme := middleware.RequestScheme(r.Context())
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	return scheme + "://" + r.Host
 }
 
 // ownerOptions builds the bin form's owner <select> options: the shared/

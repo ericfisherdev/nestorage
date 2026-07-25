@@ -15,6 +15,7 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 
+	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	"github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	"github.com/ericfisherdev/nestorage/internal/storage/app"
@@ -409,6 +410,49 @@ func TestBinsWebHandlers_Detail_NotFound(t *testing.T) {
 	}
 }
 
+// TestBinsWebHandlers_Detail_Unauthenticated_RedirectsToLoginWithBinPath
+// proves NSTR-48's AC ("An unauthenticated scan logs in and then lands on
+// the bin"): GET /b/{code} mounted behind RequireAuthenticated — exactly as
+// cmd/server/shell.go mounts the real BinsWebHandlers — answers an
+// unauthenticated full-navigation request with a 303 to
+// /login?next=<the bin's own path>, so the login handler's own next replay
+// (identity/adapter/web.go) lands the visitor back on the scanned bin after
+// signing in. Denier's generic redirect mechanics are already proven
+// against other paths by identity/adapter's own deny_test.go/
+// currentuser_test.go; this is the one test proving they fire correctly for
+// THIS route's own path shape — every other test in this file goes through
+// newPrincipalServer, which always injects an authenticated principal and so
+// never exercises this branch at all.
+func TestBinsWebHandlers_Detail_Unauthenticated_RedirectsToLoginWithBinPath(t *testing.T) {
+	sm := scs.New()
+	handlers := adapter.NewBinsWebHandlers(adapter.BinsWebHandlersDeps{
+		Bins: newFakeBinService(), Mover: &fakeBinMover{}, Locations: &fakeLocationSummaries{}, Members: &fakeMembers{}, Items: &fakeItemLister{},
+		Photos: &fakePrimaryPhotoRefLister{}, Events: &fakeEventLister{},
+		SM: sm, Layout: testLayout, Logger: testLogger(),
+	})
+	mux := http.NewServeMux()
+	handlers.Routes(mux)
+
+	denier := identityadapter.NewDenier(testLogger())
+	gated := identityadapter.RequireAuthenticated(denier)(mux)
+
+	server := httptest.NewServer(sm.LoadAndSave(gated))
+	defer server.Close()
+
+	resp, err := newCSRFClient(t).Get(server.URL + "/b/BIN-A01")
+	if err != nil {
+		t.Fatalf("GET /b/BIN-A01: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("GET /b/BIN-A01 unauthenticated = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+	if got, want := resp.Header.Get("Location"), "/login?next=%2Fb%2FBIN-A01"; got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+}
+
 func TestBinsWebHandlers_List_BinsServiceError(t *testing.T) {
 	bins := newFakeBinService()
 	bins.listErr = errors.New("boom")
@@ -559,6 +603,74 @@ func TestBinsWebHandlers_Detail_Success_ShowsItemsAndOwner(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("detail body missing %q", want)
 		}
+	}
+}
+
+// newBinsWebHandlersWithPublicBaseURL builds a *adapter.BinsWebHandlers
+// carrying publicBaseURL — the one field newBinsWebHarness's own
+// constructors have no parameter for, since only NSTR-48's QR tests below
+// need it configurable.
+func newBinsWebHandlersWithPublicBaseURL(t *testing.T, sm *scs.SessionManager, bins *fakeBinService, publicBaseURL string) *adapter.BinsWebHandlers {
+	t.Helper()
+	return adapter.NewBinsWebHandlers(adapter.BinsWebHandlersDeps{
+		Bins: bins, Mover: &fakeBinMover{}, Locations: &fakeLocationSummaries{}, Members: &fakeMembers{}, Items: &fakeItemLister{},
+		Photos: &fakePrimaryPhotoRefLister{}, Events: &fakeEventLister{},
+		SM: sm, Layout: testLayout, Logger: testLogger(), PublicBaseURL: publicBaseURL,
+	})
+}
+
+// TestBinsWebHandlers_Detail_RendersQR proves NSTR-48's own AC ("The QR is
+// generated server-side with no client-side JavaScript"): the detail
+// response embeds a data:image/png;base64 img, and the fallback link text
+// beneath it (bindetail.templ's binQRBlock) carries app.BinDeepLinkURL's
+// exact output — proving the same payload that went into the QR encoder,
+// without needing to decode the PNG itself.
+func TestBinsWebHandlers_Detail_RendersQR(t *testing.T) {
+	bins := newFakeBinService()
+	bins.addBin(app.BinView{Bin: domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes"}})
+
+	sm := scs.New()
+	handlers := newBinsWebHandlersWithPublicBaseURL(t, sm, bins, "")
+	server := newPrincipalServer(t, sm, testViewer(), handlers.Routes)
+
+	resp, err := newCSRFClient(t).Get(server.URL + "/b/A1")
+	if err != nil {
+		t.Fatalf("GET /b/A1: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /b/A1 = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "data:image/png;base64,") {
+		t.Errorf("detail body missing the server-rendered QR data URI: %s", body)
+	}
+}
+
+// TestBinsWebHandlers_Detail_ConfiguredPublicBaseURL_QRTargetsThatOrigin
+// proves PUBLIC_BASE_URL wins over the request's own Host when configured —
+// a printed label has to stay scannable off the server's own LAN segment
+// (see resolveBaseURL's own doc).
+func TestBinsWebHandlers_Detail_ConfiguredPublicBaseURL_QRTargetsThatOrigin(t *testing.T) {
+	bins := newFakeBinService()
+	bins.addBin(app.BinView{Bin: domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes"}})
+
+	sm := scs.New()
+	handlers := newBinsWebHandlersWithPublicBaseURL(t, sm, bins, "https://nestorage.tailnet-name.ts.net")
+	server := newPrincipalServer(t, sm, testViewer(), handlers.Routes)
+
+	resp, err := newCSRFClient(t).Get(server.URL + "/b/A1")
+	if err != nil {
+		t.Fatalf("GET /b/A1: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /b/A1 = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	want := "https://nestorage.tailnet-name.ts.net/b/A1"
+	if !strings.Contains(string(body), want) {
+		t.Errorf("detail body missing the configured-origin deep link %q: %s", want, body)
 	}
 }
 
