@@ -674,6 +674,38 @@ func TestBinsWebHandlers_Detail_ConfiguredPublicBaseURL_QRTargetsThatOrigin(t *t
 	}
 }
 
+// TestBinsWebHandlers_Detail_QREncodeFailure_DegradesGracefully proves
+// renderDetailView's own non-critical-enhancement contract (see its doc,
+// mirroring Nestova's kiosk deepLinkQR precedent): a qrcode.PNGDataURI
+// failure is logged and the rest of the page still renders, never a 500. A
+// bin code long enough to overflow the QR encoder's content capacity
+// reliably reproduces that failure without needing to fake the encoder
+// itself — every REAL bin's code is capped at domain.maxBinCodeRunes (32)
+// by validateBinCode, so this shape can only occur via a fake service that
+// (like any test double) does not re-run that validation.
+func TestBinsWebHandlers_Detail_QREncodeFailure_DegradesGracefully(t *testing.T) {
+	bins := newFakeBinService()
+	longCode := strings.Repeat("A", 4000)
+	bins.addBin(app.BinView{Bin: domain.Bin{ID: domain.NewBinID(), Code: longCode, Name: "Overflow Bin"}})
+	h := newBinsWebHarness(t, testViewer(), bins, &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, &fakeItemLister{})
+
+	resp, err := h.client.Get(h.server.URL + "/b/" + longCode)
+	if err != nil {
+		t.Fatalf("GET /b/<long code>: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /b/<long code> = %d, want 200 (a QR render failure must degrade, not 500):\n%s", resp.StatusCode, body)
+	}
+	if strings.Contains(string(body), "data:image/png;base64,") {
+		t.Error("detail body rendered a QR data URI despite the encoder failing")
+	}
+	if !strings.Contains(string(body), "Overflow Bin") {
+		t.Error("detail body missing the bin's own name — the page must still render past the QR failure")
+	}
+}
+
 // TestBinsWebHandlers_Detail_RendersThumbnailForPrimaryPhoto proves the
 // Sprint 5 reconciliation R8 fan-in for a bin's own contents list: the
 // primaryPhotoRefLister is called exactly once (never once per item), and
