@@ -12,6 +12,7 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
+	labelsdomain "github.com/ericfisherdev/nestorage/internal/labels/domain"
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
@@ -108,16 +109,25 @@ type shellLocationLister interface {
 // Stats is scoped by viewer through the same ListVisible/List calls the
 // bin grid and location index themselves use, so the sidebar summary can
 // never hint at a private bin a non-owner cannot otherwise see.
+//
+// labels holds NSTR-47's label size registry: it is not behind a narrow
+// port the way members/bins/locations are (nothing here calls into it yet),
+// but the composition root builds exactly one *labelsdomain.Registry at
+// boot (see cmd/server/main.go), and shellDataService is where every other
+// process-wide, request-independent composition value already lives for
+// NSTR-50's batch service and NSTR-51's size-selection UI to read back via
+// Labels().
 type shellDataService struct {
 	members   shellMemberLister
 	bins      shellBinLister
 	locations shellLocationLister
+	labels    *labelsdomain.Registry
 }
 
 // newShellDataService constructs shellDataService. All dependencies are
 // required; a missing one panics at construction time, matching every other
 // constructor in this codebase.
-func newShellDataService(members shellMemberLister, bins shellBinLister, locations shellLocationLister) *shellDataService {
+func newShellDataService(members shellMemberLister, bins shellBinLister, locations shellLocationLister, labels *labelsdomain.Registry) *shellDataService {
 	if members == nil {
 		panic("main: newShellDataService requires a non-nil shellMemberLister")
 	}
@@ -127,7 +137,18 @@ func newShellDataService(members shellMemberLister, bins shellBinLister, locatio
 	if locations == nil {
 		panic("main: newShellDataService requires a non-nil shellLocationLister")
 	}
-	return &shellDataService{members: members, bins: bins, locations: locations}
+	if labels == nil {
+		panic("main: newShellDataService requires a non-nil *labelsdomain.Registry")
+	}
+	return &shellDataService{members: members, bins: bins, locations: locations, labels: labels}
+}
+
+// Labels returns the label size registry NSTR-50's batch service and
+// NSTR-51's size-selection UI read from — the same registry the
+// composition root constructed once, at boot (see cmd/server/main.go),
+// never a per-request rebuild.
+func (s *shellDataService) Labels() *labelsdomain.Registry {
+	return s.labels
 }
 
 // Owners returns the sidebar's real Owners list: one entry per household
