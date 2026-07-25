@@ -128,4 +128,23 @@ var (
 	// ErrItemLinkLabelTooLong is returned (wrapped) by ValidateItemLinkLabel
 	// for a label longer than MaxItemLinkLabelRunes.
 	ErrItemLinkLabelTooLong = errors.New("storage: item link label is too long")
+
+	// ErrInvalidEventKind is returned (wrapped, with the offending value) by
+	// ParseEventKind for a string that is not one of the nine known
+	// EventKind values — the domain mirror of item_event_kind_check. Naming
+	// convention matches identity.ErrInvalidKind/ErrInvalidRole.
+	ErrInvalidEventKind = errors.New("storage: invalid item event kind")
+
+	// ErrInvalidEditedField is returned (wrapped, with the offending value)
+	// by ParseEditedField for a string that is not one of the three known
+	// EditedField values — the domain mirror of item_event_edit_check's
+	// changed_fields <@ ARRAY['name','description','quantity'] clause.
+	ErrInvalidEditedField = errors.New("storage: invalid item event edited field")
+
+	// ErrInvalidItemEvent is returned (wrapped) by ItemEvent.Validate for a
+	// malformed event — an unknown kind, a blank item name/actor label, an
+	// actor/bin/move/edit field pairing that violates the matching database
+	// CHECK. NSTR-40's domain mirror of those CHECKs, run before Append ever
+	// reaches the database.
+	ErrInvalidItemEvent = errors.New("storage: invalid item event")
 )

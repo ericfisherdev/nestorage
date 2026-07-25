@@ -9,5 +9,8 @@
 // inside, built over BinRepository the same way. NSTR-31 adds this
 // context's inbound web adapters — BinsWebHandlers (bins_web.go) and
 // LocationsWebHandlers (locations_web.go) — mirroring identity/adapter's
-// own web-handler shape (web_common.go holds what both share).
+// own web-handler shape (web_common.go holds what both share). NSTR-40 adds
+// ItemEventRepository (item_event_postgres.go), the pgx-backed adapter for
+// the append-only item event log, over the same db.TX seam as
+// NewLocationRepository.
 package adapter
