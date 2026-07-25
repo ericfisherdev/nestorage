@@ -29,6 +29,8 @@ import (
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	mediaapp "github.com/ericfisherdev/nestorage/internal/media/app"
 	mediabootstrap "github.com/ericfisherdev/nestorage/internal/media/bootstrap"
+	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
+	notifyapp "github.com/ericfisherdev/nestorage/internal/notify/app"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
@@ -191,11 +193,20 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// ItemLinkService backs the detail page's labeled-links section, over
 	// itemRepo too — every one of its methods authorizes through the same
 	// visibility-scoped Get every other item-adjacent service already uses.
-	// NSTR-43's own no-op ReturnRequestNotifier: this ticket ships the port
-	// and its NopReturnRequestNotifier implementation; NSTR-44 swaps in the
-	// real one here, at composition-root time, with no change to
-	// OperationService or ReturnRequestService's own code (R10).
-	returnRequestNotifier := storageapp.NopReturnRequestNotifier{}
+	// NSTR-44's own notify composition: NotificationRepository is pool-bound
+	// (Enqueue and the inbox reads are never part of another aggregate's
+	// transaction — every call site fires post-commit, best-effort, see
+	// notify/app.Notifier's own doc), StaticPreferenceReader is the fixed
+	// in-app-only default NSTR-45 later swaps for a real per-user reader
+	// with no change to Notifier or its callers, and time.Now is the
+	// injected clock every other timestamped construction in this file
+	// already uses (e.g. DeviceTokenService below). Notifier satisfies
+	// NSTR-43's own ReturnRequestNotifier port, replacing the no-op
+	// NSTR-43 wired at composition-root time (R10), with no change to
+	// OperationService or ReturnRequestService's own code.
+	notificationRepo := notifyadapter.NewNotificationRepository(pool)
+	notificationPreferences := notifyapp.StaticPreferenceReader{}
+	returnRequestNotifier := notifyapp.NewNotifier(notificationRepo, notificationPreferences, time.Now, logger)
 	operationService := storageapp.NewOperationService(storageUOW, binRepo, identityRepo, returnRequestNotifier, logger)
 	itemQueryService := storageapp.NewItemQueryService(itemRepo, logger)
 	itemLinkService := storageapp.NewItemLinkService(itemLinkRepo, itemRepo, logger)
@@ -225,6 +236,14 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// navigation).
 	photosWeb := mediaadapter.NewPhotosWebHandlers(mediaadapter.PhotosWebHandlersDeps{
 		Photos: photoService, SM: sm, Logger: logger,
+	})
+	// NSTR-44's own inbox composition: InboxService reads through the same
+	// notificationRepo the Notifier above writes through, so a
+	// just-enqueued in-app row is visible on the very next /notifications
+	// request.
+	inboxService := notifyapp.NewInboxService(notificationRepo, logger)
+	notificationsWeb := notifyadapter.NewInboxWebHandlers(notifyadapter.InboxWebHandlersDeps{
+		Inbox: inboxService, SM: sm, Layout: newNotificationsLayout(shellData, logger), Logger: logger,
 	})
 
 	hasher := crypto.NewHasher(crypto.DefaultParams())
@@ -305,6 +324,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			Locations:      locationsWeb,
 			Items:          itemsWeb,
 			Photos:         photosWeb,
+			Notifications:  notificationsWeb,
 			Denier:         denier,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's

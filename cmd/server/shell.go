@@ -13,6 +13,7 @@ import (
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
+	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 	"github.com/ericfisherdev/nestorage/web"
@@ -44,6 +45,9 @@ const devicesPageTitle = "Devices"
 
 // apiKeySettingsPageTitle names NSTR-23's account api key management page.
 const apiKeySettingsPageTitle = "API key"
+
+// notificationsPageTitle names NSTR-44's own /notifications inbox page.
+const notificationsPageTitle = "Notifications"
 
 // shellHandlers serves the application shell: the embedded static assets
 // and the root redirect. NSTR-31 removed this type's own demo /bins route
@@ -214,7 +218,10 @@ func shellInitials(name string) string {
 // reconciliation R3, which supersedes that ticket's own plan of mounting a
 // second mux on "/" — a second "/" registration panics at startup); their
 // patterns do not collide with /items/{id} or NSTR-38's own
-// /items/{id}/links... patterns.
+// /items/{id}/links... patterns. NSTR-44's own /notifications... routes join
+// the same storageMux for the identical reason — any signed-in household
+// member's own inbox, not an admin concern — and share no prefix with any
+// bin/location/item/photo pattern already registered on it.
 //
 // appRouteDeps groups newAppRoutes' dependencies into one value instead of a
 // growing parameter list: NSTR-24 added Denier as the eighth, past
@@ -233,6 +240,7 @@ type appRouteDeps struct {
 	Locations      *storageadapter.LocationsWebHandlers
 	Items          *storageadapter.ItemsWebHandlers
 	Photos         *mediaadapter.PhotosWebHandlers
+	Notifications  *notifyadapter.InboxWebHandlers
 	Denier         *identityadapter.Denier
 }
 
@@ -266,6 +274,7 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		deps.Locations.Routes(storageMux)
 		deps.Items.Routes(storageMux)
 		deps.Photos.Routes(storageMux)
+		deps.Notifications.Routes(storageMux)
 		mux.Handle("/", authGate(storageMux))
 	}
 }
@@ -360,6 +369,16 @@ func newDeviceSettingsLayout(data *shellDataService, logger *slog.Logger) func(r
 // per specific bin/location the way, say, a per-item title would.
 func newStorageLayout(data *shellDataService, title string, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
 	return newRequestAdminAwareLayout(data, title, logger)
+}
+
+// newNotificationsLayout returns the layout func injected into
+// notifyadapter.NewInboxWebHandlers (see newRequestAdminAwareLayout's own
+// doc) — NSTR-44's /notifications page is reachable by any signed-in
+// household member, not only an admin, the same shellNav-reflects-the-
+// actual-viewer shape newDeviceSettingsLayout/newStorageLayout already
+// share.
+func newNotificationsLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return newRequestAdminAwareLayout(data, notificationsPageTitle, logger)
 }
 
 // shellNav is the sidebar's primary navigation, active-highlighted by path

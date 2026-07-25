@@ -72,7 +72,8 @@ templ Layout(props ShellProps, nav []NavItem, content templ.Component) {
 	</html>
 }
 
-// sidebar is the brand lockup, primary action, primary nav, Owners list, and
+// sidebar is the brand lockup (plus NSTR-44's own notification bell,
+// sharing its top row), primary action, primary nav, Owners list, and
 // "Storage at a glance" stats. It is a fixed 264px rail at the shell
 // breakpoint and up; below it, a full-width horizontal strip in normal flow.
 templ sidebar(props ShellProps, nav []NavItem) {
@@ -80,9 +81,12 @@ templ sidebar(props ShellProps, nav []NavItem) {
 		id="sidebar"
 		class="flex w-full flex-none flex-col gap-4 border-b border-border-strong bg-sidebar p-[22px_18px] shell:w-sidebar shell:border-b-0 shell:border-r"
 	>
-		<div class="flex items-center gap-[10px] text-lg font-extrabold tracking-[-0.01em] text-text">
-			@IconBin("h-7 w-7 flex-none text-primary")
-			Nestorage
+		<div class="flex items-center justify-between gap-[10px]">
+			<div class="flex items-center gap-[10px] text-lg font-extrabold tracking-[-0.01em] text-text">
+				@IconBin("h-7 w-7 flex-none text-primary")
+				Nestorage
+			</div>
+			@NotificationBellStub()
 		</div>
 		<a
 			href="/bins/new"
