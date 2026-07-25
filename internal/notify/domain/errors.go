@@ -41,4 +41,22 @@ var (
 	// by ParseEventType for a string that is not one of the two known
 	// EventType values — the domain mirror of notification_event_type_check.
 	ErrInvalidEventType = errors.New("notify: invalid event type")
+
+	// ErrChannelNotConfigurable is returned by the one internal path that
+	// could otherwise be asked to toggle ChannelInApp. NSTR-45 appends
+	// this and the two sentinels below to NSTR-44's own errors.go rather
+	// than starting a second one (see this file's own doc). It is not a
+	// runtime invariant guarding against a caller mistake so much as
+	// documentation: PreferenceService.SetEmailEnabled's own signature
+	// has no channel parameter at all, so there is no live call path that
+	// can actually reach this — the "cannot disable every channel"
+	// acceptance criterion is met by that construction, not by this
+	// check (Sprint 6 reconciliation R12).
+	ErrChannelNotConfigurable = errors.New("notify: channel is not user-configurable")
+
+	// ErrInvalidChannel and ErrInvalidEventType above already cover the
+	// two enum-parse failures a preference could name; no separate
+	// ErrPreferenceNotFound exists because PreferenceRepository's own doc
+	// requires ListForUser/Get to answer an empty slice, never an error,
+	// for a user with nothing stored.
 )

@@ -196,17 +196,23 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// NSTR-44's own notify composition: NotificationRepository is pool-bound
 	// (Enqueue and the inbox reads are never part of another aggregate's
 	// transaction — every call site fires post-commit, best-effort, see
-	// notify/app.Notifier's own doc), StaticPreferenceReader is the fixed
-	// in-app-only default NSTR-45 later swaps for a real per-user reader
-	// with no change to Notifier or its callers, and time.Now is the
-	// injected clock every other timestamped construction in this file
-	// already uses (e.g. DeviceTokenService below). Notifier satisfies
-	// NSTR-43's own ReturnRequestNotifier port, replacing the no-op
-	// NSTR-43 wired at composition-root time (R10), with no change to
-	// OperationService or ReturnRequestService's own code.
+	// notify/app.Notifier's own doc), and time.Now is the injected clock
+	// every other timestamped construction in this file already uses (e.g.
+	// DeviceTokenService below). Notifier satisfies NSTR-43's own
+	// ReturnRequestNotifier port, replacing the no-op NSTR-43 wired at
+	// composition-root time (R10), with no change to OperationService or
+	// ReturnRequestService's own code.
+	//
+	// NSTR-45's own preference composition: PreferenceRepository is
+	// pool-bound for the identical reason notificationRepo is, and
+	// PreferenceService is the real per-user domain.PreferenceReader —
+	// swapped in here for NSTR-44's static in-app-only stub
+	// (notifyapp.StaticPreferenceReader) with no change to Notifier or its
+	// callers, the OCP seam StaticPreferenceReader's own doc describes.
 	notificationRepo := notifyadapter.NewNotificationRepository(pool)
-	notificationPreferences := notifyapp.StaticPreferenceReader{}
-	returnRequestNotifier := notifyapp.NewNotifier(notificationRepo, notificationPreferences, time.Now, logger)
+	preferenceRepo := notifyadapter.NewPreferenceRepository(pool)
+	preferenceService := notifyapp.NewPreferenceService(preferenceRepo, logger)
+	returnRequestNotifier := notifyapp.NewNotifier(notificationRepo, preferenceService, time.Now, logger)
 	operationService := storageapp.NewOperationService(storageUOW, binRepo, identityRepo, returnRequestNotifier, logger)
 	itemQueryService := storageapp.NewItemQueryService(itemRepo, logger)
 	itemLinkService := storageapp.NewItemLinkService(itemLinkRepo, itemRepo, logger)
@@ -268,6 +274,12 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	deviceTokenAPI := identityadapter.NewDeviceTokenAPIHandlers(deviceTokenService, logger)
 	deviceTokenWeb := identityadapter.NewDeviceTokenWebHandlers(deviceTokenService, sm, newDeviceSettingsLayout(shellData, logger), logger)
 
+	// NSTR-45's own settings screen: any signed-in user manages only their
+	// OWN notification preferences, the same self-service shape
+	// deviceTokenWeb already has, over the same preferenceService the
+	// Notifier composition above already consults.
+	preferencesWeb := notifyadapter.NewPreferencesWebHandlers(preferenceService, sm, newNotificationSettingsLayout(shellData, logger), logger)
+
 	// NSTR-23's account api key: the single credential the Nestova
 	// integration authenticates with. NewAPIKeyService returns an error
 	// rather than panicking on a nil dependency (see its own doc); every
@@ -319,6 +331,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			Users:          usersHandlers,
 			DeviceTokenAPI: deviceTokenAPI,
 			DeviceTokenWeb: deviceTokenWeb,
+			PreferencesWeb: preferencesWeb,
 			APIKeyWeb:      apiKeyWeb,
 			Bins:           binsWeb,
 			Locations:      locationsWeb,
