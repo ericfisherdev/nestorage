@@ -162,6 +162,14 @@ func TestPDFSheetRenderer_Render_PaginatesAcrossSheets(t *testing.T) {
 		{"one more label than a sheet holds", 3, 0, 2},
 		{"two full sheets plus one", 5, 0, 3},
 		{"start offset uses up first sheet's last cell", 3, 1, 2},
+		// Discriminates an honored startOffset from an ignored one: with 2
+		// labels and cellsPerPage=2, a zero offset fits both on one sheet
+		// (1 page), but starting at offset 1 leaves only the second cell
+		// free, so the second label spills onto a new sheet (2 pages). A
+		// Render that silently dropped startOffset would report 1 page
+		// here, not 2 — unlike the "uses up first sheet's last cell" case
+		// above, whose expected page count happens to match either way.
+		{"start offset actually shifts drawing, not just page count", 2, 1, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -234,10 +242,17 @@ func TestCellOrigin_KnownGeometries(t *testing.T) {
 	}
 }
 
-// TestCellOrigin_StartOffsetShiftsFirstCell covers the AC directly: a
-// nonzero startOffset changes which cell position Render's loop starts
-// drawing at.
-func TestCellOrigin_StartOffsetShiftsFirstCell(t *testing.T) {
+// TestCellOrigin_DifferentIndicesYieldDifferentPositions covers the
+// millimetre-math fact Render's startOffset handling actually rests on:
+// CellOrigin(size, 0) and CellOrigin(size, N) resolve to different
+// positions for N != 0. This is deliberately just CellOrigin's own pure
+// math, not an end-to-end proof that Render honors startOffset — Render
+// simply seeds its loop with cellOnPage := startOffset (see pdf_sheet.go),
+// so that wiring itself is what
+// TestPDFSheetRenderer_Render_PaginatesAcrossSheets's "start offset
+// actually shifts drawing" case proves, via an observable page-count
+// difference a dropped startOffset would fail.
+func TestCellOrigin_DifferentIndicesYieldDifferentPositions(t *testing.T) {
 	registry, err := domain.NewRegistry()
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v, want nil", err)
