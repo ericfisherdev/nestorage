@@ -24,6 +24,13 @@ import (
 // identical rationale).
 const errInternalServerError = "internal server error"
 
+// errBadRequest is the message Download answers with for every malformed
+// input it rejects before ever calling batches — a malformed path id, a
+// missing size, an unparsable offset, or (via handleRenderError) a size/
+// offset the batch renderer itself rejected. Named once, not repeated per
+// call site (SonarCloud flagged the four-way duplication, go:S1192).
+const errBadRequest = "bad request"
+
 // batchRenderer is the narrow port (ISP) LabelsWebHandlers depends on,
 // satisfied by *labelsapp.BatchService.
 type batchRenderer interface {
@@ -80,17 +87,17 @@ func (h *LabelsWebHandlers) Routes(mux *http.ServeMux) {
 func (h *LabelsWebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	locationID, err := storagedomain.ParseLocationID(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, errBadRequest, http.StatusBadRequest)
 		return
 	}
 	sizeID := domain.LabelSizeID(r.URL.Query().Get("size"))
 	if sizeID == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, errBadRequest, http.StatusBadRequest)
 		return
 	}
 	startOffset, ok := parseStartOffset(r.URL.Query().Get("offset"))
 	if !ok {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, errBadRequest, http.StatusBadRequest)
 		return
 	}
 
@@ -140,7 +147,7 @@ func (h *LabelsWebHandlers) handleRenderError(w http.ResponseWriter, r *http.Req
 	case errors.Is(err, storagedomain.ErrLocationNotFound):
 		http.NotFound(w, r)
 	case errors.Is(err, domain.ErrUnknownLabelSize), errors.Is(err, domain.ErrInvalidStartOffset):
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, errBadRequest, http.StatusBadRequest)
 	case errors.Is(err, domain.ErrEmptyBatch):
 		http.Error(w, "This location has no bins you can print.", http.StatusUnprocessableEntity)
 	case errors.As(err, &tooLarge):
