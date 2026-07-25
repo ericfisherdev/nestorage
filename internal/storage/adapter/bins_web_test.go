@@ -3,6 +3,7 @@ package adapter_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alexedwards/scs/v2"
 
@@ -193,6 +195,7 @@ type binsWebHarness struct {
 	client *http.Client
 	bins   *fakeBinService
 	mover  *fakeBinMover
+	events *fakeEventLister
 }
 
 func newBinsWebHarness(t *testing.T, viewer identity.Principal, bins *fakeBinService, mover *fakeBinMover, locations *fakeLocationSummaries, members *fakeMembers, items *fakeItemLister) *binsWebHarness {
@@ -206,13 +209,23 @@ func newBinsWebHarness(t *testing.T, viewer identity.Principal, bins *fakeBinSer
 // pre-existing call to newBinsWebHarness still gets.
 func newBinsWebHarnessWithPhotos(t *testing.T, viewer identity.Principal, bins *fakeBinService, mover *fakeBinMover, locations *fakeLocationSummaries, members *fakeMembers, items *fakeItemLister, photos *fakePrimaryPhotoRefLister) *binsWebHarness {
 	t.Helper()
+	return newBinsWebHarnessWithPhotosAndEvents(t, viewer, bins, mover, locations, members, items, photos, &fakeEventLister{})
+}
+
+// newBinsWebHarnessWithPhotosAndEvents is newBinsWebHarnessWithPhotos' own
+// extension point for NSTR-42's own bin-activity tests, which need a
+// configurable binActivityLister rather than the zero-value default (no
+// events) every pre-existing call site still gets — mirrors
+// newBinsWebHarnessWithPhotos' own introduction for NSTR-37's Photos field.
+func newBinsWebHarnessWithPhotosAndEvents(t *testing.T, viewer identity.Principal, bins *fakeBinService, mover *fakeBinMover, locations *fakeLocationSummaries, members *fakeMembers, items *fakeItemLister, photos *fakePrimaryPhotoRefLister, events *fakeEventLister) *binsWebHarness {
+	t.Helper()
 	sm := scs.New()
 	handlers := adapter.NewBinsWebHandlers(adapter.BinsWebHandlersDeps{
-		Bins: bins, Mover: mover, Locations: locations, Members: members, Items: items, Photos: photos,
+		Bins: bins, Mover: mover, Locations: locations, Members: members, Items: items, Photos: photos, Events: events,
 		SM: sm, Layout: testLayout, Logger: testLogger(),
 	})
 	server := newPrincipalServer(t, sm, viewer, handlers.Routes)
-	return &binsWebHarness{server: server, client: newCSRFClient(t), bins: bins, mover: mover}
+	return &binsWebHarness{server: server, client: newCSRFClient(t), bins: bins, mover: mover, events: events}
 }
 
 func (h *binsWebHarness) getCSRF(t *testing.T, path string) string {
@@ -257,7 +270,7 @@ func TestNewBinsWebHandlers_NilDependenciesPanic(t *testing.T) {
 	bins, mover, locations, members, items := newFakeBinService(), &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, &fakeItemLister{}
 	sm := scs.New()
 	base := adapter.BinsWebHandlersDeps{
-		Bins: bins, Mover: mover, Locations: locations, Members: members, Items: items, Photos: &fakePrimaryPhotoRefLister{},
+		Bins: bins, Mover: mover, Locations: locations, Members: members, Items: items, Photos: &fakePrimaryPhotoRefLister{}, Events: &fakeEventLister{},
 		SM: sm, Layout: testLayout, Logger: testLogger(),
 	}
 	tests := []struct {
@@ -270,6 +283,7 @@ func TestNewBinsWebHandlers_NilDependenciesPanic(t *testing.T) {
 		{"nil members", func(d *adapter.BinsWebHandlersDeps) { d.Members = nil }},
 		{"nil items", func(d *adapter.BinsWebHandlersDeps) { d.Items = nil }},
 		{"nil primary photo ref lister", func(d *adapter.BinsWebHandlersDeps) { d.Photos = nil }},
+		{"nil event lister", func(d *adapter.BinsWebHandlersDeps) { d.Events = nil }},
 		{"nil session manager", func(d *adapter.BinsWebHandlersDeps) { d.SM = nil }},
 		{"nil layout", func(d *adapter.BinsWebHandlersDeps) { d.Layout = nil }},
 		{"nil logger", func(d *adapter.BinsWebHandlersDeps) { d.Logger = nil }},
@@ -1044,5 +1058,139 @@ func TestBinsWebHandlers_Move_Success_RerendersDetail(t *testing.T) {
 	}
 	if !strings.Contains(body, "Winter Clothes") {
 		t.Error("move response did not re-render the bin detail fragment")
+	}
+}
+
+// newBinActivityEvent builds a minimal, otherwise-valid domain.ItemEvent for
+// Activity's hermetic tests — the fake event lister never runs
+// domain.ItemEvent.Validate, so only the fields a given test actually reads
+// need to be set. Mirrors item_history_web_test.go's own newHistoryEvent,
+// with the item id/name Activity's own row also needs.
+func newBinActivityEvent(itemName, actorLabel string, occurredAt time.Time) domain.ItemEvent {
+	return domain.ItemEvent{
+		ID: domain.NewItemEventID(), ItemID: domain.NewItemID(), ItemName: itemName,
+		Kind: domain.EventReturned, BinLabel: "A1 — Winter Clothes", ActorLabel: actorLabel,
+		OccurredAt: occurredAt, CreatedAt: occurredAt,
+	}
+}
+
+func TestBinsWebHandlers_Activity_RendersEventsWithItemLinks(t *testing.T) {
+	bins := newFakeBinService()
+	bins.addBin(app.BinView{Bin: domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes"}})
+	ev := newBinActivityEvent("Camping stove", "Maya", time.Date(2026, 7, 20, 14, 0, 0, 0, time.UTC))
+	events := &fakeEventLister{binEvents: []domain.ItemEvent{ev}}
+	h := newBinsWebHarnessWithPhotosAndEvents(t, testViewer(), bins, &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, &fakeItemLister{}, &fakePrimaryPhotoRefLister{}, events)
+
+	resp, err := h.client.Get(h.server.URL + "/b/A1/activity")
+	if err != nil {
+		t.Fatalf("GET /b/A1/activity: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `id="bin-activity"`) {
+		t.Errorf("response missing the section's own fragment boundary: %s", body)
+	}
+	if !strings.Contains(string(body), "Camping stove") {
+		t.Errorf("response missing the event's own item name: %s", body)
+	}
+	if !strings.Contains(string(body), `href="/items/`+ev.ItemID.String()+`"`) {
+		t.Errorf("response missing the row's own link to the item: %s", body)
+	}
+	if !strings.Contains(string(body), `aria-label="Owned by Maya"`) {
+		t.Errorf("response missing the event's own actor avatar: %s", body)
+	}
+	if !strings.Contains(string(body), "Returned to A1 — Winter Clothes") {
+		t.Errorf("response missing the event's own action sentence: %s", body)
+	}
+	if events.binCalls != 1 {
+		t.Errorf("ListByBin called %d times, want 1", events.binCalls)
+	}
+}
+
+// TestBinsWebHandlers_Activity_LimitsToLast10 proves Activity requests
+// binActivityLimit rows and renders no more than that — the fixed,
+// non-paginated window Sprint 6 reconciliation calls for.
+func TestBinsWebHandlers_Activity_LimitsToLast10(t *testing.T) {
+	bins := newFakeBinService()
+	bins.addBin(app.BinView{Bin: domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes"}})
+	base := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	all := make([]domain.ItemEvent, 11)
+	for i := range all {
+		all[i] = newBinActivityEvent(fmt.Sprintf("Item%d", i), "Maya", base.Add(-time.Duration(i)*time.Minute))
+	}
+	events := &fakeEventLister{binEvents: all}
+	h := newBinsWebHarnessWithPhotosAndEvents(t, testViewer(), bins, &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, &fakeItemLister{}, &fakePrimaryPhotoRefLister{}, events)
+
+	resp, err := h.client.Get(h.server.URL + "/b/A1/activity")
+	if err != nil {
+		t.Fatalf("GET /b/A1/activity: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	for i := 0; i < 10; i++ {
+		if !strings.Contains(string(body), fmt.Sprintf("Item%d", i)) {
+			t.Errorf("response missing event %d of the newest 10: %s", i, body)
+		}
+	}
+	if strings.Contains(string(body), "Item10") {
+		t.Error("response rendered an 11th event beyond the fixed 10-row window")
+	}
+}
+
+func TestBinsWebHandlers_Activity_EmptyState(t *testing.T) {
+	bins := newFakeBinService()
+	bins.addBin(app.BinView{Bin: domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes"}})
+	h := newBinsWebHarnessWithPhotosAndEvents(t, testViewer(), bins, &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, &fakeItemLister{}, &fakePrimaryPhotoRefLister{}, &fakeEventLister{})
+
+	resp, err := h.client.Get(h.server.URL + "/b/A1/activity")
+	if err != nil {
+		t.Fatalf("GET /b/A1/activity: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "No activity yet.") {
+		t.Errorf("response missing the empty state: %s", body)
+	}
+}
+
+func TestBinsWebHandlers_Activity_UnknownCode_NotFound(t *testing.T) {
+	events := &fakeEventLister{}
+	h := newBinsWebHarnessWithPhotosAndEvents(t, testViewer(), newFakeBinService(), &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, &fakeItemLister{}, &fakePrimaryPhotoRefLister{}, events)
+
+	resp, err := h.client.Get(h.server.URL + "/b/GHOST/activity")
+	if err != nil {
+		t.Fatalf("GET /b/GHOST/activity: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /b/GHOST/activity = %d, want 404", resp.StatusCode)
+	}
+	if events.binCalls != 0 {
+		t.Error("ListByBin must not be called when the bin itself is not visible")
+	}
+}
+
+func TestBinsWebHandlers_Activity_EventListError_Returns500(t *testing.T) {
+	bins := newFakeBinService()
+	bins.addBin(app.BinView{Bin: domain.Bin{ID: domain.NewBinID(), Code: "A1", Name: "Winter Clothes"}})
+	events := &fakeEventLister{binErr: errors.New("boom")}
+	h := newBinsWebHarnessWithPhotosAndEvents(t, testViewer(), bins, &fakeBinMover{}, &fakeLocationSummaries{}, &fakeMembers{}, &fakeItemLister{}, &fakePrimaryPhotoRefLister{}, events)
+
+	resp, err := h.client.Get(h.server.URL + "/b/A1/activity")
+	if err != nil {
+		t.Fatalf("GET /b/A1/activity: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("GET /b/A1/activity (event list error) = %d, want 500", resp.StatusCode)
 	}
 }

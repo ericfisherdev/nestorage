@@ -1,0 +1,68 @@
+package components
+
+// BinActivityEventView is one row in a bin's recent-activity panel. Unlike
+// ItemHistoryEventView (scoped to a single item's own page, where the item
+// is already implied), this panel spans every item that has touched the
+// bin, so each row also names and links the item — the one structural
+// difference between the two view types; the actor/summary/time fields
+// otherwise mean the same thing adapter.historyActorView/historyEventSummary/
+// formatHistoryTime already build for ItemHistoryEventView.
+type BinActivityEventView struct {
+	Actor    OwnerView
+	ItemID   string
+	ItemName string
+	Summary  string
+	Time     string
+}
+
+// BinActivityView is the view-layer model for a bin's own recent-activity
+// panel (NSTR-42): a fixed-size, newest-first window with no paging (a
+// bin's full history lives on each item's own page instead — see
+// adapter.BinsWebHandlers.Activity's own doc).
+type BinActivityView struct {
+	BinCode string
+	Events  []BinActivityEventView
+}
+
+// binActivityID is the DOM id BinActivityStub's own hx-get/hx-trigger="load"
+// swaps into — disjoint from binDetailID and every other id in this
+// package (Sprint 6 reconciliation: verified against the merged tree, no
+// collision anywhere in the sprint).
+const binActivityID = "bin-activity"
+
+// BinActivityStub is bindetail.templ's own single include line for this
+// section: a self-contained, initially-empty div that hx-gets its real
+// content from BinsWebHandlers.Activity — the identical stub arrangement
+// ItemHistoryStub/PhotoGalleryStub already use.
+templ BinActivityStub(code string) {
+	<div id={ binActivityID } hx-get={ "/b/" + code + "/activity" } hx-trigger="load" hx-swap="outerHTML"></div>
+}
+
+// BinActivitySection renders the bin's last N events (BinsWebHandlers'
+// own fixed window), or an empty-state message.
+templ BinActivitySection(view BinActivityView) {
+	<div id={ binActivityID } class="flex flex-col gap-3 border-t border-border px-[26px] py-5">
+		<h3 class="text-sm font-bold text-text-secondary">Recent activity</h3>
+		if len(view.Events) == 0 {
+			<p class="text-sm text-text-faint">No activity yet.</p>
+		} else {
+			<ul class="flex flex-col gap-2">
+				for _, e := range view.Events {
+					@binActivityRow(e)
+				}
+			</ul>
+		}
+	</div>
+}
+
+// binActivityRow renders one event, linking its item name to the item's own
+// detail page (where the full, paginated history lives).
+templ binActivityRow(e BinActivityEventView) {
+	<li class="flex items-center gap-3 text-sm">
+		@OwnerAvatar(e.Actor)
+		<a href={ templ.SafeURL("/items/" + e.ItemID) } class="flex-1 truncate text-text hover:underline">
+			<span class="font-semibold">{ e.ItemName }</span> { e.Summary }
+		</a>
+		<span class="text-xs text-text-faint">{ e.Time }</span>
+	</li>
+}

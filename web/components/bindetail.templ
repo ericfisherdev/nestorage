@@ -80,6 +80,7 @@ templ BinDetail(view BinDetailView, move MoveBinView) {
 		}
 		@MoveBinForm(move)
 		@binItemsList(view.Items)
+		@BinActivityStub(view.Code)
 	</div>
 }
 

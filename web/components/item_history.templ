@@ -1,0 +1,127 @@
+package components
+
+// ItemHistoryEventView is one row in an item's own history timeline: the
+// acting principal's avatar, an action sentence already built server-side
+// (adapter.historyEventSummary owns every EventKind's own phrasing — kept
+// out of this layer so BinActivitySection can share the identical wording,
+// see that function's own doc), and the pre-formatted time
+// (formatStoredDate's own "no time.Time reaches this layer" contract).
+type ItemHistoryEventView struct {
+	Actor   OwnerView
+	Summary string
+	Time    string
+}
+
+// ItemHistoryDayView groups one page's rows under a local-calendar-day
+// heading ("Today" / "Yesterday" / "Jul 20, 2026") — adapter.historyDayHeading's
+// own local-time computation, never a UTC-derived string, so a non-UTC
+// viewer's dates agree with their own wall clock.
+type ItemHistoryDayView struct {
+	Heading string
+	Events  []ItemHistoryEventView
+}
+
+// ItemHistoryView is the view-layer model for an item's own history
+// timeline section (NSTR-42): the current-state headline (where it sits, or
+// who holds it and since when), one page of events grouped by day, and the
+// click-to-load cursor for the next page (empty means this page is the
+// newest end of an exhausted log — no more-row renders).
+type ItemHistoryView struct {
+	ItemID       string
+	CurrentState string
+	Days         []ItemHistoryDayView
+	NextCursor   string
+}
+
+// itemHistoryID is the DOM id ItemHistoryStub's own hx-get/hx-trigger="load"
+// swaps into — this section's own fragment boundary, disjoint from
+// itemDetailID/itemLinksID/itemPhotosID (Sprint 6 reconciliation: verified
+// against the merged tree, no collision anywhere in the sprint).
+const itemHistoryID = "item-history"
+
+// ItemHistoryStub is item_detail.templ's own single include line for this
+// section: a self-contained, initially-empty div that hx-gets its real
+// content from ItemsWebHandlers.History — the identical arrangement
+// PhotoGalleryStub uses (Sprint 5 reconciliation R4), which is why
+// hx-trigger="load" fires this GET again every time ItemDetail's own outer
+// div is re-rendered (check-out/return swap the whole thing) and is also
+// how a newly appended event surfaces without a manual refresh.
+templ ItemHistoryStub(itemID string) {
+	<div id={ itemHistoryID } hx-get={ "/items/" + itemID + "/history" } hx-trigger="load" hx-swap="outerHTML"></div>
+}
+
+// ItemHistorySection renders the timeline's first page: the current-state
+// headline, day-grouped events, and (when NextCursor is non-empty) the
+// click-to-load control for the next page. Rendered by
+// ItemsWebHandlers.History for both the bare-fragment and full-page cases,
+// so this div's own id/shape must stay identical to ItemHistoryStub's.
+templ ItemHistorySection(view ItemHistoryView) {
+	<div id={ itemHistoryID } class="flex flex-col gap-3 border-t border-border px-[26px] py-5">
+		<h3 class="text-sm font-bold text-text-secondary">History</h3>
+		<p class="text-sm font-semibold text-text">{ view.CurrentState }</p>
+		if len(view.Days) == 0 {
+			<p class="text-sm text-text-faint">No history yet.</p>
+		} else {
+			<div class="flex flex-col gap-4">
+				for _, d := range view.Days {
+					@itemHistoryDay(d)
+				}
+			</div>
+			@historyMoreRow(view.ItemID, view.NextCursor)
+		}
+	</div>
+}
+
+// ItemHistoryMoreFragment renders one click-to-load page's own day groups
+// plus the next more-row (or nothing, once NextCursor is empty) — the
+// response historyMoreRow's own button swaps into #item-history-more via
+// hx-swap="outerHTML". Because that div always sat last inside
+// ItemHistorySection, the swap leaves the new day groups appended right
+// after whatever the previous page already rendered.
+templ ItemHistoryMoreFragment(itemID string, days []ItemHistoryDayView, nextCursor string) {
+	for _, d := range days {
+		@itemHistoryDay(d)
+	}
+	@historyMoreRow(itemID, nextCursor)
+}
+
+// itemHistoryDay renders one day heading plus its events, shared by
+// ItemHistorySection's first page and ItemHistoryMoreFragment's later ones.
+templ itemHistoryDay(d ItemHistoryDayView) {
+	<div class="flex flex-col gap-2">
+		<h4 class="text-xs font-bold uppercase tracking-wide text-text-faint">{ d.Heading }</h4>
+		<ul class="flex flex-col gap-2">
+			for _, e := range d.Events {
+				<li class="flex items-center gap-3 text-sm">
+					@OwnerAvatar(e.Actor)
+					<span class="flex-1 text-text">{ e.Summary }</span>
+					<span class="text-xs text-text-faint">{ e.Time }</span>
+				</li>
+			}
+		</ul>
+	</div>
+}
+
+// historyMoreRow renders the click-to-load control for the next page, or
+// nothing when cursor is empty — which is also what removes the button once
+// the log is exhausted, since the exhausted response's own outerHTML swap
+// then contains no element carrying this id at all (see
+// ItemHistoryMoreFragment's own doc). cursor is base64 RawURLEncoding text
+// (adapter.encodeHistoryCursor), whose alphabet is already URL-safe, so it
+// is concatenated directly into the query string exactly as itemID already
+// is elsewhere in this file — no additional escaping is needed.
+templ historyMoreRow(itemID, cursor string) {
+	if cursor != "" {
+		<div id="item-history-more">
+			<button
+				type="button"
+				hx-get={ "/items/" + itemID + "/history?before=" + cursor }
+				hx-target="#item-history-more"
+				hx-swap="outerHTML"
+				class="mt-1 text-left text-sm font-semibold text-primary-deep hover:underline"
+			>
+				Show earlier activity
+			</button>
+		</div>
+	}
+}
