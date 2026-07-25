@@ -1,0 +1,83 @@
+package components
+
+// EventSection is the view-layer model for one event type's row on the
+// notification settings screen — not a domain type, matching the
+// rationale already written on DeviceView/APIKeyRowView (this package's
+// other domain-adjacent view models). EventType carries the raw stored
+// value (e.g. "return_requested"), used only to build the toggle's own
+// action URL; Label is the human-readable heading actually shown.
+type EventSection struct {
+	EventType    string
+	Label        string
+	EmailEnabled bool
+}
+
+// NotificationSettingsView is the view-layer model for the notification
+// settings screen.
+type NotificationSettingsView struct {
+	CSRFToken string
+	Sections  []EventSection
+}
+
+// notificationSettingsID is the DOM id every toggle's HTMX outerHTML swap
+// targets, so a change re-renders the whole screen from one response — the
+// same pattern deviceListID/apiKeySectionID use.
+const notificationSettingsID = "notification-settings"
+
+// NotificationSettings renders the settings screen: one section per event
+// type, each with an always-on in-app row (informational, never a switch —
+// in_app cannot be disabled, see domain.EffectiveChannels' own doc) and an
+// email toggle that is the only actual control on this page.
+templ NotificationSettings(view NotificationSettingsView) {
+	<div id={ notificationSettingsID } class="flex flex-col gap-6 p-[26px]">
+		<div>
+			<h2 class="text-xl font-extrabold text-text">Notifications</h2>
+			<p class="mt-1 text-[15px] text-text-faint">Choose which events you also hear about by email. In-app notifications are always on, so you're never unreachable — even with the internet down.</p>
+		</div>
+		<ul class="flex flex-col gap-4">
+			for _, s := range view.Sections {
+				@eventSection(view.CSRFToken, s)
+			}
+		</ul>
+	</div>
+}
+
+// eventSection renders one event type's own always-on in-app row plus its
+// email toggle, each own form posting independently so toggling one event
+// type never resubmits another's state.
+templ eventSection(csrfToken string, s EventSection) {
+	<li class="flex flex-col gap-2 rounded-card border border-border p-4">
+		<p class="text-base font-semibold text-text">{ s.Label }</p>
+		<div class="flex min-h-[44px] items-center justify-between gap-3 rounded-input bg-surface-raised px-3">
+			<span class="text-sm text-text-secondary">In-app</span>
+			<span class="text-sm font-semibold text-text-faint">Always on</span>
+		</div>
+		<form
+			method="POST"
+			action={ templ.SafeURL(eventEmailToggleURL(s.EventType)) }
+			hx-post={ eventEmailToggleURL(s.EventType) }
+			hx-trigger="change"
+			hx-target={ "#" + notificationSettingsID }
+			hx-swap="outerHTML"
+			class="flex min-h-[44px] items-center justify-between gap-3 rounded-input border border-border-input px-3"
+		>
+			<input type="hidden" name="csrf_token" value={ csrfToken }/>
+			<label class="flex flex-1 cursor-pointer items-center justify-between gap-3 py-2">
+				<span class="text-sm text-text-secondary">Email</span>
+				<input type="checkbox" name="enabled" value="true" checked?={ s.EmailEnabled } class="h-6 w-6 accent-primary"/>
+			</label>
+			<button
+				type="submit"
+				class="rounded-button border border-border-input px-3 py-2 text-sm font-semibold text-text-secondary hover:bg-surface-raised"
+			>
+				Save
+			</button>
+		</form>
+	</li>
+}
+
+// eventEmailToggleURL builds one section's email-toggle route:
+// /settings/notifications/{event}/email.
+func eventEmailToggleURL(eventType string) string {
+	return "/settings/notifications/" + eventType + "/email"
+}

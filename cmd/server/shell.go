@@ -49,6 +49,12 @@ const apiKeySettingsPageTitle = "API key"
 // notificationsPageTitle names NSTR-44's own /notifications inbox page.
 const notificationsPageTitle = "Notifications"
 
+// notificationSettingsPageTitle names NSTR-45's own /settings/notifications
+// preferences page — a distinct string from notificationsPageTitle so the
+// two pages' own shell titles never collide, even though both live under
+// the same "notify" bounded context.
+const notificationSettingsPageTitle = "Notification settings"
+
 // shellHandlers serves the application shell: the embedded static assets
 // and the root redirect. NSTR-31 removed this type's own demo /bins route
 // (handleBins) and its hard-coded Owners/Stats — BinsWebHandlers now owns
@@ -195,7 +201,10 @@ func shellInitials(name string) string {
 // left on the session-based RequireUser (not re-homed onto Principal) per
 // NSTR-24's own reconciliation, which only re-homes RequireAdmin. The
 // exchange endpoint (deviceTokenAPI) carries no session at all and is
-// mounted at the top level alongside login, matching its own doc.
+// mounted at the top level alongside login, matching its own doc. NSTR-45's
+// own /settings/notifications... routes join the SAME settingsMux for the
+// identical reason — any signed-in user manages only their own notification
+// preferences, not an admin concern.
 //
 // NSTR-23's account api key routes sit under the same "/settings/" path
 // prefix as the device screen but, unlike it, need RequireAdmin: the
@@ -235,6 +244,7 @@ type appRouteDeps struct {
 	Users          *identityadapter.UsersWebHandlers
 	DeviceTokenAPI *identityadapter.DeviceTokenAPIHandlers
 	DeviceTokenWeb *identityadapter.DeviceTokenWebHandlers
+	PreferencesWeb *notifyadapter.PreferencesWebHandlers
 	APIKeyWeb      *identityadapter.APIKeyWebHandlers
 	Bins           *storageadapter.BinsWebHandlers
 	Locations      *storageadapter.LocationsWebHandlers
@@ -261,6 +271,7 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 
 		settingsMux := http.NewServeMux()
 		deps.DeviceTokenWeb.Routes(settingsMux)
+		deps.PreferencesWeb.Routes(settingsMux)
 		mux.Handle("/settings/", userGate(settingsMux))
 
 		apiKeyMux := http.NewServeMux()
@@ -359,6 +370,15 @@ func newRequestAdminAwareLayout(data *shellDataService, title string, logger *sl
 // newRequestAdminAwareLayout's own doc).
 func newDeviceSettingsLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
 	return newRequestAdminAwareLayout(data, devicesPageTitle, logger)
+}
+
+// newNotificationSettingsLayout returns the layout func injected into
+// notifyadapter.NewPreferencesWebHandlers (see newRequestAdminAwareLayout's
+// own doc) — NSTR-45's /settings/notifications page is reachable by any
+// signed-in household member, not only an admin, the same shape
+// newDeviceSettingsLayout already has.
+func newNotificationSettingsLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return newRequestAdminAwareLayout(data, notificationSettingsPageTitle, logger)
 }
 
 // newStorageLayout returns the layout func injected into
