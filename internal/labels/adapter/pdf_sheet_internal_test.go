@@ -35,71 +35,85 @@ func newTestPDF(t *testing.T) *gopdf.GoPdf {
 	return pdf
 }
 
+// measureWidthAtSize sets pdf's font to size (points) and measures text's
+// width, failing the test immediately on either call's error — the shared
+// "set then measure" pattern every width-dependent test in this file needs
+// before it can assert anything about a rendered width.
+func measureWidthAtSize(t *testing.T, pdf *gopdf.GoPdf, text string, size float64) float64 {
+	t.Helper()
+	if err := pdf.SetFont(fontFamily, "", size); err != nil {
+		t.Fatalf("SetFont(%v) error = %v, want nil", size, err)
+	}
+	width, err := pdf.MeasureTextWidth(text)
+	if err != nil {
+		t.Fatalf("MeasureTextWidth() error = %v, want nil", err)
+	}
+	return width
+}
+
 // TestFitBinName_StepsDownBeforeTruncating covers the AC-relevant behavior:
 // a name that only overflows at the normal size is drawn unchanged at the
 // reduced size (no truncation), and only a name that overflows even at the
 // reduced size gets truncated — the "one notch down, then truncate" order
-// NSTR-49's plan specifies.
+// NSTR-49's plan specifies. Each case's own assertions live in a named
+// helper (assertFitsWithoutTruncating/assertTruncatesToFit) rather than
+// inline in the t.Run closures, keeping this test itself a short setup-and-
+// dispatch function.
 func TestFitBinName_StepsDownBeforeTruncating(t *testing.T) {
 	pdf := newTestPDF(t)
 	const name = "Extra Long Pantry Overflow Shelf Contents"
 
-	if err := pdf.SetFont(fontFamily, "", binNameFontSizePT); err != nil {
-		t.Fatalf("SetFont(normal) error = %v, want nil", err)
-	}
-	normalWidth, err := pdf.MeasureTextWidth(name)
-	if err != nil {
-		t.Fatalf("MeasureTextWidth(normal) error = %v, want nil", err)
-	}
-
-	if err := pdf.SetFont(fontFamily, "", binNameReducedFontSizePT); err != nil {
-		t.Fatalf("SetFont(reduced) error = %v, want nil", err)
-	}
-	reducedWidth, err := pdf.MeasureTextWidth(name)
-	if err != nil {
-		t.Fatalf("MeasureTextWidth(reduced) error = %v, want nil", err)
-	}
+	normalWidth := measureWidthAtSize(t, pdf, name, binNameFontSizePT)
+	reducedWidth := measureWidthAtSize(t, pdf, name, binNameReducedFontSizePT)
 	if reducedWidth >= normalWidth {
 		t.Fatalf("reducedWidth = %v, want < normalWidth (%v) — test fixture assumption broken", reducedWidth, normalWidth)
 	}
 
 	t.Run("fits at reduced size without truncating", func(t *testing.T) {
-		maxWidth := (normalWidth + reducedWidth) / 2 // between the two: overflows normal, fits reduced
-		got, size, err := fitBinName(pdf, name, maxWidth)
-		if err != nil {
-			t.Fatalf("fitBinName() error = %v, want nil", err)
-		}
-		if size != binNameReducedFontSizePT {
-			t.Errorf("fitBinName() size = %v, want %v", size, binNameReducedFontSizePT)
-		}
-		if got != name {
-			t.Errorf("fitBinName() = %q, want unchanged %q", got, name)
-		}
+		// Between the two widths: overflows normal, fits reduced.
+		assertFitsWithoutTruncating(t, pdf, name, (normalWidth+reducedWidth)/2)
 	})
-
 	t.Run("truncates when even reduced size overflows", func(t *testing.T) {
-		maxWidth := reducedWidth / 2
-		got, size, err := fitBinName(pdf, name, maxWidth)
-		if err != nil {
-			t.Fatalf("fitBinName() error = %v, want nil", err)
-		}
-		if size != binNameReducedFontSizePT {
-			t.Errorf("fitBinName() size = %v, want %v", size, binNameReducedFontSizePT)
-		}
-		if !strings.HasSuffix(got, ellipsis) {
-			t.Errorf("fitBinName() = %q, want a truncated name ending in %q", got, ellipsis)
-		}
-		if err := pdf.SetFont(fontFamily, "", size); err != nil {
-			t.Fatalf("SetFont(size) error = %v, want nil", err)
-		}
-		gotWidth, err := pdf.MeasureTextWidth(got)
-		if err != nil {
-			t.Fatalf("MeasureTextWidth(got) error = %v, want nil", err)
-		}
-		if gotWidth > maxWidth {
-			t.Errorf("fitBinName() width = %v, want <= %v (never wider than its region)", gotWidth, maxWidth)
-		}
+		assertTruncatesToFit(t, pdf, name, reducedWidth/2)
 	})
+}
+
+// assertFitsWithoutTruncating asserts fitBinName steps down to
+// binNameReducedFontSizePT and returns name unchanged, for a maxWidth the
+// reduced size alone is enough to fit.
+func assertFitsWithoutTruncating(t *testing.T, pdf *gopdf.GoPdf, name string, maxWidth float64) {
+	t.Helper()
+	got, size, err := fitBinName(pdf, name, maxWidth)
+	if err != nil {
+		t.Fatalf("fitBinName() error = %v, want nil", err)
+	}
+	if size != binNameReducedFontSizePT {
+		t.Errorf("fitBinName() size = %v, want %v", size, binNameReducedFontSizePT)
+	}
+	if got != name {
+		t.Errorf("fitBinName() = %q, want unchanged %q", got, name)
+	}
+}
+
+// assertTruncatesToFit asserts fitBinName truncates name to an
+// ellipsis-terminated result that never measures wider than maxWidth, for a
+// maxWidth even the reduced size overflows.
+func assertTruncatesToFit(t *testing.T, pdf *gopdf.GoPdf, name string, maxWidth float64) {
+	t.Helper()
+	got, size, err := fitBinName(pdf, name, maxWidth)
+	if err != nil {
+		t.Fatalf("fitBinName() error = %v, want nil", err)
+	}
+	if size != binNameReducedFontSizePT {
+		t.Errorf("fitBinName() size = %v, want %v", size, binNameReducedFontSizePT)
+	}
+	if !strings.HasSuffix(got, ellipsis) {
+		t.Errorf("fitBinName() = %q, want a truncated name ending in %q", got, ellipsis)
+	}
+	gotWidth := measureWidthAtSize(t, pdf, got, size)
+	if gotWidth > maxWidth {
+		t.Errorf("fitBinName() width = %v, want <= %v (never wider than its region)", gotWidth, maxWidth)
+	}
 }
 
 // TestTruncateToWidth_NeverWiderThanRegion covers the AC directly: across a
@@ -108,29 +122,27 @@ func TestFitBinName_StepsDownBeforeTruncating(t *testing.T) {
 func TestTruncateToWidth_NeverWiderThanRegion(t *testing.T) {
 	pdf := newTestPDF(t)
 	const name = "Basement Overflow Storage Bin For Seasonal Decorations"
-	if err := pdf.SetFont(fontFamily, "", binNameReducedFontSizePT); err != nil {
-		t.Fatalf("SetFont() error = %v, want nil", err)
-	}
-	fullWidth, err := pdf.MeasureTextWidth(name)
-	if err != nil {
-		t.Fatalf("MeasureTextWidth() error = %v, want nil", err)
-	}
+	fullWidth := measureWidthAtSize(t, pdf, name, binNameReducedFontSizePT)
 
 	for _, fraction := range []float64{0.75, 0.5, 0.25, 0.1} {
 		maxWidth := fullWidth * fraction
 		t.Run("", func(t *testing.T) {
-			got, err := truncateToWidth(pdf, name, maxWidth)
-			if err != nil {
-				t.Fatalf("truncateToWidth() error = %v, want nil", err)
-			}
-			gotWidth, err := pdf.MeasureTextWidth(got)
-			if err != nil {
-				t.Fatalf("MeasureTextWidth(got) error = %v, want nil", err)
-			}
-			if gotWidth > maxWidth {
-				t.Errorf("truncateToWidth(%v) width = %v, want <= %v", maxWidth, gotWidth, maxWidth)
-			}
+			assertTruncateFitsWidth(t, pdf, name, maxWidth)
 		})
+	}
+}
+
+// assertTruncateFitsWidth asserts truncateToWidth's own output never
+// measures wider than maxWidth.
+func assertTruncateFitsWidth(t *testing.T, pdf *gopdf.GoPdf, name string, maxWidth float64) {
+	t.Helper()
+	got, err := truncateToWidth(pdf, name, maxWidth)
+	if err != nil {
+		t.Fatalf("truncateToWidth() error = %v, want nil", err)
+	}
+	gotWidth := measureWidthAtSize(t, pdf, got, binNameReducedFontSizePT)
+	if gotWidth > maxWidth {
+		t.Errorf("truncateToWidth(%v) width = %v, want <= %v", maxWidth, gotWidth, maxWidth)
 	}
 }
 
@@ -140,13 +152,7 @@ func TestTruncateToWidth_NeverWiderThanRegion(t *testing.T) {
 func TestTruncateToWidth_MultiByteNamesSurviveIntact(t *testing.T) {
 	pdf := newTestPDF(t)
 	const name = "Café Storage Bin — Décor Basket 日本語ラベル"
-	if err := pdf.SetFont(fontFamily, "", binNameReducedFontSizePT); err != nil {
-		t.Fatalf("SetFont() error = %v, want nil", err)
-	}
-	fullWidth, err := pdf.MeasureTextWidth(name)
-	if err != nil {
-		t.Fatalf("MeasureTextWidth() error = %v, want nil", err)
-	}
+	fullWidth := measureWidthAtSize(t, pdf, name, binNameReducedFontSizePT)
 
 	got, err := truncateToWidth(pdf, name, fullWidth*0.4)
 	if err != nil {

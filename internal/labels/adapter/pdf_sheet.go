@@ -3,7 +3,7 @@ package adapter
 import (
 	"bytes"
 	"context"
-	_ "embed"
+	_ "embed" // enables the //go:embed directive on hankenGroteskRegularTTF below
 	"encoding/base64"
 	"fmt"
 	"image"
