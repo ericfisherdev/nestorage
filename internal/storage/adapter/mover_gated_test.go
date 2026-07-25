@@ -317,3 +317,77 @@ func TestBinMover_Move_ConcurrentAttemptsOnlyOneWins(t *testing.T) {
 		t.Errorf("after concurrent Move, LocationID = %v, want %v", got.LocationID, to)
 	}
 }
+
+// TestBinMoveFanOutCommitsAtomically is NSTR-41's own required atomicity
+// proof for the fan-out path: a bin move over N items commits N moved
+// rows, and a forced failure commits zero. The "forced failure" is a real
+// mid-transaction one, not a fabricated one — reusing
+// TestBinMover_Move_ConcurrentAttemptsOnlyOneWins' own lost-race pattern:
+// two goroutines move the same two-item bin to the same target at once.
+// FOR UPDATE row locking serializes them, so the loser's own MoveTo guard
+// fails INSIDE its transaction, after the row lock but before its fan-out
+// ever reaches ListIDsByBin/Append — proving the loser's transaction
+// commits zero additional event rows while the winner's commits exactly
+// one moved row per item.
+func TestBinMoveFanOutCommitsAtomically(t *testing.T) {
+	f := newItemFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	from := f.seedLocation(t, creator)
+	to := f.seedLocation(t, creator)
+	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
+	itemA := newItem("Stove", binID, creator)
+	itemB := newItem("Lantern", binID, creator)
+	if err := f.repo.Create(testCtx(t), itemA); err != nil {
+		t.Fatalf("Create(itemA): %v", err)
+	}
+	if err := f.repo.Create(testCtx(t), itemB); err != nil {
+		t.Fatalf("Create(itemB): %v", err)
+	}
+
+	mover := newBinMover(f)
+	actorA := identity.NewUserPrincipal(f.seedUser(t, identity.RoleMember), identity.RoleMember, "A")
+	actorB := identity.NewUserPrincipal(f.seedUser(t, identity.RoleMember), identity.RoleMember, "B")
+
+	var wg sync.WaitGroup
+	results := make([]error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, results[0] = mover.Move(context.Background(), actorA, binID, to)
+	}()
+	go func() {
+		defer wg.Done()
+		_, results[1] = mover.Move(context.Background(), actorB, binID, to)
+	}()
+	wg.Wait()
+
+	succeeded, failed := 0, 0
+	for _, err := range results {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, domain.ErrBinAlreadyInLocation):
+			failed++
+		default:
+			t.Errorf("unexpected error from concurrent Move: %v", err)
+		}
+	}
+	if succeeded != 1 || failed != 1 {
+		t.Fatalf("concurrent Move: succeeded=%d failed=%d, want exactly one of each", succeeded, failed)
+	}
+
+	gotA, err := f.events.ListByItem(testCtx(t), itemA.ID, domain.HistoryPage{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListByItem(itemA): %v", err)
+	}
+	gotB, err := f.events.ListByItem(testCtx(t), itemB.ID, domain.HistoryPage{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListByItem(itemB): %v", err)
+	}
+	if len(gotA) != 1 || gotA[0].Kind != domain.EventMoved {
+		t.Errorf("itemA events = %+v, want exactly one moved event (the loser's mid-transaction guard failure must commit none)", gotA)
+	}
+	if len(gotB) != 1 || gotB[0].Kind != domain.EventMoved {
+		t.Errorf("itemB events = %+v, want exactly one moved event", gotB)
+	}
+}

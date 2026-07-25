@@ -12,5 +12,11 @@
 // own web-handler shape (web_common.go holds what both share). NSTR-40 adds
 // ItemEventRepository (item_event_postgres.go), the pgx-backed adapter for
 // the append-only item event log, over the same db.TX seam as
-// NewLocationRepository.
+// NewLocationRepository. NSTR-41 rewires WithinTx/WithinBinTx to pass a
+// struct bundle (app.OperationStores/app.BinTxStores) carrying an
+// ItemEventRepository alongside the existing store, and adds a third
+// PostgresUnitOfWork method, WithinItemTx (item_uow.go), the transactional
+// seam app.ItemService's Create/Edit/Delete run inside — so every
+// operations/mover/item-lifecycle mutation and the item_event row it emits
+// commit or roll back together.
 package adapter

@@ -47,51 +47,104 @@ func (f *fakeBinStore) Move(_ context.Context, id domain.BinID, target domain.Lo
 	return 1, nil
 }
 
-// fakeBinUnitOfWork runs fn directly against its single fakeBinStore with no
-// real transactional isolation — the bin-move analog of fakeUnitOfWork.
+// fakeBinItemIDLister is an in-memory app.BinItemIDLister fake: ListIDsByBin
+// always returns refs (or listErr, when set), standing in for the real
+// ItemRepository.ListIDsByBin the moved-event fan-out reads.
+type fakeBinItemIDLister struct {
+	refs    []domain.ItemRef
+	listErr error
+}
+
+func (f *fakeBinItemIDLister) ListIDsByBin(_ context.Context, _ domain.BinID) ([]domain.ItemRef, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.refs, nil
+}
+
+// fakeBinUnitOfWork runs fn directly against its fakeBinStore/
+// fakeBinItemIDLister/fakeEventAppender trio with no real transactional
+// isolation, except for one thing it does simulate: on a fn error, it
+// restores the fakeBinStore's bin to what it was before fn ran, mirroring
+// fakeUnitOfWork's own rollback simulation (operations_test.go) so
+// TestBinMoveEventFailureAbortsMove can assert the location swap was
+// undone too.
 type fakeBinUnitOfWork struct {
-	store *fakeBinStore
+	store  *fakeBinStore
+	items  *fakeBinItemIDLister
+	events *fakeEventAppender
 }
 
-func (u *fakeBinUnitOfWork) WithinBinTx(_ context.Context, fn func(app.BinStore) error) error {
-	return fn(u.store)
+func (u *fakeBinUnitOfWork) WithinBinTx(_ context.Context, fn func(app.BinTxStores) error) error {
+	before := *u.store.bin
+	err := fn(app.BinTxStores{Bins: u.store, Items: u.items, Events: u.events})
+	if err != nil {
+		*u.store.bin = before
+	}
+	return err
 }
 
-// fakeLocationVisibility is an in-memory locationFinder fake: FindVisibleByID
-// returns loc when its id matches, else notFoundErr — mirroring
-// fakeBinVisibility's own shape for the location side of a move.
+// fakeBinVisibility (the binFinder fake BinMover shares with
+// OperationService) is defined once, in operations_test.go.
+
+// fakeLocationVisibility is an in-memory locationFinder fake keyed by
+// location id: FindVisibleByID resolves any location previously registered
+// (via the constructor or add), else notFoundErr. Keyed, not a single
+// bin/notFoundErr pair like fakeBinVisibility, because BinMover.Move now
+// resolves TWO distinct locations (from and to) through the same finder —
+// see Move's own doc for why the source location's name is looked up too.
 type fakeLocationVisibility struct {
-	loc         *domain.Location
+	locs        map[domain.LocationID]domain.Location
 	notFoundErr error
 }
 
 func (f *fakeLocationVisibility) FindVisibleByID(_ context.Context, _ identity.Principal, id domain.LocationID) (*domain.Location, error) {
-	if f.loc != nil && f.loc.ID == id {
-		return f.loc, nil
+	if loc, ok := f.locs[id]; ok {
+		cp := loc
+		return &cp, nil
 	}
 	return nil, f.notFoundErr
 }
 
-// movableFixture returns a fakeBinStore/fakeBinVisibility/fakeLocationVisibility
-// trio around one bin sitting in from, for tests that move it to some other
-// location.
+// add registers loc so a later FindVisibleByID(loc.ID) resolves it.
+func (f *fakeLocationVisibility) add(loc domain.Location) {
+	if f.locs == nil {
+		f.locs = make(map[domain.LocationID]domain.Location)
+	}
+	f.locs[loc.ID] = loc
+}
+
+// movableFixture returns a fakeBinStore/fakeBinVisibility/
+// fakeLocationVisibility trio around one bin sitting in from, for tests
+// that move it to some other location. from is pre-registered on the
+// returned fakeLocationVisibility (Move's own FromLocationLabel lookup
+// needs it resolvable); the caller registers the target location itself
+// via locs.add before calling Move.
 func movableFixture(from domain.LocationID) (*fakeBinStore, *fakeBinVisibility, *fakeLocationVisibility, domain.BinID) {
 	binID := domain.NewBinID()
-	bin := &domain.Bin{ID: binID, LocationID: from}
-	return &fakeBinStore{bin: bin}, &fakeBinVisibility{bin: bin}, &fakeLocationVisibility{}, binID
+	bin := &domain.Bin{ID: binID, Code: "A1", Name: "Bin A", LocationID: from}
+	locs := &fakeLocationVisibility{}
+	locs.add(domain.Location{ID: from, Name: "Garage"})
+	return &fakeBinStore{bin: bin}, &fakeBinVisibility{bin: bin}, locs, binID
 }
 
 func fixedClock(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
-func newTestBinMover(store *fakeBinStore, bins *fakeBinVisibility, locs *fakeLocationVisibility) *app.BinMover {
-	return app.NewBinMover(&fakeBinUnitOfWork{store: store}, bins, locs, fixedClock(time.Now()), testLogger())
+// newTestBinMover wires a BinMover over store/bins/locs and fresh
+// fakeBinItemIDLister/fakeEventAppender fakes (no items by default),
+// returning the event appender alongside the mover so a test that cares
+// which events were appended can inspect it directly.
+func newTestBinMover(store *fakeBinStore, bins *fakeBinVisibility, locs *fakeLocationVisibility) (*app.BinMover, *fakeEventAppender) {
+	events := &fakeEventAppender{}
+	uow := &fakeBinUnitOfWork{store: store, items: &fakeBinItemIDLister{}, events: events}
+	return app.NewBinMover(uow, bins, locs, fixedClock(time.Now()), testLogger()), events
 }
 
 func TestNewBinMover_PanicsOnNilDeps(t *testing.T) {
 	store, bins, locs, _ := movableFixture(domain.NewLocationID())
-	uow := &fakeBinUnitOfWork{store: store}
+	uow := &fakeBinUnitOfWork{store: store, items: &fakeBinItemIDLister{}, events: &fakeEventAppender{}}
 	clock := fixedClock(time.Now())
 
 	tests := []struct {
@@ -120,9 +173,10 @@ func TestBinMover_Move_Success(t *testing.T) {
 	from := domain.NewLocationID()
 	to := domain.NewLocationID()
 	store, bins, locs, binID := movableFixture(from)
-	locs.loc = &domain.Location{ID: to}
+	locs.add(domain.Location{ID: to, Name: "Attic"})
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
-	mover := app.NewBinMover(&fakeBinUnitOfWork{store: store}, bins, locs, fixedClock(now), testLogger())
+	uow := &fakeBinUnitOfWork{store: store, items: &fakeBinItemIDLister{}, events: &fakeEventAppender{}}
+	mover := app.NewBinMover(uow, bins, locs, fixedClock(now), testLogger())
 
 	holder := identity.NewUserID()
 	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
@@ -154,10 +208,79 @@ func TestBinMover_Move_Success(t *testing.T) {
 	}
 }
 
+// TestBinMoveEmitsMovedEventPerItem proves NSTR-41's fan-out contract:
+// moving a bin holding N items appends exactly N EventMoved rows, each
+// naming its own item, the containing bin unchanged by the move (R4 of
+// NSTR-41's own reconciliation), and the from/to location snapshot.
+func TestBinMoveEmitsMovedEventPerItem(t *testing.T) {
+	from := domain.NewLocationID()
+	to := domain.NewLocationID()
+	store, bins, locs, binID := movableFixture(from)
+	locs.add(domain.Location{ID: to, Name: "Attic"})
+	itemA := domain.ItemRef{ID: domain.NewItemID(), Name: "Stove"}
+	itemB := domain.ItemRef{ID: domain.NewItemID(), Name: "Lantern"}
+	events := &fakeEventAppender{}
+	uow := &fakeBinUnitOfWork{store: store, items: &fakeBinItemIDLister{refs: []domain.ItemRef{itemA, itemB}}, events: events}
+	mover := app.NewBinMover(uow, bins, locs, fixedClock(time.Now()), testLogger())
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+
+	if _, err := mover.Move(context.Background(), actor, binID, to); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+
+	if len(events.events) != 2 {
+		t.Fatalf("Move appended %d events, want exactly 2 (one per item)", len(events.events))
+	}
+	for i, want := range []domain.ItemRef{itemA, itemB} {
+		got := events.events[i]
+		if got.Kind != domain.EventMoved {
+			t.Errorf("event[%d].Kind = %v, want %v", i, got.Kind, domain.EventMoved)
+		}
+		if got.ItemID != want.ID || got.ItemName != want.Name {
+			t.Errorf("event[%d] item = %v/%q, want %v/%q", i, got.ItemID, got.ItemName, want.ID, want.Name)
+		}
+		if got.BinID == nil || *got.BinID != binID {
+			t.Errorf("event[%d].BinID = %v, want the containing bin %v (unchanged by the move)", i, got.BinID, binID)
+		}
+		if got.FromLocationID == nil || *got.FromLocationID != from {
+			t.Errorf("event[%d].FromLocationID = %v, want %v", i, got.FromLocationID, from)
+		}
+		if got.ToLocationID == nil || *got.ToLocationID != to {
+			t.Errorf("event[%d].ToLocationID = %v, want %v", i, got.ToLocationID, to)
+		}
+	}
+}
+
+// TestBinMoveEventFailureAbortsMove proves atomicity for the fan-out path:
+// a failing EventAppender aborts the whole move, rolling the bin's
+// location back too — no relocated bin left with a missing event.
+func TestBinMoveEventFailureAbortsMove(t *testing.T) {
+	from := domain.NewLocationID()
+	to := domain.NewLocationID()
+	store, bins, locs, binID := movableFixture(from)
+	locs.add(domain.Location{ID: to, Name: "Attic"})
+	refs := []domain.ItemRef{{ID: domain.NewItemID(), Name: "Stove"}}
+	events := &fakeEventAppender{appendErr: errors.New("boom")}
+	uow := &fakeBinUnitOfWork{store: store, items: &fakeBinItemIDLister{refs: refs}, events: events}
+	mover := app.NewBinMover(uow, bins, locs, fixedClock(time.Now()), testLogger())
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+
+	_, err := mover.Move(context.Background(), actor, binID, to)
+	if err == nil {
+		t.Fatal("Move with a failing EventAppender = nil error, want one")
+	}
+	if len(events.events) != 0 {
+		t.Error("a failing Append must record no event")
+	}
+	if store.bin.LocationID != from {
+		t.Errorf("a failing Append must roll back the location swap too: LocationID = %v, want unchanged %v", store.bin.LocationID, from)
+	}
+}
+
 func TestBinMover_Move_NoopRejected(t *testing.T) {
 	loc := domain.NewLocationID()
 	store, bins, locs, binID := movableFixture(loc)
-	mover := newTestBinMover(store, bins, locs)
+	mover, events := newTestBinMover(store, bins, locs)
 	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
 	_, err := mover.Move(context.Background(), actor, binID, loc)
@@ -170,13 +293,16 @@ func TestBinMover_Move_NoopRejected(t *testing.T) {
 	if store.moveCalls != 0 {
 		t.Errorf("rejected no-op move must not call the repository Move, got %d calls", store.moveCalls)
 	}
+	if len(events.events) != 0 {
+		t.Error("rejected no-op move must not append any event")
+	}
 }
 
 func TestBinMover_Move_UnknownBinRejected(t *testing.T) {
 	store, bins, locs, _ := movableFixture(domain.NewLocationID())
 	bins.bin = nil
 	bins.notFoundErr = domain.ErrBinNotFound
-	mover := newTestBinMover(store, bins, locs)
+	mover, _ := newTestBinMover(store, bins, locs)
 	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
 	_, err := mover.Move(context.Background(), actor, domain.NewBinID(), domain.NewLocationID())
@@ -191,7 +317,7 @@ func TestBinMover_Move_UnknownBinRejected(t *testing.T) {
 func TestBinMover_Move_UnknownLocationRejected(t *testing.T) {
 	store, bins, locs, binID := movableFixture(domain.NewLocationID())
 	locs.notFoundErr = domain.ErrLocationNotFound
-	mover := newTestBinMover(store, bins, locs)
+	mover, _ := newTestBinMover(store, bins, locs)
 	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 
 	_, err := mover.Move(context.Background(), actor, binID, domain.NewLocationID())
@@ -215,8 +341,8 @@ func TestBinMover_Move_SecondAttemptFailsAfterFirstSucceeds(t *testing.T) {
 	from := domain.NewLocationID()
 	to := domain.NewLocationID()
 	store, bins, locs, binID := movableFixture(from)
-	locs.loc = &domain.Location{ID: to}
-	mover := newTestBinMover(store, bins, locs)
+	locs.add(domain.Location{ID: to, Name: "Attic"})
+	mover, _ := newTestBinMover(store, bins, locs)
 	first := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
 	second := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Bob")
 

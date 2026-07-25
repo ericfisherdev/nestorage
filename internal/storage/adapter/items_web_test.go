@@ -69,7 +69,7 @@ type fakeItemOperator struct {
 	returnCalls int
 }
 
-func (f *fakeItemOperator) RemoveFromBin(_ context.Context, _ identity.Principal, _ domain.ItemID) (app.Operation, error) {
+func (f *fakeItemOperator) RemoveFromBin(_ context.Context, _ identity.Principal, _ domain.ItemID, _ *string) (app.Operation, error) {
 	f.removeCalls++
 	if f.removeErr != nil {
 		return app.Operation{}, f.removeErr
@@ -77,7 +77,7 @@ func (f *fakeItemOperator) RemoveFromBin(_ context.Context, _ identity.Principal
 	return app.Operation{}, nil
 }
 
-func (f *fakeItemOperator) ReturnToBin(_ context.Context, _ identity.Principal, _ domain.ItemID, _ domain.BinID) (app.Operation, error) {
+func (f *fakeItemOperator) ReturnToBin(_ context.Context, _ identity.Principal, _ domain.ItemID, _ domain.BinID, _ *string) (app.Operation, error) {
 	f.returnCalls++
 	if f.returnErr != nil {
 		return app.Operation{}, f.returnErr

@@ -270,6 +270,37 @@ func (r *ItemRepository) Delete(ctx context.Context, id domain.ItemID) error {
 	return nil
 }
 
+// ListIDsByBin returns every item in binID, unscoped by visibility — see
+// domain.ItemRepository.ListIDsByBin's own doc for why this must not apply
+// itemVisibilityWhere the way ListByBin does. Ordered by id for a stable
+// fan-out order across app.BinMover's per-item moved events. Returns an
+// empty slice, not an error, when binID holds no items.
+func (r *ItemRepository) ListIDsByBin(ctx context.Context, binID domain.BinID) ([]domain.ItemRef, error) {
+	const q = `SELECT id, name FROM item WHERE current_bin_id = $1 ORDER BY id`
+	rows, err := r.dbtx.Query(ctx, q, binID.String())
+	if err != nil {
+		return nil, fmt.Errorf("list item ids by bin: %w", err)
+	}
+	defer rows.Close()
+
+	refs := make([]domain.ItemRef, 0)
+	for rows.Next() {
+		var idStr, name string
+		if err := rows.Scan(&idStr, &name); err != nil {
+			return nil, fmt.Errorf("list item ids by bin: scan: %w", err)
+		}
+		id, err := domain.ParseItemID(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("list item ids by bin: id: %w", err)
+		}
+		refs = append(refs, domain.ItemRef{ID: id, Name: name})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list item ids by bin: %w", err)
+	}
+	return refs, nil
+}
+
 // itemVisibilityWhere returns the SQL fragment applying identity.CanSeeBin's
 // rule to i.current_bin_id via the LEFT JOIN itemVisibleColumns supplies,
 // extended with the held-item exception: a held item (current_bin_id NULL,

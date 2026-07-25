@@ -165,14 +165,18 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 
 	locationService := storageapp.NewLocationService(locationRepo, binRepo, logger)
 	binService := storageapp.NewBinService(binRepo, identityRepo, itemRepo, logger)
-	itemService := storageapp.NewItemService(itemRepo, logger)
+	// NSTR-41 gives ItemService its own transactional seam (WithinItemTx),
+	// the third method storageUOW now satisfies alongside WithinTx/
+	// WithinBinTx, so Create/Edit/Delete each commit their item_event row in
+	// the same transaction as the mutation it records.
+	itemService := storageapp.NewItemService(itemRepo, storageUOW, logger)
 	binMover := storageapp.NewBinMover(storageUOW, binRepo, locationRepo, time.Now, logger)
 	// NSTR-32's item detail/search composition: OperationService (NSTR-29)
 	// backs the detail page's check-out/return controls, over the same
 	// storageUOW/binRepo BinMover already shares (PostgresUnitOfWork
-	// satisfies both WithinTx and WithinBinTx); ItemQueryService (NSTR-32)
-	// backs the visibility-scoped detail/search reads, over the same
-	// itemRepo every other item-adjacent service shares. NSTR-38's
+	// satisfies WithinTx, WithinBinTx, and WithinItemTx); ItemQueryService
+	// (NSTR-32) backs the visibility-scoped detail/search reads, over the
+	// same itemRepo every other item-adjacent service shares. NSTR-38's
 	// ItemLinkService backs the detail page's labeled-links section, over
 	// itemRepo too — every one of its methods authorizes through the same
 	// visibility-scoped Get every other item-adjacent service already uses.
