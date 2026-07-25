@@ -67,7 +67,14 @@ func TestDaysBetween(t *testing.T) {
 }
 
 func TestHistoryDayHeading(t *testing.T) {
-	now := time.Date(2026, 7, 20, 15, 0, 0, 0, time.UTC)
+	// loc is passed explicitly to historyDayHeading rather than relying on
+	// time.Local, so this test's outcome never depends on the machine it
+	// runs on — the exact bug that made the FixedZone-input, Local()-inside
+	// version of this test pass on a UTC-5 dev box and fail on a UTC CI
+	// runner (the day boundary flipped once .Local() re-expressed both
+	// inputs in the runner's own zone instead of the test's chosen one).
+	loc := time.FixedZone("UTC-5", -5*60*60)
+	now := time.Date(2026, 7, 20, 15, 0, 0, 0, loc)
 
 	tests := []struct {
 		name string
@@ -76,12 +83,12 @@ func TestHistoryDayHeading(t *testing.T) {
 	}{
 		{"today", now, "Today"},
 		{"yesterday", now.AddDate(0, 0, -1), "Yesterday"},
-		{"ten days ago falls back to the calendar date", now.AddDate(0, 0, -10), now.AddDate(0, 0, -10).Local().Format("Jan 2, 2006")},
+		{"ten days ago falls back to the calendar date", now.AddDate(0, 0, -10), now.AddDate(0, 0, -10).In(loc).Format("Jan 2, 2006")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := historyDayHeading(tt.t, now); got != tt.want {
-				t.Errorf("historyDayHeading(%v, %v) = %q, want %q", tt.t, now, got, tt.want)
+			if got := historyDayHeading(tt.t, now, loc); got != tt.want {
+				t.Errorf("historyDayHeading(%v, %v, %v) = %q, want %q", tt.t, now, loc, got, tt.want)
 			}
 		})
 	}
@@ -99,7 +106,9 @@ func TestBuildItemHistoryDays_GroupsAcrossALocalMidnightBoundary(t *testing.T) {
 		{Kind: domain.EventRemoved, BinLabel: "B-01 — Garage", OccurredAt: time.Date(2026, 7, 20, 23, 30, 0, 0, zone)},
 	}
 
-	days := buildItemHistoryDays(events, now)
+	// zone itself is passed as buildItemHistoryDays' own loc parameter —
+	// not read back via .Local() — so this assertion holds on any runner.
+	days := buildItemHistoryDays(events, now, zone)
 	if len(days) != 2 {
 		t.Fatalf("buildItemHistoryDays produced %d day groups, want 2 (events straddle a local midnight)", len(days))
 	}
@@ -117,7 +126,7 @@ func TestBuildItemHistoryDays_SameLocalDayStaysOneGroup(t *testing.T) {
 		{Kind: domain.EventRemoved, BinLabel: "B-01 — Garage", OccurredAt: time.Date(2026, 7, 20, 9, 0, 0, 0, zone)},
 	}
 
-	days := buildItemHistoryDays(events, now)
+	days := buildItemHistoryDays(events, now, zone)
 	if len(days) != 1 {
 		t.Fatalf("buildItemHistoryDays produced %d day groups, want 1 (both events fall on the same local day)", len(days))
 	}

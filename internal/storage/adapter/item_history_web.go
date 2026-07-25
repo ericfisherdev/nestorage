@@ -79,7 +79,7 @@ func (h *ItemsWebHandlers) History(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)
 		return
 	}
-	days := buildItemHistoryDays(events, time.Now())
+	days := buildItemHistoryDays(events, time.Now(), time.Local)
 
 	// A ?before request is always a click-to-load fragment targeting
 	// #item-history-more (historyMoreRow's own hx-target) — never a full
@@ -164,14 +164,19 @@ func parseHistoryCursor(raw string) (*domain.HistoryCursor, error) {
 // buildItemHistoryDays groups a newest-first page of events into
 // consecutive local-calendar-day runs — safe because ListByItem's own
 // ordering guarantee (occurred_at DESC) means every event sharing a local
-// day is already contiguous in events, so a single pass suffices.
-func buildItemHistoryDays(events []domain.ItemEvent, now time.Time) []components.ItemHistoryDayView {
+// day is already contiguous in events, so a single pass suffices. loc is
+// the zone "local" means: the History handler's own production call passes
+// time.Local (the appliance and household share one place), while a test
+// passes a zone it constructs itself, so day boundaries never depend on the
+// machine running the process — see historyDayHeading's own doc for why
+// that distinction matters.
+func buildItemHistoryDays(events []domain.ItemEvent, now time.Time, loc *time.Location) []components.ItemHistoryDayView {
 	days := make([]components.ItemHistoryDayView, 0)
 	var lastKey string
 	for _, e := range events {
-		key := e.OccurredAt.Local().Format("2006-01-02")
+		key := e.OccurredAt.In(loc).Format("2006-01-02")
 		if len(days) == 0 || key != lastKey {
-			days = append(days, components.ItemHistoryDayView{Heading: historyDayHeading(e.OccurredAt, now)})
+			days = append(days, components.ItemHistoryDayView{Heading: historyDayHeading(e.OccurredAt, now, loc)})
 			lastKey = key
 		}
 		days[len(days)-1].Events = append(days[len(days)-1].Events, buildHistoryEventView(e))
@@ -179,14 +184,20 @@ func buildItemHistoryDays(events []domain.ItemEvent, now time.Time) []components
 	return days
 }
 
-// historyDayHeading names the local calendar day t falls on, relative to
-// now: "Today", "Yesterday", or "Jan 2, 2006" — always computed from
-// time.Local (t.Local()/now.Local()), never a UTC-derived string, so a
-// non-UTC viewer's headings agree with their own wall clock (the AC's own
-// requirement).
-func historyDayHeading(t, now time.Time) string {
-	tl := t.Local()
-	switch daysBetween(tl, now.Local()) {
+// historyDayHeading names the calendar day t falls on in loc, relative to
+// now: "Today", "Yesterday", or "Jan 2, 2006" — computed via t.In(loc)/
+// now.In(loc), never a UTC-derived string, so a non-UTC viewer's headings
+// agree with their own wall clock (the AC's own requirement). loc is an
+// explicit parameter rather than time.Local reached for internally: the
+// household and the appliance share one place, so time.Local is exactly
+// right in production (see buildItemHistoryDays' own call site), but a
+// function that reaches for the PROCESS's own ambient zone internally is
+// untestable across machines in different zones — a test asserting "same
+// day" or "different day" would pass or fail depending on where it happens
+// to run, which is the opposite of what the AC needs proven.
+func historyDayHeading(t, now time.Time, loc *time.Location) string {
+	tl := t.In(loc)
+	switch daysBetween(tl, now.In(loc)) {
 	case 0:
 		return "Today"
 	case 1:
