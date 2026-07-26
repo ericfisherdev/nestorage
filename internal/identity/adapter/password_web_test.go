@@ -24,9 +24,9 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 )
 
-// fakePasswordChangerService is a configurable passwordChangerService fake,
+// fakePasswordChanger is a configurable passwordChanger fake,
 // mirroring fakeDeviceTokenWebService's identical shape (devicetokenweb_test.go).
-type fakePasswordChangerService struct {
+type fakePasswordChanger struct {
 	err error
 
 	calls []struct {
@@ -36,7 +36,7 @@ type fakePasswordChangerService struct {
 	}
 }
 
-func (f *fakePasswordChangerService) ChangeOwn(_ context.Context, id domain.UserID, currentPassword, newPassword string) error {
+func (f *fakePasswordChanger) ChangeOwn(_ context.Context, id domain.UserID, currentPassword, newPassword string) error {
 	f.calls = append(f.calls, struct {
 		userID          domain.UserID
 		currentPassword string
@@ -47,21 +47,21 @@ func (f *fakePasswordChangerService) ChangeOwn(_ context.Context, id domain.User
 
 // passwordWebFixture wires PasswordWebHandlers behind the real
 // Authenticate/RequireUser middleware chain over an in-memory session store,
-// backed by a fake passwordChangerService — mirrors deviceWebFixture's
+// backed by a fake passwordChanger — mirrors deviceWebFixture's
 // identical shape (devicetokenweb_test.go). It reuses that file's
 // fakeCurrentUserFinder and passthroughLayout, since both live in this same
 // adapter_test package.
 type passwordWebFixture struct {
 	server    *httptest.Server
 	client    *http.Client
-	passwords *fakePasswordChangerService
+	passwords *fakePasswordChanger
 }
 
 func newPasswordWebFixture(t *testing.T, user *domain.User, mode config.FederationMode, providerURL string) *passwordWebFixture {
 	t.Helper()
 	sm := scs.New()
 	userFinder := &fakeCurrentUserFinder{users: map[domain.UserID]*domain.User{user.ID: user}}
-	passwords := &fakePasswordChangerService{}
+	passwords := &fakePasswordChanger{}
 	handlers := adapter.NewPasswordWebHandlers(passwords, sm, passthroughLayout, mode, providerURL, testLogger())
 
 	passwordMux := http.NewServeMux()
@@ -125,7 +125,7 @@ func (f *passwordWebFixture) changeForm(csrfToken, current, newPassword, confirm
 
 func TestNewPasswordWebHandlers_NilDependenciesPanic(t *testing.T) {
 	sm := scs.New()
-	passwords := &fakePasswordChangerService{}
+	passwords := &fakePasswordChanger{}
 	tests := []struct {
 		name string
 		fn   func()
@@ -446,7 +446,7 @@ func (f *fakePasswordWebRepo) SetPasswordHash(_ context.Context, id domain.UserI
 // realServicePasswordWebFixture wires PasswordWebHandlers over the REAL
 // app.PasswordService and the REAL SessionRevoker(sm) — the only way to
 // exercise ChangeOwn's actual session-revocation effect, as opposed to
-// fakePasswordChangerService's recorded calls above. sm is plain scs.New()
+// fakePasswordChanger's recorded calls above. sm is plain scs.New()
 // (memstore), which implements scs.IterableStore (memstore.All), so
 // SessionRevoker.RevokeAll runs for real — see SessionRevoker's own doc.
 type realServicePasswordWebFixture struct {
