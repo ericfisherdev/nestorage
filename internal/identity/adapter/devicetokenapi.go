@@ -10,6 +10,7 @@ import (
 
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
+	"github.com/ericfisherdev/nestorage/internal/platform/config"
 )
 
 // maxDeviceTokenRequestBytes bounds the exchange endpoint's request body — a
@@ -32,20 +33,24 @@ type deviceTokenIssuer interface {
 // exactly that reason.
 type DeviceTokenAPIHandlers struct {
 	issuer deviceTokenIssuer
+	mode   config.FederationMode
 	logger *slog.Logger
 }
 
-// NewDeviceTokenAPIHandlers constructs DeviceTokenAPIHandlers. All
-// dependencies are required; a missing one panics at construction time,
-// matching every other WebHandlers constructor in this codebase.
-func NewDeviceTokenAPIHandlers(issuer deviceTokenIssuer, logger *slog.Logger) *DeviceTokenAPIHandlers {
+// NewDeviceTokenAPIHandlers constructs DeviceTokenAPIHandlers. mode is
+// resolved once at the composition root (cfg.Provider.Mode()) and passed in
+// here rather than re-derived — see Issue's own doc for how it gates this
+// local-password surface (NSTR-100). All dependencies are required; a
+// missing one panics at construction time, matching every other
+// WebHandlers constructor in this codebase.
+func NewDeviceTokenAPIHandlers(issuer deviceTokenIssuer, mode config.FederationMode, logger *slog.Logger) *DeviceTokenAPIHandlers {
 	if issuer == nil {
 		panic("identity/adapter: NewDeviceTokenAPIHandlers requires a non-nil deviceTokenIssuer")
 	}
 	if logger == nil {
 		panic("identity/adapter: NewDeviceTokenAPIHandlers requires a non-nil logger")
 	}
-	return &DeviceTokenAPIHandlers{issuer: issuer, logger: logger}
+	return &DeviceTokenAPIHandlers{issuer: issuer, mode: mode, logger: logger}
 }
 
 // Routes registers the exchange route on mux — an api.Registrar (DIP),
@@ -76,8 +81,17 @@ type deviceTokenExchangeResponse struct {
 }
 
 // Issue handles POST /api/v1/auth/device-tokens: decode, delegate to
-// DeviceTokenService.Issue, and map its result to a JSON response.
+// DeviceTokenService.Issue, and map its result to a JSON response. In
+// federated mode it answers 403 through the standard error envelope before
+// any credential verification — this endpoint mints one of the two
+// password-derived credentials NSTR-24's principal middleware accepts, and
+// federated mode mints none of those until NSTR-102/NSTR-103's Android
+// onboarding story lands (NSTR-100).
 func (h *DeviceTokenAPIHandlers) Issue(w http.ResponseWriter, r *http.Request) {
+	if h.mode == config.FederationModeFederated {
+		api.WriteError(w, h.logger, http.StatusForbidden, api.CodeForbidden, federatedLoginDisabledMessage)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxDeviceTokenRequestBytes)
 
 	var req deviceTokenExchangeRequest

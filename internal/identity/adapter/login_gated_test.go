@@ -17,6 +17,7 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	"github.com/ericfisherdev/nestorage/internal/identity/app"
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
+	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/db/dbtest"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 )
@@ -55,7 +56,7 @@ func newLoginGatedFixture(t *testing.T, email, password string) *loginGatedFixtu
 
 	authn := app.NewAuthenticator(repo, cryptotest.Hasher())
 	sm := session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour})
-	handlers := adapter.NewHandlers(sm, authn, adapter.NewLoginAttemptLimiter(), testLogger())
+	handlers := adapter.NewHandlers(sm, authn, adapter.NewLoginAttemptLimiter(), config.FederationModeStandalone, testLogger())
 
 	mux := http.NewServeMux()
 	handlers.Routes(mux)

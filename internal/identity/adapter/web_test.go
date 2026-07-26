@@ -15,6 +15,7 @@ import (
 
 	"github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
+	"github.com/ericfisherdev/nestorage/internal/platform/config"
 )
 
 // fakeAuthenticator is a configurable loginAuthenticator fake: users maps a
@@ -70,8 +71,16 @@ type loginHarness struct {
 
 func newLoginHarness(t *testing.T, authn *fakeAuthenticator) *loginHarness {
 	t.Helper()
+	return newLoginHarnessMode(t, authn, config.FederationModeStandalone)
+}
+
+// newLoginHarnessMode is newLoginHarness with an explicit FederationMode, so
+// NSTR-100's federated-refusal tests can drive the same harness shape
+// standalone already uses.
+func newLoginHarnessMode(t *testing.T, authn *fakeAuthenticator, mode config.FederationMode) *loginHarness {
+	t.Helper()
 	sm := scs.New()
-	handlers := adapter.NewHandlers(sm, authn, adapter.NewLoginAttemptLimiter(), testLogger())
+	handlers := adapter.NewHandlers(sm, authn, adapter.NewLoginAttemptLimiter(), mode, testLogger())
 
 	mux := http.NewServeMux()
 	handlers.Routes(mux)
@@ -133,34 +142,34 @@ func TestNewHandlers_NilDependenciesPanic(t *testing.T) {
 	t.Run("nil session manager", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewHandlers(nil, authn, limiter, logger) did not panic")
+				t.Error("NewHandlers(nil, authn, limiter, mode, logger) did not panic")
 			}
 		}()
-		adapter.NewHandlers(nil, authn, adapter.NewLoginAttemptLimiter(), testLogger())
+		adapter.NewHandlers(nil, authn, adapter.NewLoginAttemptLimiter(), config.FederationModeStandalone, testLogger())
 	})
 	t.Run("nil authenticator", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewHandlers(sm, nil, limiter, logger) did not panic")
+				t.Error("NewHandlers(sm, nil, limiter, mode, logger) did not panic")
 			}
 		}()
-		adapter.NewHandlers(scs.New(), nil, adapter.NewLoginAttemptLimiter(), testLogger())
+		adapter.NewHandlers(scs.New(), nil, adapter.NewLoginAttemptLimiter(), config.FederationModeStandalone, testLogger())
 	})
 	t.Run("nil limiter", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewHandlers(sm, authn, nil, logger) did not panic")
+				t.Error("NewHandlers(sm, authn, nil, mode, logger) did not panic")
 			}
 		}()
-		adapter.NewHandlers(scs.New(), authn, nil, testLogger())
+		adapter.NewHandlers(scs.New(), authn, nil, config.FederationModeStandalone, testLogger())
 	})
 	t.Run("nil logger", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewHandlers(sm, authn, limiter, nil) did not panic")
+				t.Error("NewHandlers(sm, authn, limiter, mode, nil) did not panic")
 			}
 		}()
-		adapter.NewHandlers(scs.New(), authn, adapter.NewLoginAttemptLimiter(), nil)
+		adapter.NewHandlers(scs.New(), authn, adapter.NewLoginAttemptLimiter(), config.FederationModeStandalone, nil)
 	})
 }
 
@@ -331,5 +340,56 @@ func TestLogout_DestroysSessionAndRedirectsToLogin(t *testing.T) {
 	}
 	if sessionCookieValue(h.client, h.server.URL) == postLoginToken {
 		t.Error("logout did not change the session token — the server-side session must be destroyed, not just the cookie")
+	}
+}
+
+// TestLoginPage_Federated_RendersNoticeInsteadOfForm asserts GET /login in
+// federated mode renders the fixed notice with no password form at all —
+// there is no local password to sign in with (NSTR-100).
+func TestLoginPage_Federated_RendersNoticeInsteadOfForm(t *testing.T) {
+	authn, _ := newFakeAuthenticator("alice@example.com", "correct-horse-battery")
+	h := newLoginHarnessMode(t, authn, config.FederationModeFederated)
+
+	resp, err := h.client.Get(h.server.URL + "/login")
+	if err != nil {
+		t.Fatalf("GET /login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "sign in through Nestova") {
+		t.Errorf("body missing the federated notice:\n%s", body)
+	}
+	if strings.Contains(string(body), `action="/login"`) {
+		t.Errorf("federated login page still renders the password form:\n%s", body)
+	}
+}
+
+// TestLogin_Federated_RefusedWithoutTouchingAuthenticatorOrSession asserts
+// POST /login in federated mode answers 403 with the same notice, without
+// ever calling the Authenticator or establishing a session — the fail-closed
+// guarantee holds even with no CSRF token presented at all (NSTR-100 AC: "An
+// unreachable provider ... refuses local password login even when the
+// provider cannot be contacted").
+func TestLogin_Federated_RefusedWithoutTouchingAuthenticatorOrSession(t *testing.T) {
+	authn, _ := newFakeAuthenticator("alice@example.com", "correct-horse-battery")
+	h := newLoginHarnessMode(t, authn, config.FederationModeFederated)
+	preToken := sessionCookieValue(h.client, h.server.URL)
+
+	resp, body := h.postForm(t, "/login", loginForm("", "alice@example.com", "correct-horse-battery", ""))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403:\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "sign in through Nestova") {
+		t.Errorf("body missing the federated notice:\n%s", body)
+	}
+	if authn.callCount() != 0 {
+		t.Error("Authenticator called despite federated mode refusing local password login")
+	}
+	if postToken := sessionCookieValue(h.client, h.server.URL); postToken != preToken {
+		t.Error("federated refusal must not establish or rotate a session")
 	}
 }

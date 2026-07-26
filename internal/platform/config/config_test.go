@@ -32,6 +32,7 @@ var allKeys = []string{
 	"SES_REGION", "SES_ACCESS_KEY_ID", "SES_SECRET_ACCESS_KEY",
 	"API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST",
 	"AUTH_RATE_LIMIT_RPM", "AUTH_RATE_LIMIT_BURST",
+	"PROVIDER_BASE_URL", "PROVIDER_CLIENT_ID", "PROVIDER_CLIENT_SECRET",
 }
 
 // setEnv isolates a test case from both the developer's ambient environment
@@ -136,6 +137,50 @@ func TestLoad_AggregatesMultipleErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "SERVER_REQUEST_TIMEOUT") {
 		t.Errorf("Load() error = %v, want it to name SERVER_REQUEST_TIMEOUT", err)
+	}
+}
+
+// TestLoad_ProviderFederatedWiresThrough asserts a fully configured provider
+// resolves to FederationModeFederated with the fields carried through
+// unchanged (NSTR-100).
+func TestLoad_ProviderFederatedWiresThrough(t *testing.T) {
+	env := map[string]string{
+		"APP_ENV":                corecfg.EnvDev,
+		"DATABASE_URL":           "postgres://u:p@example.com:5432/nestorage?sslmode=disable",
+		"PROVIDER_BASE_URL":      "https://nestova.example",
+		"PROVIDER_CLIENT_ID":     "nestorage-client",
+		"PROVIDER_CLIENT_SECRET": "top-secret",
+	}
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.Provider.Mode() != config.FederationModeFederated {
+		t.Errorf("Provider.Mode() = %q, want %q", cfg.Provider.Mode(), config.FederationModeFederated)
+	}
+	if cfg.Provider.ClientID != "nestorage-client" {
+		t.Errorf("Provider.ClientID = %q, want %q", cfg.Provider.ClientID, "nestorage-client")
+	}
+}
+
+// TestLoad_ProviderPartialConfigFailsNamingMissingField asserts a partially
+// configured provider fails Load, naming the specific missing variable
+// (NSTR-100 AC: "fails startup with an error naming the missing field").
+func TestLoad_ProviderPartialConfigFailsNamingMissingField(t *testing.T) {
+	env := map[string]string{
+		"APP_ENV":            corecfg.EnvDev,
+		"DATABASE_URL":       "postgres://u:p@example.com:5432/nestorage?sslmode=disable",
+		"PROVIDER_BASE_URL":  "https://nestova.example",
+		"PROVIDER_CLIENT_ID": "nestorage-client",
+		// PROVIDER_CLIENT_SECRET deliberately left unset.
+	}
+	setEnv(t, env)
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "PROVIDER_CLIENT_SECRET") {
+		t.Fatalf("Load() error = %v, want an error naming PROVIDER_CLIENT_SECRET", err)
 	}
 }
 

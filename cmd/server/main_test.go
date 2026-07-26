@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -12,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	corecfg "github.com/ericfisherdev/nestcore/config"
+
+	"github.com/ericfisherdev/nestorage/internal/platform/config"
 )
 
 func TestListenAndServe(t *testing.T) {
@@ -74,4 +78,61 @@ func TestRun_ConfigError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Fatalf("run() error = %v, want a DATABASE_URL configuration error", err)
 	}
+}
+
+// TestLogFederationMode drives logFederationMode against a buffer-backed
+// slog JSON handler — no database needed — asserting the standalone line,
+// the federated line naming the host and client id, and the absence of the
+// secret string from the output in both cases (NSTR-100).
+func TestLogFederationMode(t *testing.T) {
+	t.Run("standalone", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+		logFederationMode(logger, config.ProviderConfig{})
+
+		var line map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+			t.Fatalf("decode log line: %v; raw: %s", err, buf.String())
+		}
+		if line["mode"] != "standalone" {
+			t.Errorf(`log line "mode" = %v, want "standalone"`, line["mode"])
+		}
+		if _, ok := line["provider_host"]; ok {
+			t.Error("standalone log line must not include provider_host")
+		}
+		if _, ok := line["client_id"]; ok {
+			t.Error("standalone log line must not include client_id")
+		}
+	})
+
+	t.Run("federated", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+		cfg := config.ProviderConfig{
+			BaseURL:      "https://nestova.example",
+			ClientID:     "nestorage-client",
+			ClientSecret: "super-secret-value",
+		}
+
+		logFederationMode(logger, cfg)
+
+		raw := buf.String()
+		if strings.Contains(raw, "super-secret-value") {
+			t.Fatalf("log line contains the client secret: %s", raw)
+		}
+		var line map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+			t.Fatalf("decode log line: %v; raw: %s", err, raw)
+		}
+		if line["mode"] != "federated" {
+			t.Errorf(`log line "mode" = %v, want "federated"`, line["mode"])
+		}
+		if line["provider_host"] != "nestova.example" {
+			t.Errorf(`log line "provider_host" = %v, want "nestova.example"`, line["provider_host"])
+		}
+		if line["client_id"] != "nestorage-client" {
+			t.Errorf(`log line "client_id" = %v, want "nestorage-client"`, line["client_id"])
+		}
+	})
 }

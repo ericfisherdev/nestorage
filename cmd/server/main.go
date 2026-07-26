@@ -89,6 +89,14 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// NSTR-100: logged once, right after config.Load succeeds — the helper
+	// never receives or emits ClientSecret (see its own doc). federationMode
+	// is resolved once here (cfg.Provider.Mode()) and passed, unchanged,
+	// into both local-password surfaces further down (identityadapter.
+	// NewHandlers, NewDeviceTokenAPIHandlers): neither handler re-derives it
+	// from cfg.Provider itself.
+	logFederationMode(logger, cfg.Provider)
+	federationMode := cfg.Provider.Mode()
 
 	// Establish the Postgres pool up front so a bad DSN or unreachable
 	// database fails fast at boot (db.New bounds its own ping with
@@ -367,7 +375,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// out of one must not get a fresh run of attempts against the other
 	// (see LoginAttemptLimiter's own doc).
 	loginLimiter := identityadapter.NewLoginAttemptLimiter()
-	login := identityadapter.NewHandlers(sm, authenticator, loginLimiter, logger)
+	login := identityadapter.NewHandlers(sm, authenticator, loginLimiter, federationMode, logger)
 	authenticate := identityadapter.Authenticate(sm, identityRepo, logger)
 
 	// NSTR-22's device tokens: DeviceTokenService implements
@@ -378,7 +386,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// timestamps are real wall-clock time in production.
 	deviceTokenRepo := identityadapter.NewDeviceTokenRepository(pool)
 	deviceTokenService := identityapp.NewDeviceTokenService(deviceTokenRepo, identityRepo, authenticator, loginLimiter, time.Now, logger)
-	deviceTokenAPI := identityadapter.NewDeviceTokenAPIHandlers(deviceTokenService, logger)
+	deviceTokenAPI := identityadapter.NewDeviceTokenAPIHandlers(deviceTokenService, federationMode, logger)
 	deviceTokenWeb := identityadapter.NewDeviceTokenWebHandlers(deviceTokenService, sm, newDeviceSettingsLayout(shellData, logger), logger)
 
 	// NSTR-45's own settings screen: any signed-in user manages only their
@@ -540,4 +548,19 @@ func readiness(pool *pgxpool.Pool) httpserver.ReadinessFunc {
 	return func(ctx context.Context) error {
 		return db.Health(ctx, pool)
 	}
+}
+
+// logFederationMode logs the resolved FederationMode once, at info level,
+// right after config.Load succeeds (NSTR-100). provider_host (cfg.Host())
+// and client_id (cfg.ClientID, which is public — see ProviderConfig's own
+// doc) are included only in federated mode; this function never reads or
+// emits cfg.ClientSecret, so the credential can never appear in this log
+// line regardless of mode.
+func logFederationMode(logger *slog.Logger, cfg config.ProviderConfig) {
+	mode := cfg.Mode()
+	if mode != config.FederationModeFederated {
+		logger.Info("federation mode resolved", "mode", mode.String())
+		return
+	}
+	logger.Info("federation mode resolved", "mode", mode.String(), "provider_host", cfg.Host(), "client_id", cfg.ClientID)
 }
