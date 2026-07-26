@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
+	"github.com/ericfisherdev/nestorage/internal/platform/api"
 )
 
 // maxDeviceTokenRequestBytes bounds the exchange endpoint's request body — a
@@ -69,11 +70,6 @@ type deviceTokenExchangeResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// deviceTokenErrorResponse is the exchange endpoint's error body.
-type deviceTokenErrorResponse struct {
-	Error string `json:"error"`
-}
-
 // Issue handles POST /api/v1/auth/device-tokens: decode, delegate to
 // DeviceTokenService.Issue, and map its result to a JSON response.
 func (h *DeviceTokenAPIHandlers) Issue(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +77,7 @@ func (h *DeviceTokenAPIHandlers) Issue(w http.ResponseWriter, r *http.Request) {
 
 	var req deviceTokenExchangeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeJSONError(r.Context(), w, http.StatusBadRequest, "malformed request body")
+		api.WriteError(w, h.logger, http.StatusBadRequest, api.CodeInvalidRequest, "malformed request body")
 		return
 	}
 
@@ -91,7 +87,7 @@ func (h *DeviceTokenAPIHandlers) Issue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeJSON(r.Context(), w, http.StatusCreated, deviceTokenExchangeResponse{
+	api.WriteJSON(w, h.logger, http.StatusCreated, deviceTokenExchangeResponse{
 		Token:     plaintext,
 		ID:        token.ID.String(),
 		Name:      token.Name,
@@ -99,31 +95,22 @@ func (h *DeviceTokenAPIHandlers) Issue(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleIssueError maps a DeviceTokenService.Issue error to its response:
-// 400 for a rejected device name, 401 with the SAME generic body every
-// credential failure gets (unknown email, wrong password, locked-out email,
-// and an inactive user alike) so this endpoint cannot be used to enumerate
-// accounts, or a logged 500 for anything else.
+// handleIssueError maps a DeviceTokenService.Issue error to the shared
+// envelope (platform/api): 400 invalid_request for a rejected device name,
+// with a field detail naming device_name; 401 invalid_credentials carrying
+// the SAME generic message every credential failure gets (unknown email,
+// wrong password, locked-out email, and an inactive user alike) so this
+// endpoint cannot be used to enumerate accounts; or a logged 500 internal
+// for anything else.
 func (h *DeviceTokenAPIHandlers) handleIssueError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidDeviceToken):
-		h.writeJSONError(r.Context(), w, http.StatusBadRequest, "device name must not be blank and at most 100 characters")
+		api.WriteError(w, h.logger, http.StatusBadRequest, api.CodeInvalidRequest, "invalid request",
+			api.FieldDetail{Field: "device_name", Message: "must not be blank and at most 100 characters"})
 	case errors.Is(err, domain.ErrInvalidCredentials):
-		h.writeJSONError(r.Context(), w, http.StatusUnauthorized, invalidCredentialsMessage)
+		api.WriteError(w, h.logger, http.StatusUnauthorized, api.CodeInvalidCredentials, invalidCredentialsMessage)
 	default:
 		h.logger.ErrorContext(r.Context(), "device token api: issue", "error", err)
-		h.writeJSONError(r.Context(), w, http.StatusInternalServerError, errInternalServerError)
+		api.WriteError(w, h.logger, http.StatusInternalServerError, api.CodeInternal, errInternalServerError)
 	}
-}
-
-func (h *DeviceTokenAPIHandlers) writeJSON(ctx context.Context, w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		h.logger.ErrorContext(ctx, "device token api: encode response", "error", err)
-	}
-}
-
-func (h *DeviceTokenAPIHandlers) writeJSONError(ctx context.Context, w http.ResponseWriter, status int, message string) {
-	h.writeJSON(ctx, w, status, deviceTokenErrorResponse{Error: message})
 }

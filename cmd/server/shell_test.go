@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -95,6 +97,88 @@ func TestGuardedRoute_UnauthenticatedRequest_IdenticalRegardlessOfPathParamExist
 		if existing.Header().Get(h) != nonExistent.Header().Get(h) {
 			t.Errorf("header %q differs between an existing and a non-existent path id", h)
 		}
+	}
+}
+
+// testAPIMux mounts newAPIRouteMount at "/api/v1/" the same way newAppRoutes
+// does, with a nil *api.Metrics — Observe's own nil-passthrough convention
+// (see its doc) — since these tests only assert on the HTTP response, not
+// on emitted metrics (covered by internal/platform/api's own tests).
+func testAPIMux(t *testing.T) *http.ServeMux {
+	t.Helper()
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	denier := identityadapter.NewDenier(logger)
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, logger))
+	return mux
+}
+
+func TestAPIMount_NoAuthorizationHeader_Returns401JSON(t *testing.T) {
+	mux := testAPIMux(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/anything", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/v1/anything with no Authorization header = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
+	}
+}
+
+// alwaysResolves is a minimal identityadapter.Resolver that unconditionally
+// resolves to a fixed principal — enough to drive a request past
+// identityadapter.Resolve without the real session/device-token/api-key
+// resolvers, each already covered by identity/adapter's own tests.
+type alwaysResolves struct{}
+
+func (alwaysResolves) Resolve(_ context.Context, _ *http.Request) (domain.Principal, bool, error) {
+	return domain.NewIntegrationPrincipal("test"), true, nil
+}
+
+// neverResolves is the fixed-absent counterpart to alwaysResolves, filling
+// the chain slots a given test's bearer prefix never dispatches to.
+type neverResolves struct{}
+
+func (neverResolves) Resolve(_ context.Context, _ *http.Request) (domain.Principal, bool, error) {
+	return domain.Principal{}, false, nil
+}
+
+func TestAPIMount_UnknownPathWithValidBearer_Returns404JSON(t *testing.T) {
+	// Mirrors production wiring: identityadapter.Resolve is a GLOBAL
+	// middleware (cmd/server/main.go's Middleware slice) that runs before
+	// the request ever reaches the "/api/v1/" mount, so this composes it
+	// the same way — the mux itself carries only newAPIRouteMount, which is
+	// what actually implements the AC under test (an unknown path answers
+	// JSON, not net/http's own plain-text 404).
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	denier := identityadapter.NewDenier(logger)
+	chain := identityadapter.NewChain(neverResolves{}, neverResolves{}, alwaysResolves{})
+	resolve := identityadapter.Resolve(chain, denier, logger)
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, logger))
+	handler := resolve(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/no-such-route", nil)
+	req.Header.Set("Authorization", "Bearer "+domain.APIKeyPrefix+"whatever")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/v1/no-such-route = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Error.Code != "not_found" {
+		t.Errorf("code = %q, want %q", body.Error.Code, "not_found")
 	}
 }
 

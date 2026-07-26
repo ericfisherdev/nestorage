@@ -8,6 +8,39 @@ import (
 	"github.com/ericfisherdev/nestcore/httpserver/middleware"
 )
 
+// RequireAPICredential gates /api/v1 behind a bearer credential: 401 when
+// the Authorization header is absent, even when the request otherwise
+// resolved a Principal from a session cookie. A cookie must never
+// authenticate an API route — cookies are ambient (sent automatically by
+// the browser), so honoring one here would re-open the CSRF surface a
+// bearer header is immune to (a bearer credential is never attached
+// cross-site).
+//
+// This is a two-layer contract with the global Resolve middleware, which
+// runs earlier in the chain (see cmd/server/shell.go's composition): when
+// the header IS present, Resolve has already dispatched it through Chain
+// and denied 401 for an invalid bearer, so by the time a request reaches
+// here with a header present, this only needs to confirm CurrentPrincipal
+// is actually set — a defensive check, not the primary rejection path.
+func RequireAPICredential(denier *Denier) middleware.Middleware {
+	if denier == nil {
+		panic("identity/adapter: RequireAPICredential requires a non-nil Denier")
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") == "" {
+				denier.Deny(w, r, http.StatusUnauthorized)
+				return
+			}
+			if _, ok := CurrentPrincipal(r.Context()); !ok {
+				denier.Deny(w, r, http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // Resolve is the one middleware that turns any of this context's three
 // credentials into a domain.Principal, stored in the request context for
 // CurrentPrincipal to read back. It never rejects a request outright on an

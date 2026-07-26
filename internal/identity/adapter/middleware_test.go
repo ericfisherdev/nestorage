@@ -247,6 +247,74 @@ func TestRequireAdmin_IntegrationPrincipal_Returns403(t *testing.T) {
 	}
 }
 
+func TestRequireAPICredential_NilDenierPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("RequireAPICredential(nil) did not panic")
+		}
+	}()
+	adapter.RequireAPICredential(nil)
+}
+
+func TestRequireAPICredential_AbsentHeader_Returns401(t *testing.T) {
+	denier := adapter.NewDenier(testLogger())
+	next, called := calledFlagHandler()
+
+	mux := adapter.RequireAPICredential(denier)(next)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/bins", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, r)
+
+	if *called {
+		t.Error("RequireAPICredential must not call next with no Authorization header")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+// TestRequireAPICredential_CookieOnly_Returns401 proves a session cookie
+// never authenticates an API route, even when Resolve (running earlier in
+// the chain) turned it into a valid Principal — a bearer credential is
+// required regardless of what CurrentPrincipal already holds.
+func TestRequireAPICredential_CookieOnly_Returns401(t *testing.T) {
+	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel"), found: true}
+	chain := adapter.NewChain(session, &stubResolver{}, &stubResolver{})
+	denier := adapter.NewDenier(testLogger())
+	next, called := calledFlagHandler()
+
+	mux := adapter.Resolve(chain, denier, testLogger())(adapter.RequireAPICredential(denier)(next))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/bins", nil) // no Authorization header — cookie-equivalent via stubResolver.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, r)
+
+	if *called {
+		t.Error("RequireAPICredential must not call next for a cookie-only (no Authorization header) request")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRequireAPICredential_BearerResolvedPrincipal_PassesThrough(t *testing.T) {
+	apiKey := &stubResolver{principal: domain.NewIntegrationPrincipal("Nestova"), found: true}
+	chain := adapter.NewChain(&stubResolver{}, &stubResolver{}, apiKey)
+	denier := adapter.NewDenier(testLogger())
+	next, called := calledFlagHandler()
+
+	mux := adapter.Resolve(chain, denier, testLogger())(adapter.RequireAPICredential(denier)(next))
+	r := newBearerRequest(t, domain.APIKeyPrefix+"aaaa")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, r)
+
+	if !*called {
+		t.Error("RequireAPICredential must call next once a bearer credential resolved a Principal")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
 func TestRequireAdmin_Admin_PassesThrough(t *testing.T) {
 	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdmin, "Maya"), found: true}
 	chain := adapter.NewChain(session, &stubResolver{}, &stubResolver{})

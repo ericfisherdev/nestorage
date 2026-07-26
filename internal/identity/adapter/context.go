@@ -29,3 +29,23 @@ func CurrentPrincipal(ctx context.Context) (domain.Principal, bool) {
 	p, ok := ctx.Value(principalKey).(domain.Principal)
 	return p, ok
 }
+
+// anonymousKindLabel is the metric-label value api.Observe (platform/api)
+// records for a request with no resolved Principal — the one value in the
+// label's bounded set with no domain.Kind counterpart.
+const anonymousKindLabel = "anonymous"
+
+// PrincipalKindLabel returns ctx's resolved principal-kind metric label:
+// "user", "integration", or anonymousKindLabel when no credential resolved.
+// This is the api.KindLabelFunc the composition root wires into api.Observe
+// (cmd/server/shell.go) — it lives here, not in platform/api, so
+// client-controlled request data can never mint a new Prometheus label
+// value: domain.Kind is a closed enum, and this func is the only place that
+// widens it with the one non-domain value, anonymous.
+func PrincipalKindLabel(ctx context.Context) string {
+	p, ok := CurrentPrincipal(ctx)
+	if !ok {
+		return anonymousKindLabel
+	}
+	return p.Kind.String()
+}

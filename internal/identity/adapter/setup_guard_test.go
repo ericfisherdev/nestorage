@@ -2,6 +2,7 @@ package adapter_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -114,6 +115,39 @@ func TestSetupGuard_LatchesAfterFirstCompletion_NoFurtherQueries(t *testing.T) {
 	}
 	if repo.calls != 1 {
 		t.Errorf("HasAnyUser called %d times across 3 requests, want 1 (the latch should skip the database after the first)", repo.calls)
+	}
+}
+
+// TestSetupGuard_NoAdmin_APIPathGets503JSONNotHTMLRedirect proves AC 2 (no
+// API route ever returns an HTML redirect) holds even for the setup guard,
+// the outermost middleware in the chain — an API caller reaching it before
+// the first admin exists gets the shared error envelope, not the wizard's
+// 303/HX-Redirect.
+func TestSetupGuard_NoAdmin_APIPathGets503JSONNotHTMLRedirect(t *testing.T) {
+	mux := newGuardedMux(&fakeUserExistence{hasAny: false})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/bins", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /api/v1/bins with no admin = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
+	}
+	if rec.Header().Get("Location") != "" || rec.Header().Get("HX-Redirect") != "" {
+		t.Error("an API route must never carry a redirect header, even before setup completes")
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Error.Code != "setup_required" {
+		t.Errorf("code = %q, want %q", body.Error.Code, "setup_required")
 	}
 }
 
