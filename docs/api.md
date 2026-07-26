@@ -142,6 +142,58 @@ Any other case — the item is somewhere else, held by someone else, the bin
 is elsewhere, or the return request has been fulfilled rather than
 cancelled — answers the matching `409` from the typed-code table above.
 
+## Item photos
+
+| Method & path | Body | Answers |
+|---|---|---|
+| `GET /api/v1/items/{id}/photos` | — | `200`, JSON array of photo DTOs |
+| `POST /api/v1/items/{id}/photos` | `multipart/form-data`, one file part named `photo` | `201`, photo DTO |
+| `GET /api/v1/items/{id}/photos/{photoID}?size=full\|thumb` | — | `302` redirect (S3 backend) or the image bytes (local backend) |
+| `PUT /api/v1/items/{id}/photos/{photoID}/primary` | — | `204` |
+| `DELETE /api/v1/items/{id}/photos/{photoID}` | — | `204` |
+
+Every route delegates to the exact same `PhotoService` (NSTR-34/37) the web
+gallery uses — EXIF stripping, validation, and storage are identical on
+both surfaces; nothing photo-related is validated twice. There is no
+reorder endpoint: photo ordering is a web-only gallery affordance.
+
+A photo DTO:
+
+```json
+{
+  "id": "...",
+  "primary": true,
+  "content_type": "image/jpeg",
+  "size_bytes": 182933,
+  "url": "/api/v1/items/{id}/photos/{photoID}",
+  "thumb_url": "/api/v1/items/{id}/photos/{photoID}?size=thumb"
+}
+```
+
+`url`/`thumb_url` always point back at this API's own serve route — never a
+raw storage locator — so a client never has to special-case which storage
+backend is configured; the serve route itself is what redirects to a
+presigned URL when one is available.
+
+### Upload
+
+The upload request body is streamed — never buffered whole — so an
+oversized upload is rejected promptly rather than after the server has
+received the entire file:
+
+| Failure | Answers |
+|---|---|
+| `Content-Length` already declares more than the configured max upload size | `413`, before any body byte is read |
+| The actual body exceeds the max upload size (a lying or absent `Content-Length`) | `413`, after at most the max upload size plus a small framing margin |
+| No `photo` file part in the body | `422` |
+| Unsupported image type (not JPEG or PNG) | `415` |
+| Unreadable or corrupt image data | `400` |
+| Item unknown or not visible to the caller | `404` |
+
+Every not-found here — the item or the photo — answers the generic
+`not_found` code: like every other route in this API, "doesn't exist" and
+"exists but you can't see it" are never distinguished.
+
 ## Event history
 
 | Method & path | Query | Delegates to |

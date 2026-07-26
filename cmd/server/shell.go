@@ -307,6 +307,13 @@ type appRouteDeps struct {
 	// above.
 	OperationsAPI *storageadapter.OperationsAPIHandlers
 	HistoryAPI    *storageadapter.HistoryAPIHandlers
+	// PhotosAPI is NSTR-56's own /api/v1 surface: item photo upload/list/
+	// serve/set-primary/delete, mounted on the same api.Router — a thin
+	// JSON/multipart adapter over the exact same photoOperator (mediaapp.
+	// PhotoService) the Photos web handlers above already share, so the API
+	// and the web gallery can never disagree on validation, EXIF scrubbing,
+	// or storage.
+	PhotosAPI *mediaadapter.PhotosAPIHandlers
 }
 
 func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
@@ -325,6 +332,7 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 			deps.ItemsAPI.Routes(apiRouter)
 			deps.OperationsAPI.Routes(apiRouter)
 			deps.HistoryAPI.Routes(apiRouter)
+			deps.PhotosAPI.Routes(apiRouter)
 		}))
 
 		adminMux := http.NewServeMux()
