@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
@@ -33,6 +34,7 @@ type fakeItemRepo struct {
 	getForUpdateErr error
 	updateErr       error
 	listErr         error
+	listVisibleErr  error
 	deleteErr       error
 }
 
@@ -95,6 +97,34 @@ func (f *fakeItemRepo) ListByBin(_ context.Context, _ identity.Principal, binID 
 			items = append(items, *it)
 		}
 	}
+	return items, nil
+}
+
+// ListVisible mirrors ListByBin's own shape, additionally applying filter's
+// BinID/HeldBy (both optional, AND-ed when both are set), ordered by name
+// then id to match domain.ItemRepository.ListVisible's own documented order
+// — the sort api_common.go's page() function depends on for callers wired
+// through this fake.
+func (f *fakeItemRepo) ListVisible(_ context.Context, _ identity.Principal, filter domain.ItemFilter) ([]domain.Item, error) {
+	if f.listVisibleErr != nil {
+		return nil, f.listVisibleErr
+	}
+	items := make([]domain.Item, 0)
+	for _, it := range f.items {
+		if filter.BinID != nil && (it.CurrentBinID == nil || *it.CurrentBinID != *filter.BinID) {
+			continue
+		}
+		if filter.HeldBy != nil && (it.HeldBy == nil || *it.HeldBy != *filter.HeldBy) {
+			continue
+		}
+		items = append(items, *it)
+	}
+	slices.SortFunc(items, func(a, b domain.Item) int {
+		if a.Name != b.Name {
+			return strings.Compare(a.Name, b.Name)
+		}
+		return strings.Compare(a.ID.String(), b.ID.String())
+	})
 	return items, nil
 }
 
@@ -512,6 +542,52 @@ func TestItemService_ListInBin(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "Stove" {
 		t.Errorf("ListInBin(%v) = %+v, want exactly the one item in that bin", binID, got)
+	}
+}
+
+func TestItemService_ListVisible(t *testing.T) {
+	repo := newFakeItemRepo()
+	svc, _ := newTestItemService(repo)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	binID := domain.NewBinID()
+
+	if _, err := svc.Create(context.Background(), "Stove", nil, 1, binID, actor); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), "Lantern", nil, 1, domain.NewBinID(), actor); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	t.Run("no filter returns every item", func(t *testing.T) {
+		got, err := svc.ListVisible(context.Background(), viewer, domain.ItemFilter{})
+		if err != nil {
+			t.Fatalf("ListVisible: %v", err)
+		}
+		if len(got) != 2 {
+			t.Errorf("ListVisible(no filter) returned %d items, want 2", len(got))
+		}
+	})
+
+	t.Run("bin filter narrows to that bin", func(t *testing.T) {
+		got, err := svc.ListVisible(context.Background(), viewer, domain.ItemFilter{BinID: &binID})
+		if err != nil {
+			t.Fatalf("ListVisible: %v", err)
+		}
+		if len(got) != 1 || got[0].Name != "Stove" {
+			t.Errorf("ListVisible(bin=%v) = %+v, want exactly the one item in that bin", binID, got)
+		}
+	})
+}
+
+func TestItemService_ListVisible_RepositoryErrorWrapped(t *testing.T) {
+	repo := newFakeItemRepo()
+	repo.listVisibleErr = errors.New("boom")
+	svc, _ := newTestItemService(repo)
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+
+	if _, err := svc.ListVisible(context.Background(), viewer, domain.ItemFilter{}); err == nil {
+		t.Error("ListVisible() error = nil, want the wrapped repository error")
 	}
 }
 

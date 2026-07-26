@@ -62,6 +62,47 @@ func TestNormalizeBinCode(t *testing.T) {
 	}
 }
 
+func TestValidateBinCode(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr error
+	}{
+		{"well-formed accepted", "A1", nil},
+		{"blank rejected", "   ", domain.ErrInvalidBin},
+		{"over-long rejected", strings.Repeat("A", 33), domain.ErrInvalidBin},
+		{"exactly at the limit accepted", strings.Repeat("A", 32), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := domain.ValidateBinCode(tt.input)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("ValidateBinCode(%q) error = %v, want %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateBinName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr error
+	}{
+		{"well-formed accepted", "Camping bin", nil},
+		{"blank rejected", "", domain.ErrInvalidBin},
+		{"whitespace-only rejected", "   ", domain.ErrInvalidBin},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := domain.ValidateBinName(tt.input)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("ValidateBinName(%q) error = %v, want %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // validBin returns a Bin that passes Validate, so each Bin_Validate subtest
 // can mutate exactly one field away from valid and confirm that field alone
 // is what Validate rejects.

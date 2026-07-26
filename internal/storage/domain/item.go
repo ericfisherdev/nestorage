@@ -94,6 +94,16 @@ func (i *Item) State() PlacementState {
 	}
 }
 
+// ItemFilter narrows ItemRepository.ListVisible's result: BinID and HeldBy
+// are both optional and AND-ed when both are set (NSTR-54's public API is
+// the one caller today — its GET /api/v1/items endpoint's own ?bin= and
+// ?holder= query parameters populate these two fields respectively). A zero
+// ItemFilter (both nil) applies no filter at all.
+type ItemFilter struct {
+	BinID  *BinID
+	HeldBy *identity.UserID
+}
+
 // ItemRef is the minimal item identity ItemRepository.ListIDsByBin
 // returns: an id plus its current name. Name rides along despite the
 // method's "IDs" name because NSTR-41's fanned-out EventMoved rows need an
@@ -172,6 +182,13 @@ type ItemRepository interface {
 	// ListByBin returns every item in binID viewer may see, ordered by
 	// name, tie-broken by id.
 	ListByBin(ctx context.Context, viewer identity.Principal, binID BinID) ([]Item, error)
+	// ListVisible returns every item viewer may see, optionally narrowed by
+	// f's BinID/HeldBy (both optional, AND-ed when both are set — see
+	// ItemFilter's own doc), ordered by name, tie-broken by id — the one new
+	// read NSTR-54's public API needs; every other read it consumes
+	// (Get, ListByBin, CountsByBin, ...) already exists on this interface.
+	// Returns an empty slice, not an error, when nothing matches.
+	ListVisible(ctx context.Context, viewer identity.Principal, f ItemFilter) ([]Item, error)
 	// CountsByBin returns how many items viewer may see are currently sitting
 	// in each bin, keyed by bin id — the aggregate the bin grid and location
 	// detail pages need to show "N items" on every card without an N+1

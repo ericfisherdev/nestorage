@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,6 +23,12 @@ import (
 // for LocationsWebHandlers' hermetic unit tests.
 type fakeLocationService struct {
 	locations map[domain.LocationID]domain.Location
+	// binCounts is NSTR-54's own addition: locations_api_test.go's List
+	// tests need a per-location bin count to assert on, matching
+	// app.LocationSummary's own enrichment — an absent key defaults to 0,
+	// the same "missing means zero" contract app.LocationService.List
+	// documents.
+	binCounts map[domain.LocationID]int
 
 	listErr   error
 	getErr    error
@@ -42,8 +49,19 @@ func (f *fakeLocationService) List(_ context.Context, _ identity.Principal) ([]a
 	}
 	summaries := make([]app.LocationSummary, 0, len(f.locations))
 	for _, l := range f.locations {
-		summaries = append(summaries, app.LocationSummary{Location: l})
+		summaries = append(summaries, app.LocationSummary{Location: l, BinCount: f.binCounts[l.ID]})
 	}
+	// Ordered by name, tie-broken by id — matching
+	// app.LocationService.List's own documented order (LocationRepository.
+	// List's ORDER BY), which locations_api_test.go's pagination tests
+	// depend on; ranging over f.locations (a Go map) alone would return a
+	// randomized order across calls.
+	slices.SortFunc(summaries, func(a, b app.LocationSummary) int {
+		if a.Location.Name != b.Location.Name {
+			return strings.Compare(a.Location.Name, b.Location.Name)
+		}
+		return strings.Compare(a.Location.ID.String(), b.Location.ID.String())
+	})
 	return summaries, nil
 }
 

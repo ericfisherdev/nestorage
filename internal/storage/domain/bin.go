@@ -31,7 +31,7 @@ func ParseBinID(s string) (BinID, error) {
 	return BinID(u), nil
 }
 
-// maxBinCodeRunes is the longest label code validateBinCode accepts, counted
+// maxBinCodeRunes is the longest label code ValidateBinCode accepts, counted
 // by rune (not byte) so a multi-byte character counts once, not per byte —
 // the same reasoning as storage's maxLocationNameRunes.
 const maxBinCodeRunes = 32
@@ -47,15 +47,32 @@ func NormalizeBinCode(code string) string {
 	return strings.ToUpper(strings.TrimSpace(code))
 }
 
-// validateBinCode reports whether code is well-formed: non-blank (checked
-// via a trimmed comparison, the same way Bin.Validate checks Name, without
-// mutating code itself) and at most maxBinCodeRunes.
-func validateBinCode(code string) error {
+// ValidateBinCode reports whether code is well-formed: non-blank (checked
+// via a trimmed comparison, the same way ValidateBinName checks Name,
+// without mutating code itself) and at most maxBinCodeRunes. Exported (like
+// ValidateItemName/ValidateItemQuantity) so NSTR-54's API handler can
+// pre-validate a create request's code field with a precise field detail,
+// without duplicating this check.
+func ValidateBinCode(code string) error {
 	if strings.TrimSpace(code) == "" {
 		return fmt.Errorf("%w: code must not be blank", ErrInvalidBin)
 	}
 	if len([]rune(code)) > maxBinCodeRunes {
 		return fmt.Errorf("%w: code exceeds %d characters", ErrInvalidBin, maxBinCodeRunes)
+	}
+	return nil
+}
+
+// ValidateBinName reports whether name is well-formed: not blank (including
+// not whitespace-only). Unlike ValidateLocationName, it does not return a
+// trimmed value — bin names are stored exactly as typed, the same
+// "checked, not normalized" contract Item.Name follows (see
+// ValidateItemName's own doc). Exported for the same reason ValidateBinCode
+// is: NSTR-54's API handler pre-validates a create request's name field with
+// a precise field detail.
+func ValidateBinName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: name must not be blank", ErrInvalidBin)
 	}
 	return nil
 }
@@ -90,11 +107,11 @@ func (b *Bin) Validate() error {
 	if b.ID == (BinID{}) {
 		return fmt.Errorf("%w: id is required", ErrInvalidBin)
 	}
-	if err := validateBinCode(b.Code); err != nil {
+	if err := ValidateBinCode(b.Code); err != nil {
 		return err
 	}
-	if strings.TrimSpace(b.Name) == "" {
-		return fmt.Errorf("%w: name must not be blank", ErrInvalidBin)
+	if err := ValidateBinName(b.Name); err != nil {
+		return err
 	}
 	if b.LocationID == (LocationID{}) {
 		return fmt.Errorf("%w: location id is required", ErrInvalidBin)

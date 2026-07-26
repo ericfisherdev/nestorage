@@ -21,7 +21,10 @@ type Code string
 // RateLimited has no caller yet in this ticket — NSTR-58's rate-limiting
 // middleware is the first to use it — but the vocabulary is declared
 // complete here, in one place, rather than grown one code at a time across
-// unrelated tickets.
+// unrelated tickets. CodeConflict is NSTR-54's own addition: NSTR-53 did not
+// anticipate a 409 response (its own /api/v1 mount has nothing that can
+// conflict), and this is still the one place the vocabulary lives, so it is
+// added here rather than let a bounded-context adapter invent its own code.
 const (
 	CodeUnauthorized       Code = "unauthorized"
 	CodeForbidden          Code = "forbidden"
@@ -32,6 +35,7 @@ const (
 	CodeSetupRequired      Code = "setup_required"
 	CodeInternal           Code = "internal"
 	CodeRateLimited        Code = "rate_limited"
+	CodeConflict           Code = "conflict"
 )
 
 // FieldDetail names one field-level validation failure. Details is only
