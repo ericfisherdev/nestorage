@@ -16,6 +16,7 @@ import (
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	mediadomain "github.com/ericfisherdev/nestorage/internal/media/domain"
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
+	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 	storagedomain "github.com/ericfisherdev/nestorage/internal/storage/domain"
@@ -224,7 +225,7 @@ func (stubDeviceTokenIssuer) Issue(context.Context, string, string, string) (str
 func testAPIRouteDeps(logger *slog.Logger) appRouteDeps {
 	return appRouteDeps{
 		Logger:         logger,
-		DeviceTokenAPI: identityadapter.NewDeviceTokenAPIHandlers(stubDeviceTokenIssuer{}, logger),
+		DeviceTokenAPI: identityadapter.NewDeviceTokenAPIHandlers(stubDeviceTokenIssuer{}, config.FederationModeStandalone, logger),
 		SpecAPI:        api.NewSpecHandlers(logger),
 		LocationsAPI:   storageadapter.NewLocationsAPIHandlers(stubLocationService{}, logger),
 		BinsAPI:        storageadapter.NewBinsAPIHandlers(stubBinService{}, logger),

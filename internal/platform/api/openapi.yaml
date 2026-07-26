@@ -80,6 +80,14 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: >-
+            `forbidden` — this household is federated (NSTR-100): local
+            password sign-in is disabled, and this endpoint mints no
+            credential without ever verifying the request body.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '503':
           description: >-
             `setup_required` — the household's first admin does not exist
