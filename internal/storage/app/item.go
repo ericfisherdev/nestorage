@@ -24,14 +24,15 @@ import (
 )
 
 // itemRepository is the narrow port (ISP) ItemService depends on for its
-// non-transactional reads: Get and ListInBin. Move, and — as of NSTR-41 —
-// Create/Update/Delete are deliberately absent: NSTR-29's add/remove/return
-// operations call Move directly, and Create/Update/Delete now run inside
-// itemTransactor's transactional seam (ItemLifecycleStore below), not
-// through this port.
+// non-transactional reads: Get, ListInBin, and — as of NSTR-54 —
+// ListVisible. Move, and — as of NSTR-41 — Create/Update/Delete are
+// deliberately absent: NSTR-29's add/remove/return operations call Move
+// directly, and Create/Update/Delete now run inside itemTransactor's
+// transactional seam (ItemLifecycleStore below), not through this port.
 type itemRepository interface {
 	Get(ctx context.Context, viewer identity.Principal, id domain.ItemID) (*domain.Item, error)
 	ListByBin(ctx context.Context, viewer identity.Principal, binID domain.BinID) ([]domain.Item, error)
+	ListVisible(ctx context.Context, viewer identity.Principal, f domain.ItemFilter) ([]domain.Item, error)
 }
 
 // ItemLifecycleStore is the narrow port (ISP) ItemTxStores.Items exposes to
@@ -234,6 +235,17 @@ func (s *ItemService) ListInBin(ctx context.Context, viewer identity.Principal, 
 	items, err := s.items.ListByBin(ctx, viewer, binID)
 	if err != nil {
 		return nil, fmt.Errorf("app: list items in bin: %w", err)
+	}
+	return items, nil
+}
+
+// ListVisible returns every item viewer may see, optionally narrowed by
+// filter — NSTR-54's public API's own list read, the pass-through
+// itemRepository.ListVisible's own doc describes in full.
+func (s *ItemService) ListVisible(ctx context.Context, viewer identity.Principal, filter domain.ItemFilter) ([]domain.Item, error) {
+	items, err := s.items.ListVisible(ctx, viewer, filter)
+	if err != nil {
+		return nil, fmt.Errorf("app: list visible items: %w", err)
 	}
 	return items, nil
 }

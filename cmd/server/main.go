@@ -306,6 +306,12 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		ReturnRequests: returnRequestService,
 		SM:             sm, Layout: newStorageLayout(shellData, searchPageTitle, logger), Logger: logger,
 	})
+	// NSTR-54's own public JSON API: locationService/binService/itemService
+	// are the exact same instances the web handlers above already share, so
+	// no rule is duplicated between the HTML and JSON surfaces.
+	locationsAPI := storageadapter.NewLocationsAPIHandlers(locationService, logger)
+	binsAPI := storageadapter.NewBinsAPIHandlers(binService, logger)
+	itemsAPI := storageadapter.NewItemsAPIHandlers(itemService, logger)
 	// NSTR-37's own web handlers: no Layout dependency (see
 	// mediaadapter.PhotosWebHandlers' own doc for why every route it serves
 	// is a bare fragment or binary image bytes, never a full-page
@@ -411,6 +417,9 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			Notifications:  notificationsWeb,
 			Denier:         denier,
 			APIMetrics:     apiMetrics,
+			LocationsAPI:   locationsAPI,
+			BinsAPI:        binsAPI,
+			ItemsAPI:       itemsAPI,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's
 		// session-based CurrentUser, still consumed by settingsMux and

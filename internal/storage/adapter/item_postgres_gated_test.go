@@ -3,6 +3,7 @@ package adapter_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -615,6 +616,98 @@ func TestItemRepository_ListByBin_ScopedToVisibility(t *testing.T) {
 	if len(got) != 1 || got[0].ID != it.ID {
 		t.Error("ListByBin(creator) must include the creator's own private-bin item")
 	}
+}
+
+// TestItemRepository_ListVisible covers NSTR-54's own read: unfiltered,
+// narrowed by bin, narrowed by holder, both AND-ed, a private bin's item
+// excluded for a non-owner, and a held item visible to everyone regardless
+// of which bin it last sat in (the same held-item exception
+// itemVisibilityWhere documents).
+func TestItemRepository_ListVisible(t *testing.T) {
+	f := newItemFixture(t)
+	creator := f.seedUser(t, identity.RoleMember)
+	other := f.seedUser(t, identity.RoleMember)
+	loc := f.seedLocation(t, creator)
+
+	publicBin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
+	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
+
+	publicItem := newItem("Public bin item", publicBin, creator)
+	privateItem := newItem("Private bin item", privateBin, creator)
+	heldItem := &domain.Item{ID: domain.NewItemID(), Name: "Held item", Quantity: 1, HeldBy: &other, CreatedBy: creator}
+	for _, it := range []*domain.Item{publicItem, privateItem, heldItem} {
+		if err := f.repo.Create(testCtx(t), it); err != nil {
+			t.Fatalf("seed create(%s): %v", it.Name, err)
+		}
+	}
+
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+
+	t.Run("unfiltered excludes another member's private bin item", func(t *testing.T) {
+		got, err := f.repo.ListVisible(testCtx(t), otherViewer, domain.ItemFilter{})
+		if err != nil {
+			t.Fatalf("ListVisible: %v", err)
+		}
+		names := itemNames(got)
+		if slices.Contains(names, "Private bin item") {
+			t.Errorf("ListVisible(other) = %v, must not include another member's private-bin item", names)
+		}
+		if !slices.Contains(names, "Public bin item") || !slices.Contains(names, "Held item") {
+			t.Errorf("ListVisible(other) = %v, want the public bin item and the held item both present", names)
+		}
+	})
+
+	t.Run("unfiltered includes creator's own private bin item", func(t *testing.T) {
+		got, err := f.repo.ListVisible(testCtx(t), creatorViewer, domain.ItemFilter{})
+		if err != nil {
+			t.Fatalf("ListVisible: %v", err)
+		}
+		if !slices.Contains(itemNames(got), "Private bin item") {
+			t.Error("ListVisible(creator) must include the creator's own private-bin item")
+		}
+	})
+
+	t.Run("bin filter narrows to that bin", func(t *testing.T) {
+		got, err := f.repo.ListVisible(testCtx(t), creatorViewer, domain.ItemFilter{BinID: &publicBin})
+		if err != nil {
+			t.Fatalf("ListVisible: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != publicItem.ID {
+			t.Errorf("ListVisible(bin=%v) = %+v, want exactly the public bin item", publicBin, got)
+		}
+	})
+
+	t.Run("holder filter narrows to that holder", func(t *testing.T) {
+		got, err := f.repo.ListVisible(testCtx(t), creatorViewer, domain.ItemFilter{HeldBy: &other})
+		if err != nil {
+			t.Fatalf("ListVisible: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != heldItem.ID {
+			t.Errorf("ListVisible(holder=%v) = %+v, want exactly the held item", other, got)
+		}
+	})
+
+	t.Run("bin and holder filters AND together to nothing when neither item matches both", func(t *testing.T) {
+		got, err := f.repo.ListVisible(testCtx(t), creatorViewer, domain.ItemFilter{BinID: &publicBin, HeldBy: &other})
+		if err != nil {
+			t.Fatalf("ListVisible: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("ListVisible(bin=%v, holder=%v) = %+v, want empty", publicBin, other, got)
+		}
+	})
+}
+
+// itemNames projects a []domain.Item into its own names, for an
+// order-independent membership assertion (Contains) rather than an
+// index-based one.
+func itemNames(items []domain.Item) []string {
+	names := make([]string, len(items))
+	for i, it := range items {
+		names[i] = it.Name
+	}
+	return names
 }
 
 func TestItemRepository_GetForUpdate(t *testing.T) {

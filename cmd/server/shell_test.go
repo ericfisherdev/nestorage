@@ -11,7 +11,15 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
+	"github.com/ericfisherdev/nestorage/internal/platform/api"
 )
+
+// noAPIRoutes is the registerRoutes no-op these tests pass to
+// newAPIRouteMount: they exercise the mount's own auth/observability/
+// fallback plumbing, not any bounded context's specific routes (those are
+// each covered by their own package's tests, e.g. storage/adapter's
+// locations_api_test.go).
+func noAPIRoutes(api.Registrar) {}
 
 func TestNewShellHandlers_NilLogger(t *testing.T) {
 	defer func() {
@@ -109,7 +117,7 @@ func testAPIMux(t *testing.T) *http.ServeMux {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	denier := identityadapter.NewDenier(logger)
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, logger))
+	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, logger, noAPIRoutes))
 	return mux
 }
 
@@ -158,7 +166,7 @@ func TestAPIMount_UnknownPathWithValidBearer_Returns404JSON(t *testing.T) {
 	resolve := identityadapter.Resolve(chain, denier, logger)
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, logger))
+	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, logger, noAPIRoutes))
 	handler := resolve(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/no-such-route", nil)

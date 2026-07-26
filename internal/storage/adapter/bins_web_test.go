@@ -42,12 +42,13 @@ type fakeBinService struct {
 	views  map[domain.BinID]app.BinView
 	byCode map[string]domain.BinID
 
-	listErr      error
-	getByIDErr   error
-	getByCodeErr error
-	createErr    error
-	editErr      error
-	deleteErr    error
+	listErr           error
+	listByLocationErr error
+	getByIDErr        error
+	getByCodeErr      error
+	createErr         error
+	editErr           error
+	deleteErr         error
 
 	createCalls int
 }
@@ -68,6 +69,24 @@ func (f *fakeBinService) ListVisible(_ context.Context, _ identity.Principal) ([
 	views := make([]app.BinView, 0, len(f.views))
 	for _, v := range f.views {
 		views = append(views, v)
+	}
+	return views, nil
+}
+
+// ListVisibleByLocation is unused by BinsWebHandlers (which only ever calls
+// LocationsWebHandlers'/BinsWebHandlers' own ListVisible) but is part of
+// binAPIService (bins_api.go), NSTR-54's ?location= filter — added here
+// rather than in a second fake so both handler groups' tests share one
+// in-memory bin store.
+func (f *fakeBinService) ListVisibleByLocation(_ context.Context, _ identity.Principal, locationID domain.LocationID) ([]app.BinView, error) {
+	if f.listByLocationErr != nil {
+		return nil, f.listByLocationErr
+	}
+	views := make([]app.BinView, 0)
+	for _, v := range f.views {
+		if v.Bin.LocationID == locationID {
+			views = append(views, v)
+		}
 	}
 	return views, nil
 }

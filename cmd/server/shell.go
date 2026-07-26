@@ -294,6 +294,13 @@ type appRouteDeps struct {
 	Notifications  *notifyadapter.InboxWebHandlers
 	Denier         *identityadapter.Denier
 	APIMetrics     *api.Metrics
+	// LocationsAPI, BinsAPI, and ItemsAPI are NSTR-54's own /api/v1 CRUD
+	// surface — registered on the api.Router newAPIRouteMount builds, never
+	// on storageMux above: they carry no session and answer through the
+	// shared JSON envelope, not templ/HTMX.
+	LocationsAPI *storageadapter.LocationsAPIHandlers
+	BinsAPI      *storageadapter.BinsAPIHandlers
+	ItemsAPI     *storageadapter.ItemsAPIHandlers
 }
 
 func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
@@ -306,7 +313,11 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		deps.Onboarding.Routes(mux)
 		deps.Login.Routes(mux)
 		deps.DeviceTokenAPI.Routes(mux)
-		mux.Handle("/api/v1/", newAPIRouteMount(deps.Denier, deps.APIMetrics, deps.Logger))
+		mux.Handle("/api/v1/", newAPIRouteMount(deps.Denier, deps.APIMetrics, deps.Logger, func(apiRouter api.Registrar) {
+			deps.LocationsAPI.Routes(apiRouter)
+			deps.BinsAPI.Routes(apiRouter)
+			deps.ItemsAPI.Routes(apiRouter)
+		}))
 
 		adminMux := http.NewServeMux()
 		deps.Users.Routes(adminMux)
@@ -340,15 +351,20 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 
 // newAPIRouteMount builds the /api/v1 handler newAppRoutes mounts at
 // "/api/v1/": an api.Router every bounded context's own API adapter mounts
-// its routes onto through Handle/HandleFunc (api.Registrar) — none does yet,
-// this ticket only stands up the mount itself — wrapped with
-// RequireAPICredential's bearer gate and api.Observe's own instrumentation.
-// Observe sits OUTSIDE the gate so a denied request is still counted, with
-// route falling back to the mount pattern since no inner route ran (see
-// Observe's own doc). Split out of newAppRoutes so it is unit-testable
-// without newAppRoutes' many other concrete dependencies.
-func newAPIRouteMount(denier *identityadapter.Denier, apiMetrics *api.Metrics, logger *slog.Logger) http.Handler {
+// its routes onto through Handle/HandleFunc (api.Registrar) — registerRoutes
+// is called once, before the router is wrapped, so NSTR-54's own
+// Locations/Bins/ItemsAPIHandlers (and any later context's own API adapter)
+// register onto the exact same api.Router instance that answers the JSON
+// 404/405 fallback — wrapped with RequireAPICredential's bearer gate and
+// api.Observe's own instrumentation. Observe sits OUTSIDE the gate so a
+// denied request is still counted, with route falling back to the mount
+// pattern since no inner route ran (see Observe's own doc). Split out of
+// newAppRoutes so it is unit-testable without newAppRoutes' many other
+// concrete dependencies — a test passes its own registerRoutes (or a no-op)
+// rather than every bounded context's real handlers.
+func newAPIRouteMount(denier *identityadapter.Denier, apiMetrics *api.Metrics, logger *slog.Logger, registerRoutes func(api.Registrar)) http.Handler {
 	apiRouter := api.NewRouter(logger)
+	registerRoutes(apiRouter)
 	return api.Observe(apiMetrics, identityadapter.PrincipalKindLabel, logger)(
 		identityadapter.RequireAPICredential(denier)(apiRouter.Handler()),
 	)

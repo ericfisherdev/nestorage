@@ -215,6 +215,47 @@ func (r *ItemRepository) ListByBin(ctx context.Context, viewer identity.Principa
 	return items, nil
 }
 
+// ListVisible returns every item viewer may see, optionally narrowed by
+// f.BinID/f.HeldBy (both optional, AND-ed when both are set), ordered by
+// name, tie-broken by id — the same itemVisibleColumns/itemVisibilityWhere
+// fragment ListByBin already uses, with f's two filters appended as
+// additional optional clauses rather than composed from separate queries
+// (see domain.ItemRepository.ListVisible's own doc). Returns an empty slice,
+// not an error, when nothing matches.
+func (r *ItemRepository) ListVisible(ctx context.Context, viewer identity.Principal, f domain.ItemFilter) ([]domain.Item, error) {
+	q := itemVisibleColumns + ` WHERE ` + itemVisibilityWhere(0)
+	args := viewerArgs(viewer)
+
+	if f.BinID != nil {
+		args = append(args, f.BinID.String())
+		q += fmt.Sprintf(" AND i.current_bin_id = $%d", len(args))
+	}
+	if f.HeldBy != nil {
+		args = append(args, f.HeldBy.String())
+		q += fmt.Sprintf(" AND i.held_by = $%d", len(args))
+	}
+	q += ` ORDER BY i.name, i.id`
+
+	rows, err := r.dbtx.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list visible items: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.Item, 0)
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list visible items: scan: %w", err)
+		}
+		items = append(items, *it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list visible items: %w", err)
+	}
+	return items, nil
+}
+
 // CountsByBin returns how many items viewer may see currently sit in each
 // bin, keyed by bin id, aggregated with GROUP BY in one round trip instead
 // of one ListByBin call per bin — the read BinService's grid and
