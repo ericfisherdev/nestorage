@@ -389,7 +389,7 @@ func TestLogin_Federated_RefusedWithoutTouchingAuthenticatorOrSession(t *testing
 	if authn.callCount() != 0 {
 		t.Error("Authenticator called despite federated mode refusing local password login")
 	}
-	if postToken := sessionCookieValue(h.client, h.server.URL); postToken != preToken {
+	if sessionCookieValue(h.client, h.server.URL) != preToken {
 		t.Error("federated refusal must not establish or rotate a session")
 	}
 }
