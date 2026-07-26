@@ -325,6 +325,9 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// the web gallery can never disagree on validation, EXIF scrubbing, or
 	// storage.
 	photosAPI := mediaadapter.NewPhotosAPIHandlers(photoService, cfg.Media.MaxUploadBytes, logger)
+	// NSTR-57's own route: the published OpenAPI 3.1 document, served
+	// unauthenticated (see appRouteDeps.SpecAPI's own doc for why).
+	specAPI := api.NewSpecHandlers(logger)
 	// NSTR-37's own web handlers: no Layout dependency (see
 	// mediaadapter.PhotosWebHandlers' own doc for why every route it serves
 	// is a bare fragment or binary image bytes, never a full-page
@@ -436,6 +439,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			OperationsAPI:  operationsAPI,
 			HistoryAPI:     historyAPI,
 			PhotosAPI:      photosAPI,
+			SpecAPI:        specAPI,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's
 		// session-based CurrentUser, still consumed by settingsMux and

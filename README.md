@@ -165,6 +165,15 @@ before ever touching the database.
 A signed-in user lists and revokes their own devices at
 `/settings/devices`; revoking one signs it out immediately.
 
+## API
+
+Nestorage's public JSON API is documented in [`docs/api.md`](docs/api.md)
+and specified as OpenAPI 3.1 at
+[`internal/platform/api/openapi.yaml`](internal/platform/api/openapi.yaml)
+(served live at `GET /api/v1/openapi.yaml`) — start with
+[`docs/integrating-with-nestova.md`](docs/integrating-with-nestova.md) for a
+worked walkthrough of driving it end to end.
+
 ## License
 
 [AGPL-3.0](LICENSE), matching Nestova and nestcore.

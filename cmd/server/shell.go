@@ -265,12 +265,13 @@ func shellInitials(name string) string {
 // NSTR-53's own /api/v1 mount (newAPIRouteMount) is registered at
 // "/api/v1/", behind RequireAPICredential rather than any of the
 // session-based gates above — a bearer credential only, JSON-only surface.
-// It sits alongside deps.DeviceTokenAPI.Routes(mux), registered at the top
-// level just above: "POST /api/v1/auth/device-tokens" is a more specific
-// pattern than the "/api/v1/" subtree, so net/http.ServeMux keeps routing it
-// there, outside the bearer gate, exactly as it already did before this
-// mount existed — the credential-minting endpoint has to stay reachable
-// with no credential yet to present.
+// It sits alongside deps.DeviceTokenAPI.Routes(mux) and deps.SpecAPI.Routes(mux),
+// both registered at the top level just above: "POST /api/v1/auth/device-tokens"
+// and "GET /api/v1/openapi.yaml" are each more specific patterns than the
+// "/api/v1/" subtree, so net/http.ServeMux keeps routing them there, outside
+// the bearer gate — the credential-minting endpoint has to stay reachable
+// with no credential yet to present, and NSTR-57's own published spec has to
+// stay reachable by a client that has not obtained one yet either.
 //
 // appRouteDeps groups newAppRoutes' dependencies into one value instead of a
 // growing parameter list: NSTR-24 added Denier as the eighth, past
@@ -314,6 +315,34 @@ type appRouteDeps struct {
 	// and the web gallery can never disagree on validation, EXIF scrubbing,
 	// or storage.
 	PhotosAPI *mediaadapter.PhotosAPIHandlers
+	// SpecAPI is NSTR-57's own route: the published OpenAPI 3.1 document,
+	// GET /api/v1/openapi.yaml. Registered on the outer mux alongside
+	// DeviceTokenAPI, NOT inside registerAPIRoutes below — the spec is
+	// public (the repository is public) even though the data behind it is
+	// not, matching DeviceTokenAPI's own reason for sitting outside the
+	// bearer gate.
+	SpecAPI *api.SpecHandlers
+}
+
+// registerAPIRoutes mounts NSTR-54/55/56's bearer-gated JSON API route
+// groups onto reg — Locations/Bins/Items CRUD, the item/bin operation and
+// history endpoints, and item photos. This is the exact closure newAppRoutes
+// wraps behind newAPIRouteMount's RequireAPICredential gate, factored into
+// its own named function so NSTR-57's route/spec sync test
+// (cmd/server/apispec_test.go) builds the identical route set production
+// does, through the identical call sequence, rather than risking the two
+// drifting apart. deps.DeviceTokenAPI and deps.SpecAPI are deliberately NOT
+// included here — see appRouteDeps' own doc for why their routes are
+// mounted outside this gate.
+func registerAPIRoutes(deps appRouteDeps) func(api.Registrar) {
+	return func(reg api.Registrar) {
+		deps.LocationsAPI.Routes(reg)
+		deps.BinsAPI.Routes(reg)
+		deps.ItemsAPI.Routes(reg)
+		deps.OperationsAPI.Routes(reg)
+		deps.HistoryAPI.Routes(reg)
+		deps.PhotosAPI.Routes(reg)
+	}
 }
 
 func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
@@ -326,14 +355,8 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		deps.Onboarding.Routes(mux)
 		deps.Login.Routes(mux)
 		deps.DeviceTokenAPI.Routes(mux)
-		mux.Handle("/api/v1/", newAPIRouteMount(deps.Denier, deps.APIMetrics, deps.Logger, func(apiRouter api.Registrar) {
-			deps.LocationsAPI.Routes(apiRouter)
-			deps.BinsAPI.Routes(apiRouter)
-			deps.ItemsAPI.Routes(apiRouter)
-			deps.OperationsAPI.Routes(apiRouter)
-			deps.HistoryAPI.Routes(apiRouter)
-			deps.PhotosAPI.Routes(apiRouter)
-		}))
+		deps.SpecAPI.Routes(mux)
+		mux.Handle("/api/v1/", newAPIRouteMount(deps.Denier, deps.APIMetrics, deps.Logger, registerAPIRoutes(deps)))
 
 		adminMux := http.NewServeMux()
 		deps.Users.Routes(adminMux)
