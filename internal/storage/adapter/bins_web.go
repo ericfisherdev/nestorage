@@ -63,11 +63,14 @@ type itemLister interface {
 // itemEventLister's own var _ assertion covers in item_history_web.go, a
 // second, differently-shaped consumer port on the same event read service
 // (each handler group depends only on the methods it uses, per ISP).
-// Method name and signature are NSTR-40's own ListByBin exactly, no viewer
-// parameter for the identical reason itemEventLister carries none: Activity
-// already enforces visibility via h.bins.GetByCode before ever calling this.
+// Method name and signature are NSTR-40's own ListByBin exactly (NSTR-55
+// widened the signature from a bare limit to a real domain.HistoryPage, so
+// the API's own bin history endpoint could page through it — this handler
+// still only ever passes a page with no Before), no viewer parameter for the
+// identical reason itemEventLister carries none: Activity already enforces
+// visibility via h.bins.GetByCode before ever calling this.
 type binActivityLister interface {
-	ListByBin(ctx context.Context, binID domain.BinID, limit int) ([]domain.ItemEvent, error)
+	ListByBin(ctx context.Context, binID domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error)
 }
 
 // Compile-time assurance *ItemEventRepository satisfies binActivityLister.
@@ -438,7 +441,7 @@ func (h *BinsWebHandlers) Activity(w http.ResponseWriter, r *http.Request) {
 		h.handleGetError(w, r, err, "bins: activity")
 		return
 	}
-	events, err := h.events.ListByBin(r.Context(), view.Bin.ID, binActivityLimit)
+	events, err := h.events.ListByBin(r.Context(), view.Bin.ID, domain.HistoryPage{Limit: binActivityLimit})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "bins: activity: list events", "error", err)
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)

@@ -309,11 +309,15 @@ type HistoryPage struct {
 //   - ListByItem returns itemID's events newest-first (occurred_at DESC, id
 //     DESC), at most page.Limit rows, strictly older than page.Before when
 //     set. Returns an empty slice, not an error, when itemID has no events.
-//   - ListByBin returns binID's events newest-first, at most limit rows, no
-//     paging — NSTR-42's bin activity panel is a fixed window. Because
-//     EventRemoved carries the bin the item left (not only EventAdded the
-//     bin it entered), this surfaces removals as well as additions. Returns
-//     an empty slice, not an error, when binID has no events.
+//   - ListByBin returns binID's events newest-first (occurred_at DESC, id
+//     DESC), at most page.Limit rows, strictly older than page.Before when
+//     set — the same keyset shape ListByItem already implements. NSTR-42's
+//     bin activity panel still only ever requests a fixed first page (no
+//     Before) at its own binActivityLimit; NSTR-55's own bin history API
+//     endpoint is what actually pages through Before. Because EventRemoved
+//     carries the bin the item left (not only EventAdded the bin it
+//     entered), this surfaces removals as well as additions. Returns an
+//     empty slice, not an error, when binID has no events.
 //
 // Error contracts:
 //   - Append returns a wrapped identity.ErrUserNotFound when actor_user_id
@@ -323,5 +327,5 @@ type HistoryPage struct {
 type ItemEventRepository interface {
 	Append(ctx context.Context, e *ItemEvent) error
 	ListByItem(ctx context.Context, itemID ItemID, page HistoryPage) ([]ItemEvent, error)
-	ListByBin(ctx context.Context, binID BinID, limit int) ([]ItemEvent, error)
+	ListByBin(ctx context.Context, binID BinID, page HistoryPage) ([]ItemEvent, error)
 }

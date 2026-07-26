@@ -38,6 +38,35 @@ const (
 	CodeConflict           Code = "conflict"
 )
 
+// NSTR-55's own addition: the operation and history endpoints
+// (storage/adapter's operations_api.go/history_api.go) can 404 or 409 for
+// more than one kind of resource in a single request (add-to-bin can fail
+// on either the item or its destination bin, say), which the generic
+// CodeNotFound/CodeConflict above cannot tell a client apart on. Added here,
+// the one place this vocabulary lives, rather than let a bounded-context
+// adapter invent its own code (mirrors CodeConflict's own rationale above).
+const (
+	CodeItemNotFound          Code = "item_not_found"
+	CodeBinNotFound           Code = "bin_not_found"
+	CodeLocationNotFound      Code = "location_not_found"
+	CodeReturnRequestNotFound Code = "return_request_not_found"
+
+	CodeItemAlreadyInBin      Code = "item_already_in_bin"
+	CodeItemAlreadyCheckedOut Code = "item_already_checked_out"
+	CodeItemNotCheckedOut     Code = "item_not_checked_out"
+	CodeRequesterHoldsItem    Code = "requester_holds_item"
+	CodeReturnRequestNotOpen  Code = "return_request_not_open"
+
+	// CodeHolderRequired is distinct from the generic CodeForbidden
+	// api_common.go's requireUserPrincipal already answers with for a
+	// create endpoint: this one names the specific rule an integration
+	// principal tripped (attempting a check-out or a return-request), which
+	// requireUserPrincipal's own generic message does not.
+	CodeHolderRequired Code = "holder_required"
+
+	CodeInvalidReturnRequestMessage Code = "invalid_return_request_message"
+)
+
 // FieldDetail names one field-level validation failure. Details is only
 // populated on CodeInvalidRequest responses — every other code describes a
 // failure with nothing field-shaped to report.

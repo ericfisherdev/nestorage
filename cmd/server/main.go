@@ -312,6 +312,14 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	locationsAPI := storageadapter.NewLocationsAPIHandlers(locationService, logger)
 	binsAPI := storageadapter.NewBinsAPIHandlers(binService, logger)
 	itemsAPI := storageadapter.NewItemsAPIHandlers(itemService, logger)
+	// NSTR-55's own public JSON API: operationService/binMover/
+	// returnRequestService/itemQueryService are the exact same instances
+	// itemsWeb/binsWeb already share above, so web and API can never
+	// disagree on what a valid transition is; itemEventRepo (pool-bound,
+	// constructed once above) doubles as both the item and bin history
+	// readers, matching itemsWeb/binsWeb's own Events field.
+	operationsAPI := storageadapter.NewOperationsAPIHandlers(operationService, binMover, returnRequestService, itemQueryService, logger)
+	historyAPI := storageadapter.NewHistoryAPIHandlers(itemQueryService, itemEventRepo, binService, itemEventRepo, logger)
 	// NSTR-37's own web handlers: no Layout dependency (see
 	// mediaadapter.PhotosWebHandlers' own doc for why every route it serves
 	// is a bare fragment or binary image bytes, never a full-page
@@ -420,6 +428,8 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			LocationsAPI:   locationsAPI,
 			BinsAPI:        binsAPI,
 			ItemsAPI:       itemsAPI,
+			OperationsAPI:  operationsAPI,
+			HistoryAPI:     historyAPI,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's
 		// session-based CurrentUser, still consumed by settingsMux and

@@ -72,10 +72,114 @@ have a specific field to name.
 | `setup_required` | 503 |
 | `internal` | 500 |
 | `rate_limited` | 429 (NSTR-58) |
+| `conflict` | 409 |
 
 An unmatched route or method under `/api/v1` answers through this same
 envelope (`not_found` / `method_not_allowed`) rather than net/http's own
 plain-text body — see `internal/platform/api.Router` for how.
+
+### Typed codes for the operation and history endpoints
+
+The two sections below route errors through a second, more specific code
+vocabulary instead of the generic `not_found`/`conflict` above — a
+multi-resource endpoint (add-to-bin can fail on either the item or its
+destination bin) needs a code a client can actually branch on to tell which:
+
+| Code | Status | Meaning |
+|---|---|---|
+| `item_not_found` | 404 | The item in the path is unknown or not visible to the caller. |
+| `bin_not_found` | 404 | The bin (in the path, or named by `bin_id`) is unknown or not visible. |
+| `location_not_found` | 404 | The location named by `location_id` is unknown or not visible. |
+| `return_request_not_found` | 404 | The return request in the path is unknown, or belongs to a different item/requester. |
+| `item_already_in_bin` | 409 | The item is already sitting in a *different* bin than the one requested. |
+| `item_already_checked_out` | 409 | The item is already held by a *different* user than the caller. |
+| `item_not_checked_out` | 409 | The item is not checked out, and is not already sitting in the requested bin either. |
+| `requester_holds_item` | 409 | A return was requested against the caller's own held item. |
+| `return_request_not_open` | 409 | The return request has already been fulfilled (cancelling it is no longer possible). |
+| `holder_required` | 403 | The account API key (an integration principal) attempted a check-out or return-request — both require a real person. |
+| `invalid_return_request_message` | 422 | The `message` field is blank or over `MaxReturnRequestMessageRunes` (500) characters — carries a field detail naming `message`. |
+
+## Item and bin state transitions
+
+Every state transition available in the web UI is available here too, over
+the identical `OperationService`/`BinMover`/`ReturnRequestService` rules —
+web and API can never disagree on what a valid transition is.
+
+| Method & path | Body | Delegates to |
+|---|---|---|
+| `POST /api/v1/items/{id}/add-to-bin` | `{"bin_id": "..."}` | `OperationService.AddToBin` |
+| `POST /api/v1/items/{id}/check-out` | `{"note": "..."}` (optional) | `OperationService.RemoveFromBin` |
+| `POST /api/v1/items/{id}/return` | `{"bin_id": "...", "note": "..."}` (`note` optional) | `OperationService.ReturnToBin` |
+| `POST /api/v1/bins/{id}/move` | `{"location_id": "..."}` | `BinMover.Move` |
+| `POST /api/v1/items/{id}/return-requests` | `{"message": "..."}` (optional) | `ReturnRequestService.Request` |
+| `POST /api/v1/items/{id}/return-requests/{requestID}/cancel` | *(none)* | `ReturnRequestService.Cancel` |
+
+A successful item transition (add-to-bin, check-out, return) answers `200`
+with the item projection `GET /api/v1/items/{id}` itself returns. Move-bin
+answers `200` with `{"bin_id", "from_location_id", "to_location_id",
+"moved_at"}`. Creating a return request answers `201` with the created
+request; every other mutation here answers `200` with the return request's
+current state.
+
+### Idempotency
+
+The domain guards already fail a retried request inside its own transaction
+before any event row is appended, so a retry can never double-apply a
+placement change or duplicate an event. On top of that guard, this API
+answers each retry as a **success**, not an error, whenever the retry's
+requested end state already holds:
+
+| Endpoint | Retried when | Answers |
+|---|---|---|
+| add-to-bin | Item already sitting in the requested bin | `200`, current item state |
+| check-out | Item already held by the calling user | `200`, current item state |
+| return | Item already sitting in the requested bin | `200`, current item state |
+| move-bin | Bin already at the requested location | `200`, `moved_at: null` (no move happened this call) |
+| create return request | Caller already has an open request on the item | `200`, that existing request |
+| cancel return request | Request is already cancelled | `200`, that request's (cancelled) state |
+
+Any other case — the item is somewhere else, held by someone else, the bin
+is elsewhere, or the return request has been fulfilled rather than
+cancelled — answers the matching `409` from the typed-code table above.
+
+## Event history
+
+| Method & path | Query | Delegates to |
+|---|---|---|
+| `GET /api/v1/items/{id}/history` | `before`, `limit` | `ItemEventRepository.ListByItem` |
+| `GET /api/v1/bins/{id}/history` | `before`, `limit` | `ItemEventRepository.ListByBin` |
+
+Both endpoints check the item's or bin's own visibility (a 404 masks
+"unknown" and "invisible" identically) before ever reading an event, and
+page newest-first: `limit` defaults to 30, clamped to 100; `before` is the
+opaque cursor `next_cursor` carries, `null` on the response's own last page.
+
+```json
+{
+  "events": [
+    {
+      "id": "...",
+      "kind": "added",
+      "occurred_at": "2026-07-25T14:30:00Z",
+      "note": null,
+      "actor": { "kind": "user", "label": "Maya", "user_id": "..." },
+      "bin": { "id": "...", "label": "BIN-A01 — Pantry shelf" },
+      "from_location": null,
+      "to_location": null,
+      "changed_fields": [],
+      "item": { "id": "...", "name": "Camping stove" }
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+`actor.user_id` is `null` exactly for the account API key (an integration
+principal, which has no person behind it) — `actor.kind`/`actor.label` are
+always present for both principal kinds. `bin`/`from_location`/`to_location`
+are `null` except on the event kinds that carry them (added/removed/returned
+for `bin`, moved for the two locations). Bin history's own `item` field is
+what lets one bin's history span the several items that have sat in it.
 
 ## Before first-run setup
 
