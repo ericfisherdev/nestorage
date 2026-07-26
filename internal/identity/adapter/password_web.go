@@ -49,9 +49,9 @@ const newPasswordDoesNotMatchMessage = "Passwords do not match."
 // own doc), so this message is the only visible sign anything happened.
 const passwordChangedMessage = "Your password has been changed."
 
-// passwordChangerService is the narrow port (ISP) PasswordWebHandlers
+// passwordChanger is the narrow port (ISP) PasswordWebHandlers
 // depends on, satisfied by *app.PasswordService.
-type passwordChangerService interface {
+type passwordChanger interface {
 	ChangeOwn(ctx context.Context, id domain.UserID, currentPassword, newPassword string) error
 }
 
@@ -66,7 +66,7 @@ type passwordChangerService interface {
 // members' passwords, so both routes render/refuse in favor of a notice
 // linking to the identity provider instead.
 type PasswordWebHandlers struct {
-	passwords   passwordChangerService
+	passwords   passwordChanger
 	sm          *scs.SessionManager
 	layout      requestLayoutFunc
 	mode        config.FederationMode
@@ -81,9 +81,9 @@ type PasswordWebHandlers struct {
 // config.FederationModeFederated) — the composition root guarantees the two
 // travel together (config.ProviderConfig.Validate rejects any partial
 // state), so this constructor does not re-check that pairing itself.
-func NewPasswordWebHandlers(passwords passwordChangerService, sm *scs.SessionManager, layout requestLayoutFunc, mode config.FederationMode, providerURL string, logger *slog.Logger) *PasswordWebHandlers {
+func NewPasswordWebHandlers(passwords passwordChanger, sm *scs.SessionManager, layout requestLayoutFunc, mode config.FederationMode, providerURL string, logger *slog.Logger) *PasswordWebHandlers {
 	if passwords == nil {
-		panic("identity/adapter: NewPasswordWebHandlers requires a non-nil passwordChangerService")
+		panic("identity/adapter: NewPasswordWebHandlers requires a non-nil passwordChanger")
 	}
 	if sm == nil {
 		panic("identity/adapter: NewPasswordWebHandlers requires a non-nil session manager")
