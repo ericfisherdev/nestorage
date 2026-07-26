@@ -428,6 +428,15 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	adminService := identityapp.NewAdminService(identityRepo, hasher, revokers, logger)
 	usersHandlers := identityadapter.NewUsersWebHandlers(adminService, sm, newAdminUsersLayout(shellData, logger), logger)
 
+	// NSTR-103's own self-service password change: the standalone-mode half
+	// of NSTR-20's deferred scope AdminService.ResetPassword (the admin-reset
+	// half, just above) never covered. It shares the exact same Revokers fan-
+	// out — one invariant, one revocation path — and the same federationMode
+	// seam login/deviceTokenAPI already consume, plus cfg.Provider.BaseURL as
+	// the federated notice's provider link.
+	passwordService := identityapp.NewPasswordService(identityRepo, hasher, revokers, logger)
+	passwordWeb := identityadapter.NewPasswordWebHandlers(passwordService, sm, newPasswordSettingsLayout(shellData, logger), federationMode, cfg.Provider.BaseURL, logger)
+
 	// NSTR-24's principal resolution: one Chain dispatching a request's
 	// credential — the session cookie, a device token, or the account api
 	// key — to the Resolver that wraps it into a domain.Principal, and one
@@ -460,6 +469,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			DeviceTokenAPI:   deviceTokenAPI,
 			DeviceTokenWeb:   deviceTokenWeb,
 			PreferencesWeb:   preferencesWeb,
+			PasswordWeb:      passwordWeb,
 			APIKeyWeb:        apiKeyWeb,
 			Bins:             binsWeb,
 			Locations:        locationsWeb,
