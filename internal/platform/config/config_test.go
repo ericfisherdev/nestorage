@@ -30,6 +30,8 @@ var allKeys = []string{
 	"EMAIL_ENABLED", "EMAIL_FROM_ADDRESS", "EMAIL_DISPATCH_INTERVAL",
 	"EMAIL_DISPATCH_BATCH_SIZE", "EMAIL_MAX_ATTEMPTS",
 	"SES_REGION", "SES_ACCESS_KEY_ID", "SES_SECRET_ACCESS_KEY",
+	"API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST",
+	"AUTH_RATE_LIMIT_RPM", "AUTH_RATE_LIMIT_BURST",
 }
 
 // setEnv isolates a test case from both the developer's ambient environment

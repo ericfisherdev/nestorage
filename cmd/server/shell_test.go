@@ -9,10 +9,22 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/time/rate"
+
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
+	ratelimitmetrics "github.com/ericfisherdev/nestorage/internal/platform/metrics"
 )
+
+// generousRateLimiter builds a NSTR-58 KeyedRateLimiter that never denies
+// within a single test's own handful of requests — these tests exercise
+// newAPIRouteMount's auth/observability/fallback plumbing, not rate
+// limiting itself (covered by identity/adapter's own ratelimit_test.go).
+func generousRateLimiter() *identityadapter.KeyedRateLimiter {
+	return identityadapter.NewKeyedRateLimiter(rate.Limit(1000), 1000)
+}
 
 // noAPIRoutes is the registerRoutes no-op these tests pass to
 // newAPIRouteMount: they exercise the mount's own auth/observability/
@@ -116,8 +128,9 @@ func testAPIMux(t *testing.T) *http.ServeMux {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	denier := identityadapter.NewDenier(logger)
+	rateLimitMetrics := ratelimitmetrics.NewRateLimitMetrics(prometheus.NewRegistry(), "test")
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, logger, noAPIRoutes))
+	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, generousRateLimiter(), rateLimitMetrics, logger, noAPIRoutes))
 	return mux
 }
 
@@ -164,9 +177,10 @@ func TestAPIMount_UnknownPathWithValidBearer_Returns404JSON(t *testing.T) {
 	denier := identityadapter.NewDenier(logger)
 	chain := identityadapter.NewChain(neverResolves{}, neverResolves{}, alwaysResolves{})
 	resolve := identityadapter.Resolve(chain, denier, logger)
+	rateLimitMetrics := ratelimitmetrics.NewRateLimitMetrics(prometheus.NewRegistry(), "test")
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, logger, noAPIRoutes))
+	mux.Handle("/api/v1/", newAPIRouteMount(denier, nil, generousRateLimiter(), rateLimitMetrics, logger, noAPIRoutes))
 	handler := resolve(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/no-such-route", nil)

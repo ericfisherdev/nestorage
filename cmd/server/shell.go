@@ -5,10 +5,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/a-h/templ"
 
 	"github.com/ericfisherdev/nestcore/httpserver"
+	"github.com/ericfisherdev/nestcore/httpserver/middleware"
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
@@ -17,6 +19,7 @@ import (
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
+	ratelimitmetrics "github.com/ericfisherdev/nestorage/internal/platform/metrics"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 	"github.com/ericfisherdev/nestorage/web"
@@ -265,13 +268,18 @@ func shellInitials(name string) string {
 // NSTR-53's own /api/v1 mount (newAPIRouteMount) is registered at
 // "/api/v1/", behind RequireAPICredential rather than any of the
 // session-based gates above — a bearer credential only, JSON-only surface.
-// It sits alongside deps.DeviceTokenAPI.Routes(mux) and deps.SpecAPI.Routes(mux),
-// both registered at the top level just above: "POST /api/v1/auth/device-tokens"
-// and "GET /api/v1/openapi.yaml" are each more specific patterns than the
-// "/api/v1/" subtree, so net/http.ServeMux keeps routing them there, outside
-// the bearer gate — the credential-minting endpoint has to stay reachable
-// with no credential yet to present, and NSTR-57's own published spec has to
-// stay reachable by a client that has not obtained one yet either.
+// It sits alongside deps.DeviceTokenAPI.Routes(rateLimitedRegistrar{...})
+// and deps.SpecAPI.Routes(mux), both registered at the top level just
+// above: "POST /api/v1/auth/device-tokens" and "GET /api/v1/openapi.yaml"
+// are each more specific patterns than the "/api/v1/" subtree, so
+// net/http.ServeMux keeps routing them there, outside the bearer gate — the
+// credential-minting endpoint has to stay reachable with no credential yet
+// to present, and NSTR-57's own published spec has to stay reachable by a
+// client that has not obtained one yet either. NSTR-58 additionally wraps
+// the device-token registration in rateLimitedRegistrar (authWrap) so that
+// one route — alone among everything mounted outside the /api/v1 gate —
+// still sits behind rate limiting; deps.SpecAPI is deliberately left
+// unwrapped (a static document, safe to leave unlimited).
 //
 // appRouteDeps groups newAppRoutes' dependencies into one value instead of a
 // growing parameter list: NSTR-24 added Denier as the eighth, past
@@ -322,6 +330,17 @@ type appRouteDeps struct {
 	// not, matching DeviceTokenAPI's own reason for sitting outside the
 	// bearer gate.
 	SpecAPI *api.SpecHandlers
+	// APILimiter is NSTR-58's own account-wide bucket, wrapping the whole
+	// /api/v1 mount (newAPIRouteMount): RateLimit(APILimiter,
+	// PrincipalRateKey, "api"). AuthLimiter is the additional, stricter
+	// bucket over the token-exchange route alone: RateLimit(AuthLimiter,
+	// ClientIPRateKey, "auth") — the exchange route sits behind BOTH (see
+	// newAppRoutes' own doc), so whichever budget is tighter is what a
+	// caller observes (AC 3). RateLimitMetrics is the shared recorder both
+	// wrap into their own RateLimit call.
+	APILimiter       *identityadapter.KeyedRateLimiter
+	AuthLimiter      *identityadapter.KeyedRateLimiter
+	RateLimitMetrics *ratelimitmetrics.RateLimitMetrics
 }
 
 // registerAPIRoutes mounts NSTR-54/55/56's bearer-gated JSON API route
@@ -350,13 +369,24 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 	adminGate := identityadapter.RequireAdmin(deps.Denier)
 	userGate := identityadapter.RequireUser()
 	authGate := identityadapter.RequireAuthenticated(deps.Denier)
+	// NSTR-58's own token-exchange rate limiting: DeviceTokenAPI.Routes'
+	// registration is wrapped through rateLimitedRegistrar (below) rather
+	// than called on mux directly, so the route it registers additionally sits
+	// behind BOTH the account-wide api bucket and the stricter auth bucket
+	// (appRouteDeps.AuthLimiter's own doc) — without duplicating
+	// "POST /api/v1/auth/device-tokens" as a second pattern string
+	// alongside DeviceTokenAPIHandlers.Routes' own single registration.
+	authWrap := middleware.Chain(
+		identityadapter.RateLimit(deps.APILimiter, identityadapter.PrincipalRateKey, "api", deps.RateLimitMetrics, newRateLimitErrorWriter(deps.Logger), time.Now),
+		identityadapter.RateLimit(deps.AuthLimiter, identityadapter.ClientIPRateKey, "auth", deps.RateLimitMetrics, newRateLimitErrorWriter(deps.Logger), time.Now),
+	)
 	return func(mux *http.ServeMux) {
 		shell.Routes(mux)
 		deps.Onboarding.Routes(mux)
 		deps.Login.Routes(mux)
-		deps.DeviceTokenAPI.Routes(mux)
+		deps.DeviceTokenAPI.Routes(rateLimitedRegistrar{Registrar: mux, wrap: authWrap})
 		deps.SpecAPI.Routes(mux)
-		mux.Handle("/api/v1/", newAPIRouteMount(deps.Denier, deps.APIMetrics, deps.Logger, registerAPIRoutes(deps)))
+		mux.Handle("/api/v1/", newAPIRouteMount(deps.Denier, deps.APIMetrics, deps.APILimiter, deps.RateLimitMetrics, deps.Logger, registerAPIRoutes(deps)))
 
 		adminMux := http.NewServeMux()
 		deps.Users.Routes(adminMux)
@@ -395,18 +425,61 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 // Locations/Bins/ItemsAPIHandlers (and any later context's own API adapter)
 // register onto the exact same api.Router instance that answers the JSON
 // 404/405 fallback — wrapped with RequireAPICredential's bearer gate and
-// api.Observe's own instrumentation. Observe sits OUTSIDE the gate so a
-// denied request is still counted, with route falling back to the mount
-// pattern since no inner route ran (see Observe's own doc). Split out of
-// newAppRoutes so it is unit-testable without newAppRoutes' many other
-// concrete dependencies — a test passes its own registerRoutes (or a no-op)
-// rather than every bounded context's real handlers.
-func newAPIRouteMount(denier *identityadapter.Denier, apiMetrics *api.Metrics, logger *slog.Logger, registerRoutes func(api.Registrar)) http.Handler {
+// api.Observe's own instrumentation, itself wrapped in NSTR-58's own
+// account-wide RateLimit (apiLimiter, PrincipalRateKey, "api") — the
+// OUTERMOST layer, checked before Observe/RequireAPICredential/routing ever
+// run, so a limited request is turned away as cheaply as possible and never
+// reaches (or skews) the request-count/latency instrumentation those inner
+// layers record. Observe itself sits OUTSIDE the credential gate so a
+// denied-but-not-limited request is still counted, with route falling back
+// to the mount pattern since no inner route ran (see Observe's own doc).
+// Split out of newAppRoutes so it is unit-testable without newAppRoutes'
+// many other concrete dependencies — a test passes its own registerRoutes
+// (or a no-op) rather than every bounded context's real handlers.
+func newAPIRouteMount(denier *identityadapter.Denier, apiMetrics *api.Metrics, apiLimiter *identityadapter.KeyedRateLimiter, rateLimitMetrics *ratelimitmetrics.RateLimitMetrics, logger *slog.Logger, registerRoutes func(api.Registrar)) http.Handler {
 	apiRouter := api.NewRouter(logger)
 	registerRoutes(apiRouter)
-	return api.Observe(apiMetrics, identityadapter.PrincipalKindLabel, logger)(
-		identityadapter.RequireAPICredential(denier)(apiRouter.Handler()),
+	return identityadapter.RateLimit(apiLimiter, identityadapter.PrincipalRateKey, "api", rateLimitMetrics, newRateLimitErrorWriter(logger), time.Now)(
+		api.Observe(apiMetrics, identityadapter.PrincipalKindLabel, logger)(
+			identityadapter.RequireAPICredential(denier)(apiRouter.Handler()),
+		),
 	)
+}
+
+// rateLimitedRegistrar wraps an api.Registrar so every route registered
+// through it (via HandleFunc, DeviceTokenAPIHandlers.Routes' own only call)
+// picks up wrap before reaching the underlying Registrar — see
+// newAppRoutes' own doc for why the token-exchange route needs this rather
+// than composing RateLimit at newAPIRouteMount's level the way the rest of
+// /api/v1 does (DeviceTokenAPI is deliberately registered OUTSIDE that
+// mount, unauthenticated).
+type rateLimitedRegistrar struct {
+	api.Registrar
+	wrap middleware.Middleware
+}
+
+// Handle wraps handler in wrap before delegating to the underlying
+// Registrar — completes api.Registrar alongside HandleFunc below, even
+// though DeviceTokenAPIHandlers.Routes (this type's only production caller)
+// exercises HandleFunc alone.
+func (r rateLimitedRegistrar) Handle(pattern string, handler http.Handler) {
+	r.Registrar.Handle(pattern, r.wrap(handler))
+}
+
+// HandleFunc wraps handler in wrap before delegating to the underlying
+// Registrar's own Handle.
+func (r rateLimitedRegistrar) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	r.Registrar.Handle(pattern, r.wrap(http.HandlerFunc(handler)))
+}
+
+// newRateLimitErrorWriter closes over logger to satisfy identityadapter's
+// own errorWriter port (RateLimit's own doc) with api.WriteError — NSTR-53's
+// shared JSON error writer — so a 429 answers through the exact same
+// envelope every other /api/v1 error in this codebase uses.
+func newRateLimitErrorWriter(logger *slog.Logger) func(w http.ResponseWriter, status int, code api.Code, message string) {
+	return func(w http.ResponseWriter, status int, code api.Code, message string) {
+		api.WriteError(w, logger, status, code, message)
+	}
 }
 
 // handleRoot sends the app's one entry point, /bins, until there is more
