@@ -21,26 +21,27 @@ func TestNewDenier_NilLoggerPanics(t *testing.T) {
 func TestDenier_Deny_JSON(t *testing.T) {
 	denier := adapter.NewDenier(testLogger())
 	tests := []struct {
-		name   string
-		status int
-		want   string
+		name     string
+		status   int
+		wantCode string
 	}{
 		{"401 under /api/", http.StatusUnauthorized, "unauthorized"},
 		{"403 under /api/", http.StatusForbidden, "forbidden"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertJSONDenial(t, denier, tt.status, tt.want)
+			assertJSONDenial(t, denier, tt.status, tt.wantCode)
 		})
 	}
 }
 
-// assertJSONDenial exercises one Deny call for a request under apiPathPrefix
-// and checks the fixed JSON shape: status, Content-Type, the {"error":
-// wantError} body, and that HX-Redirect is never set for a JSON response.
-// Split out of TestDenier_Deny_JSON so its table-driven loop stays a thin
-// dispatcher rather than nesting every assertion inside the t.Run closure.
-func assertJSONDenial(t *testing.T, denier *adapter.Denier, status int, wantError string) {
+// assertJSONDenial exercises one Deny call for a request under
+// api.PathPrefix and checks the shared envelope shape (platform/api):
+// status, Content-Type, the {"error": {"code": wantCode, ...}} body, and
+// that HX-Redirect is never set for a JSON response. Split out of
+// TestDenier_Deny_JSON so its table-driven loop stays a thin dispatcher
+// rather than nesting every assertion inside the t.Run closure.
+func assertJSONDenial(t *testing.T, denier *adapter.Denier, status int, wantCode string) {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/bins", nil)
 	rec := httptest.NewRecorder()
@@ -53,13 +54,16 @@ func assertJSONDenial(t *testing.T, denier *adapter.Denier, status int, wantErro
 		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
 	}
 	var body struct {
-		Error string `json:"error"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.Error != wantError {
-		t.Errorf("error = %q, want %q", body.Error, wantError)
+	if body.Error.Code != wantCode {
+		t.Errorf("code = %q, want %q", body.Error.Code, wantCode)
 	}
 	if rec.Header().Get("HX-Redirect") != "" {
 		t.Error("a JSON response must not carry HX-Redirect")

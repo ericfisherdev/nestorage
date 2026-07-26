@@ -16,6 +16,7 @@ import (
 	labelsdomain "github.com/ericfisherdev/nestorage/internal/labels/domain"
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
+	"github.com/ericfisherdev/nestorage/internal/platform/api"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 	"github.com/ericfisherdev/nestorage/web"
@@ -261,6 +262,16 @@ func shellInitials(name string) string {
 // member's own inbox, not an admin concern — and share no prefix with any
 // bin/location/item/photo pattern already registered on it.
 //
+// NSTR-53's own /api/v1 mount (newAPIRouteMount) is registered at
+// "/api/v1/", behind RequireAPICredential rather than any of the
+// session-based gates above — a bearer credential only, JSON-only surface.
+// It sits alongside deps.DeviceTokenAPI.Routes(mux), registered at the top
+// level just above: "POST /api/v1/auth/device-tokens" is a more specific
+// pattern than the "/api/v1/" subtree, so net/http.ServeMux keeps routing it
+// there, outside the bearer gate, exactly as it already did before this
+// mount existed — the credential-minting endpoint has to stay reachable
+// with no credential yet to present.
+//
 // appRouteDeps groups newAppRoutes' dependencies into one value instead of a
 // growing parameter list: NSTR-24 added Denier as the eighth, past
 // golangci-lint's function-length threshold. Each field is still injected
@@ -282,6 +293,7 @@ type appRouteDeps struct {
 	Photos         *mediaadapter.PhotosWebHandlers
 	Notifications  *notifyadapter.InboxWebHandlers
 	Denier         *identityadapter.Denier
+	APIMetrics     *api.Metrics
 }
 
 func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
@@ -294,6 +306,7 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		deps.Onboarding.Routes(mux)
 		deps.Login.Routes(mux)
 		deps.DeviceTokenAPI.Routes(mux)
+		mux.Handle("/api/v1/", newAPIRouteMount(deps.Denier, deps.APIMetrics, deps.Logger))
 
 		adminMux := http.NewServeMux()
 		deps.Users.Routes(adminMux)
@@ -323,6 +336,22 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		deps.Notifications.Routes(storageMux)
 		mux.Handle("/", authGate(storageMux))
 	}
+}
+
+// newAPIRouteMount builds the /api/v1 handler newAppRoutes mounts at
+// "/api/v1/": an api.Router every bounded context's own API adapter mounts
+// its routes onto through Handle/HandleFunc (api.Registrar) — none does yet,
+// this ticket only stands up the mount itself — wrapped with
+// RequireAPICredential's bearer gate and api.Observe's own instrumentation.
+// Observe sits OUTSIDE the gate so a denied request is still counted, with
+// route falling back to the mount pattern since no inner route ran (see
+// Observe's own doc). Split out of newAppRoutes so it is unit-testable
+// without newAppRoutes' many other concrete dependencies.
+func newAPIRouteMount(denier *identityadapter.Denier, apiMetrics *api.Metrics, logger *slog.Logger) http.Handler {
+	apiRouter := api.NewRouter(logger)
+	return api.Observe(apiMetrics, identityadapter.PrincipalKindLabel, logger)(
+		identityadapter.RequireAPICredential(denier)(apiRouter.Handler()),
+	)
 }
 
 // handleRoot sends the app's one entry point, /bins, until there is more

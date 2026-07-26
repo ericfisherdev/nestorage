@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/ericfisherdev/nestcore/httpserver/middleware"
+
+	"github.com/ericfisherdev/nestorage/internal/platform/api"
 )
 
 // setupPath is the first-run onboarding wizard's route.
@@ -57,7 +59,7 @@ func SetupGuard(repo firstUserChecker, logger *slog.Logger) middleware.Middlewar
 				next.ServeHTTP(w, r)
 				return
 			}
-			redirectToSetup(w, r)
+			redirectToSetup(w, r, logger)
 		})
 	}
 }
@@ -72,15 +74,22 @@ func isSetupExempt(path string) bool {
 	return false
 }
 
-// redirectToSetup sends the client to /setup. An HTMX partial request gets
-// HX-Redirect (204) so htmx performs a full navigation instead of trying to
-// swap the wizard into whatever fragment target it was aiming at; a full
-// navigation gets a plain 303.
-func redirectToSetup(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("HX-Request") == "true" {
+// redirectToSetup sends the client to /setup — except under api.PathPrefix,
+// which gets a 503 JSON envelope instead: an API caller (the Android client,
+// Sprint 10; the already-live device-token exchange route today) has no
+// browser to follow an HTML redirect, and AC 2 forbids answering one to any
+// API route regardless. An HTMX partial request gets HX-Redirect (204) so
+// htmx performs a full navigation instead of trying to swap the wizard into
+// whatever fragment target it was aiming at; a full navigation gets a plain
+// 303.
+func redirectToSetup(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
+	switch {
+	case strings.HasPrefix(r.URL.Path, api.PathPrefix):
+		api.WriteError(w, logger, http.StatusServiceUnavailable, api.CodeSetupRequired, "setup required")
+	case r.Header.Get("HX-Request") == "true":
 		w.Header().Set("HX-Redirect", setupPath)
 		w.WriteHeader(http.StatusNoContent)
-		return
+	default:
+		http.Redirect(w, r, setupPath, http.StatusSeeOther)
 	}
-	http.Redirect(w, r, setupPath, http.StatusSeeOther)
 }

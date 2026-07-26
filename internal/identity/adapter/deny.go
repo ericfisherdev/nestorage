@@ -1,19 +1,15 @@
 package adapter
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/ericfisherdev/nestcore/render"
-)
 
-// apiPathPrefix marks NSTR-54's JSON api surface — a request under it gets
-// Denier's JSON body regardless of HX-Request, matching every other
-// JSON-vs-HTML split in this codebase.
-const apiPathPrefix = "/api/"
+	"github.com/ericfisherdev/nestorage/internal/platform/api"
+)
 
 // unauthorizedMessage and forbiddenMessage are the fixed, detail-free bodies
 // every denial carries — see Deny's own doc for why no check's specific
@@ -22,11 +18,6 @@ const (
 	unauthorizedMessage = "unauthorized"
 	forbiddenMessage    = "forbidden"
 )
-
-// denyBody is the JSON shape both denials answer with.
-type denyBody struct {
-	Error string `json:"error"`
-}
 
 // Denier writes a uniform 401/403 response for HTML, HTMX, and JSON callers,
 // so no handler or middleware in this context invents its own denial shape.
@@ -47,8 +38,9 @@ func NewDenier(logger *slog.Logger) *Denier {
 
 // Deny writes status (http.StatusUnauthorized or http.StatusForbidden) in
 // the shape r's caller expects:
-//   - JSON, for a request under apiPathPrefix or naming application/json in
-//     Accept: status plus a fixed {"error": "..."} body.
+//   - JSON, for a request under api.PathPrefix or naming application/json in
+//     Accept: status plus the shared error envelope (platform/api), coded
+//     api.CodeUnauthorized or api.CodeForbidden.
 //   - HTMX (HX-Request: true): 401 carries an HX-Redirect: /login response
 //     header so htmx performs a full-page navigation there instead of
 //     swapping an error fragment into the page; 403 is a bare plain-text
@@ -77,18 +69,21 @@ func (d *Denier) Deny(w http.ResponseWriter, r *http.Request, status int) {
 }
 
 // isJSONRequest reports whether r's caller expects a JSON error body: the
-// public API surface (NSTR-54, under apiPathPrefix) or an explicit
+// public API surface (under api.PathPrefix) or an explicit
 // Accept: application/json.
 func isJSONRequest(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, apiPathPrefix) || strings.Contains(r.Header.Get("Accept"), "application/json")
+	return strings.HasPrefix(r.URL.Path, api.PathPrefix) || strings.Contains(r.Header.Get("Accept"), "application/json")
 }
 
+// writeJSON answers through the shared envelope (platform/api), coding
+// status as api.CodeUnauthorized or api.CodeForbidden — Deny's only two
+// possible statuses.
 func (d *Denier) writeJSON(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(denyBody{Error: message}); err != nil {
-		d.logger.Error("deny: encode response", "error", err)
+	code := api.CodeUnauthorized
+	if status == http.StatusForbidden {
+		code = api.CodeForbidden
 	}
+	api.WriteError(w, d.logger, status, code, message)
 }
 
 // denyHTMX answers an HTMX request — see Deny's own doc.

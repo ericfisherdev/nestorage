@@ -35,6 +35,7 @@ import (
 	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
 	notifyapp "github.com/ericfisherdev/nestorage/internal/notify/app"
 	notifybootstrap "github.com/ericfisherdev/nestorage/internal/notify/bootstrap"
+	"github.com/ericfisherdev/nestorage/internal/platform/api"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
@@ -139,6 +140,11 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// "nestorage" namespaces every metric this process emits, so Nestova and
 	// Nestorage can share a scrape target without their HTTP metrics colliding.
 	httpMetrics := metrics.NewHTTPMetrics(registry, "nestorage")
+	// NSTR-53's own /api/v1 instrumentation, on the same registry as
+	// httpMetrics above — distinct metric names (nestorage_http_requests_total
+	// vs. nestorage_api_requests_total) mean the two families coexist on one
+	// scrape target with no collision.
+	apiMetrics := api.NewMetrics(registry)
 
 	// Identity composition: the session manager (backed by the shared pool
 	// via pgxstore), the user repository, the first-run provisioner, and
@@ -404,6 +410,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			Photos:         photosWeb,
 			Notifications:  notificationsWeb,
 			Denier:         denier,
+			APIMetrics:     apiMetrics,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's
 		// session-based CurrentUser, still consumed by settingsMux and
