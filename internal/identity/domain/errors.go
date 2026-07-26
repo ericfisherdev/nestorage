@@ -111,4 +111,29 @@ var (
 	// ParseKind when given a string that is not a known Kind — the same
 	// naming convention as ErrInvalidRole and ErrInvalidColor.
 	ErrInvalidKind = errors.New("identity: invalid principal kind")
+
+	// ErrMemberLinkNotFound is returned by MemberLinkRepository.FindByMemberID
+	// when no link matches the given Nestova member id (NSTR-101).
+	ErrMemberLinkNotFound = errors.New("identity: member link not found")
+
+	// ErrMemberAlreadyLinked is returned by MemberLinkRepository.Create when
+	// the member id is already linked to a DIFFERENT user than the one being
+	// linked — the application-level counterpart to
+	// provider_member_link_member_id_uniq.
+	ErrMemberAlreadyLinked = errors.New("identity: member already linked to a different user")
+
+	// ErrUserAlreadyLinked is returned by MemberLinkRepository.Create when
+	// the user id already carries a DIFFERENT provider member identity —
+	// provider_member_link_user_id_uniq's application-level counterpart.
+	ErrUserAlreadyLinked = errors.New("identity: user already linked to a different member")
+
+	// ErrHouseholdMismatch is returned by every FederationProvisioner
+	// operation when a household binding is already recorded and the
+	// request names a different one — refused, never merged (NSTR-101).
+	ErrHouseholdMismatch = errors.New("identity: request household does not match the bound household")
+
+	// ErrInvalidMemberLink is returned (wrapped, naming the offending field)
+	// by ValidateMemberID and ValidateHouseholdID for a blank or over-long
+	// federation identifier.
+	ErrInvalidMemberLink = errors.New("identity: invalid federation identifier")
 )

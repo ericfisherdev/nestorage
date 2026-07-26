@@ -197,6 +197,20 @@ calls instead answer:
 `item_already_checked_out` is exactly the code to branch on — not the
 `message` string, which is free to change.
 
+## Federation (Nestova's own reconciliation)
+
+`GET /api/v1/federation/accounts` and `PUT /api/v1/federation/members/{member_id}`
+(NSTR-101) are the inverse of the "creates need a person" rule above: every
+other create endpoint (locations, bins, items, check-out, return requests)
+**rejects** the account API key and requires a real person's device token.
+These two endpoints do the opposite — they **require** the account API key
+and reject a device token with `403`, because reconciling Nestova's members
+against Nestorage's accounts is Nestova's own integration acting on the
+household's behalf, never something a member's own phone should drive. See
+`docs/api.md`'s own Federation section for the full request/response
+contract, the household-binding rule, and the idempotency guarantee a
+repeated re-push relies on.
+
 ## Where to go next
 
 - [`docs/api.md`](api.md) — the full prose contract: authentication, the
