@@ -7,6 +7,31 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
 )
 
+// TestLoadProvider_TrailingSlashOnBaseURLTrimmed asserts a trailing slash
+// on PROVIDER_BASE_URL is trimmed at load time, mirroring nestcore's own
+// PUBLIC_BASE_URL loader (config/server.go): "https://host/" is the same
+// origin as "https://host", so an operator pasting a trailing slash must
+// not fail startup.
+func TestLoadProvider_TrailingSlashOnBaseURLTrimmed(t *testing.T) {
+	t.Setenv("PROVIDER_BASE_URL", "https://nestova.example/")
+	t.Setenv("PROVIDER_CLIENT_ID", "client-1")
+	t.Setenv("PROVIDER_CLIENT_SECRET", "shh")
+
+	cfg, errs := config.LoadProvider()
+	if len(errs) != 0 {
+		t.Fatalf("LoadProvider() errs = %v, want none", errs)
+	}
+	if cfg.BaseURL != "https://nestova.example" {
+		t.Errorf("BaseURL = %q, want the trailing slash trimmed to %q", cfg.BaseURL, "https://nestova.example")
+	}
+	if validateErrs := cfg.Validate(); len(validateErrs) != 0 {
+		t.Errorf("Validate() = %v, want nil (a trailing-slash BaseURL must resolve to a valid origin)", validateErrs)
+	}
+	if cfg.Mode() != config.FederationModeFederated {
+		t.Errorf("Mode() = %q, want %q", cfg.Mode(), config.FederationModeFederated)
+	}
+}
+
 func TestProviderConfig_Mode(t *testing.T) {
 	tests := []struct {
 		name string

@@ -75,7 +75,13 @@ type ProviderConfig struct {
 // itself never fails.
 func LoadProvider() (ProviderConfig, []error) {
 	return ProviderConfig{
-		BaseURL:      strings.TrimSpace(corecfg.String("PROVIDER_BASE_URL", "")),
+		// TrimRight (not TrimSuffix, which removes only ONE occurrence)
+		// strips EVERY trailing slash, mirroring nestcore's own
+		// PUBLIC_BASE_URL loader (config/server.go): "https://host/" is the
+		// same origin as "https://host", so it must not fail Validate's
+		// origin-only check just because an operator pasted a trailing
+		// slash.
+		BaseURL:      strings.TrimRight(strings.TrimSpace(corecfg.String("PROVIDER_BASE_URL", "")), "/"),
 		ClientID:     strings.TrimSpace(corecfg.String("PROVIDER_CLIENT_ID", "")),
 		ClientSecret: strings.TrimSpace(corecfg.String("PROVIDER_CLIENT_SECRET", "")),
 	}, nil
