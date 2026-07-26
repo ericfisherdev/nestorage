@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/time/rate"
 
 	corecfg "github.com/ericfisherdev/nestcore/config"
 	"github.com/ericfisherdev/nestcore/crypto"
@@ -37,6 +38,7 @@ import (
 	notifybootstrap "github.com/ericfisherdev/nestorage/internal/notify/bootstrap"
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
+	ratelimitmetrics "github.com/ericfisherdev/nestorage/internal/platform/metrics"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
@@ -145,6 +147,19 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// vs. nestorage_api_requests_total) mean the two families coexist on one
 	// scrape target with no collision.
 	apiMetrics := api.NewMetrics(registry)
+	// NSTR-58's own rate-limit instrumentation, on the same registry —
+	// nestorage_api_rate_limited_requests_total, a third distinct name.
+	rateLimitMetrics := ratelimitmetrics.NewRateLimitMetrics(registry, "nestorage")
+
+	// NSTR-58's own rate limiters, both in-process and in-memory (the
+	// appliance is a single Go binary, so no external limiter store):
+	// apiLimiter is the account-wide bucket over the whole /api/v1 surface
+	// (cfg.RateLimit.APIRPS/APIBurst, a straight requests-per-second rate);
+	// authLimiter is the additional, stricter bucket over the
+	// token-exchange route alone (cfg.RateLimit.AuthRPM converted to a
+	// per-second rate.Limit via rate.Every, cfg.RateLimit.AuthBurst).
+	apiLimiter := identityadapter.NewKeyedRateLimiter(rate.Limit(cfg.RateLimit.APIRPS), cfg.RateLimit.APIBurst)
+	authLimiter := identityadapter.NewKeyedRateLimiter(rate.Every(time.Minute/time.Duration(cfg.RateLimit.AuthRPM)), cfg.RateLimit.AuthBurst)
 
 	// Identity composition: the session manager (backed by the shared pool
 	// via pgxstore), the user repository, the first-run provisioner, and
@@ -417,29 +432,32 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		MetricsHandler: metrics.Handler(registry),
 		HTTPMetrics:    httpMetrics,
 		Routes: newAppRoutes(appRouteDeps{
-			Logger:         logger,
-			Onboarding:     onboarding,
-			Login:          login,
-			Users:          usersHandlers,
-			DeviceTokenAPI: deviceTokenAPI,
-			DeviceTokenWeb: deviceTokenWeb,
-			PreferencesWeb: preferencesWeb,
-			APIKeyWeb:      apiKeyWeb,
-			Bins:           binsWeb,
-			Locations:      locationsWeb,
-			Labels:         labelsWeb,
-			Items:          itemsWeb,
-			Photos:         photosWeb,
-			Notifications:  notificationsWeb,
-			Denier:         denier,
-			APIMetrics:     apiMetrics,
-			LocationsAPI:   locationsAPI,
-			BinsAPI:        binsAPI,
-			ItemsAPI:       itemsAPI,
-			OperationsAPI:  operationsAPI,
-			HistoryAPI:     historyAPI,
-			PhotosAPI:      photosAPI,
-			SpecAPI:        specAPI,
+			Logger:           logger,
+			Onboarding:       onboarding,
+			Login:            login,
+			Users:            usersHandlers,
+			DeviceTokenAPI:   deviceTokenAPI,
+			DeviceTokenWeb:   deviceTokenWeb,
+			PreferencesWeb:   preferencesWeb,
+			APIKeyWeb:        apiKeyWeb,
+			Bins:             binsWeb,
+			Locations:        locationsWeb,
+			Labels:           labelsWeb,
+			Items:            itemsWeb,
+			Photos:           photosWeb,
+			Notifications:    notificationsWeb,
+			Denier:           denier,
+			APIMetrics:       apiMetrics,
+			LocationsAPI:     locationsAPI,
+			BinsAPI:          binsAPI,
+			ItemsAPI:         itemsAPI,
+			OperationsAPI:    operationsAPI,
+			HistoryAPI:       historyAPI,
+			PhotosAPI:        photosAPI,
+			SpecAPI:          specAPI,
+			APILimiter:       apiLimiter,
+			AuthLimiter:      authLimiter,
+			RateLimitMetrics: rateLimitMetrics,
 		}),
 		// sm.LoadAndSave loads the session before authenticate (NSTR-20's
 		// session-based CurrentUser, still consumed by settingsMux and

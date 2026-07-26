@@ -248,6 +248,44 @@ device-token exchange endpoint, which is reachable with no credential at
 all: it answers `setup_required` the same way until an admin exists to
 authenticate against.
 
+## Rate limiting
+
+Every `/api/v1` request is rate limited, in-process and in-memory — no
+Redis or other external limiter store; the appliance is a single Go
+binary. Limits are per **principal**, not per connection or per process, so
+one runaway client is contained without affecting anyone else in the
+household, and the web UI is unaffected regardless of how hard an API
+client is being limited: the limiter mounts only on the `/api/v1` surface,
+and session cookies are never accepted there in the first place (see
+Authentication above).
+
+| Bucket | Scope | Rate | Burst | Keyed by |
+|---|---|---|---|---|
+| Account-wide | `api` | `API_RATE_LIMIT_RPS` (default 10/s) | `API_RATE_LIMIT_BURST` (default 30) | The resolved principal — `user:<id>`, the fixed string `integration` (there is exactly one account API key), or the caller's client IP for an anonymous request |
+| Token exchange | `auth` | `AUTH_RATE_LIMIT_RPM` (default 10/min) | `AUTH_RATE_LIMIT_BURST` (default 5) | Always the caller's client IP — `POST /api/v1/auth/device-tokens` is unauthenticated by nature |
+
+`POST /api/v1/auth/device-tokens` sits behind **both** buckets — whichever
+is tighter is what a caller observes, and in practice that is always the
+stricter `auth` bucket.
+
+A denied request answers `429` through the shared error envelope, coded
+`rate_limited`, with a `Retry-After` header naming whole seconds (rounded
+up, floored at 1 — never "retry immediately"):
+
+```json
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "too many requests"
+  }
+}
+```
+
+Recovery needs no separate action: once the token bucket refills, the very
+next request succeeds. Every value above is defaulted, so an existing
+deployment keeps booting with rate limiting already active and no new
+configuration required.
+
 ## Metrics
 
 `/api/v1` traffic is counted separately from the app's generic per-request
@@ -263,3 +301,15 @@ nestorage_api_requests_total{route, principal_kind, status}
 unauthenticated request) — a bounded set client input can never widen, since
 the label is read back from the resolved `domain.Principal`, never from
 anything on the request itself.
+
+Every `429` a caller receives is additionally counted here, distinguishing
+which of the two buckets above (see "Rate limiting") denied it:
+
+```
+nestorage_api_rate_limited_requests_total{principal, scope}
+```
+
+`principal` is `user:<id>`/`integration` for an authenticated caller, or the
+fixed label `anonymous` for one keyed by client IP — never the raw
+(attacker-controlled) address, which would let a spray of distinct source
+IPs blow up the metric's own cardinality. `scope` is `api` or `auth`.

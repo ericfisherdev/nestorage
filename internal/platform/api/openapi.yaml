@@ -87,6 +87,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/locations:
     get:
@@ -105,6 +107,8 @@ paths:
                 $ref: '#/components/schemas/LocationsListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     post:
       operationId: createLocation
       tags: [locations]
@@ -131,6 +135,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/locations/{id}:
     parameters:
@@ -147,6 +153,8 @@ paths:
               schema: { $ref: '#/components/schemas/Location' }
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     put:
       operationId: renameLocation
       tags: [locations]
@@ -173,6 +181,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
     delete:
       operationId: deleteLocation
       tags: [locations]
@@ -187,6 +197,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/bins:
     get:
@@ -209,6 +221,8 @@ paths:
                 $ref: '#/components/schemas/BinsListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     post:
       operationId: createBin
       tags: [bins]
@@ -245,6 +259,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/bins/{id}:
     parameters:
@@ -265,6 +281,8 @@ paths:
               schema: { $ref: '#/components/schemas/Bin' }
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     put:
       operationId: updateBin
       tags: [bins]
@@ -294,6 +312,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
     delete:
       operationId: deleteBin
       tags: [bins]
@@ -308,6 +328,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/bins/{id}/move:
     parameters:
@@ -343,6 +365,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/bins/{id}/history:
     parameters:
@@ -367,6 +391,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items:
     get:
@@ -393,6 +419,8 @@ paths:
                 $ref: '#/components/schemas/ItemsListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     post:
       operationId: createItem
       tags: [items]
@@ -425,6 +453,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}:
     parameters:
@@ -441,6 +471,8 @@ paths:
               schema: { $ref: '#/components/schemas/Item' }
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     put:
       operationId: updateItem
       tags: [items]
@@ -468,6 +500,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
     delete:
       operationId: deleteItem
       tags: [items]
@@ -477,6 +511,8 @@ paths:
           description: Deleted.
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/add-to-bin:
     parameters:
@@ -516,6 +552,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/check-out:
     parameters:
@@ -556,6 +594,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/return:
     parameters:
@@ -594,6 +634,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/return-requests:
     parameters:
@@ -642,6 +684,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/return-requests/{requestID}/cancel:
     parameters:
@@ -674,6 +718,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/history:
     parameters:
@@ -694,6 +740,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/photos:
     parameters:
@@ -715,6 +763,8 @@ paths:
                 items: { $ref: '#/components/schemas/Photo' }
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     post:
       operationId: uploadItemPhoto
       tags: [photos]
@@ -768,6 +818,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/photos/{photoID}:
     parameters:
@@ -810,6 +862,8 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     delete:
       operationId: deleteItemPhoto
       tags: [photos]
@@ -819,6 +873,8 @@ paths:
           description: Deleted.
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/items/{id}/photos/{photoID}/primary:
     parameters:
@@ -833,6 +889,8 @@ paths:
           description: Set.
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/openapi.yaml:
     get:
@@ -933,9 +991,13 @@ components:
     RateLimited:
       description: >-
         `rate_limited` — too many requests; retry after the number of
-        seconds `Retry-After` names. Not yet wired onto any operation above
-        (NSTR-58 is what does); declared here as the one shared shape every
-        rate-limited operation will answer with.
+        seconds `Retry-After` names. Every operation above except
+        getOpenAPISpec can answer this: the account-wide bucket
+        (RateLimit(apiLimiter, PrincipalRateKey, "api")) wraps the whole
+        `/api/v1` mux, and issueDeviceToken additionally sits behind the
+        stricter per-client-IP auth bucket
+        (RateLimit(authLimiter, ClientIPRateKey, "auth")) — see docs/api.md's
+        own Rate limiting section.
       headers:
         Retry-After:
           description: Seconds to wait before retrying.
