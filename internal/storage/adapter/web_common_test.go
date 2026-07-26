@@ -76,14 +76,14 @@ func (f *fakeEventLister) ListByItem(_ context.Context, _ domain.ItemID, page do
 	return f.itemEvents, nil
 }
 
-func (f *fakeEventLister) ListByBin(_ context.Context, _ domain.BinID, limit int) ([]domain.ItemEvent, error) {
+func (f *fakeEventLister) ListByBin(_ context.Context, _ domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
 	f.binCalls++
 	if f.binErr != nil {
 		return nil, f.binErr
 	}
 	events := f.binEvents
-	if len(events) > limit {
-		events = events[:limit]
+	if len(events) > page.Limit {
+		events = events[:page.Limit]
 	}
 	return events, nil
 }

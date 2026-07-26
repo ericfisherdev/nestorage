@@ -464,7 +464,7 @@ func TestItemEventRepository_ListByBin_IncludesAddedAndRemoved(t *testing.T) {
 		t.Fatalf("Append(removed): %v", err)
 	}
 
-	got, err := f.repo.ListByBin(testCtx(t), binID, 10)
+	got, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByBin: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestItemEventRepository_ListByBin_ExcludesNoBinEvents(t *testing.T) {
 		t.Fatalf("Append(edited): %v", err)
 	}
 
-	got, err := f.repo.ListByBin(testCtx(t), binID, 10)
+	got, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByBin: %v", err)
 	}
@@ -498,12 +498,104 @@ func TestItemEventRepository_ListByBin_ExcludesNoBinEvents(t *testing.T) {
 
 func TestItemEventRepository_ListByBin_Empty(t *testing.T) {
 	f := newItemEventFixture(t)
-	got, err := f.repo.ListByBin(testCtx(t), domain.NewBinID(), 10)
+	got, err := f.repo.ListByBin(testCtx(t), domain.NewBinID(), domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByBin: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("ListByBin(no events) = %+v, want empty slice", got)
+	}
+}
+
+// TestItemEventRepository_ListByBin_KeysetPaging proves ListByBin's own
+// cursor (NSTR-55's own history API endpoint is the first caller to ever
+// pass a non-nil Before) mirrors ListByItem's exactly: the first page's
+// oldest row becomes the second page's Before, and the pages together cover
+// every event exactly once with no overlap.
+func TestItemEventRepository_ListByBin_KeysetPaging(t *testing.T) {
+	f := newItemEventFixture(t)
+	actor := identity.NewIntegrationPrincipal("Nestova")
+	binID := domain.NewBinID()
+
+	for i := 0; i < 3; i++ {
+		e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventAdded, actor)
+		e.BinID, e.BinLabel = &binID, "Bin A"
+		if err := f.repo.Append(testCtx(t), &e); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	firstPage, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListByBin(page 1): %v", err)
+	}
+	if len(firstPage) != 2 {
+		t.Fatalf("ListByBin(page 1) returned %d events, want 2", len(firstPage))
+	}
+
+	cursor := domain.HistoryCursor{OccurredAt: firstPage[1].OccurredAt, ID: firstPage[1].ID}
+	secondPage, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 2, Before: &cursor})
+	if err != nil {
+		t.Fatalf("ListByBin(page 2): %v", err)
+	}
+	if len(secondPage) != 1 {
+		t.Fatalf("ListByBin(page 2) returned %d events, want 1", len(secondPage))
+	}
+	if secondPage[0].ID == firstPage[0].ID || secondPage[0].ID == firstPage[1].ID {
+		t.Error("ListByBin(page 2) repeated a row already returned on page 1")
+	}
+}
+
+// TestItemEventRepository_ListByBin_KeysetPaging_StableAcrossIdenticalOccurredAt
+// proves the id tie-break for ListByBin, mirroring
+// TestItemEventRepository_ListByItem_KeysetPaging_StableAcrossIdenticalOccurredAt:
+// two events appended within the SAME transaction share the exact same
+// occurred_at (Postgres now() is transaction-start time, not statement
+// time), so the id DESC tie-break is the only thing keeping the page
+// deterministic.
+func TestItemEventRepository_ListByBin_KeysetPaging_StableAcrossIdenticalOccurredAt(t *testing.T) {
+	f := newItemEventFixture(t)
+	actor := identity.NewIntegrationPrincipal("Nestova")
+	binID := domain.NewBinID()
+
+	tx, err := f.pool.Begin(testCtx(t))
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(testCtx(t)) }()
+	txRepo := adapter.NewItemEventRepository(tx)
+
+	first := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventAdded, actor)
+	first.BinID, first.BinLabel = &binID, "Bin A"
+	if err := txRepo.Append(testCtx(t), &first); err != nil {
+		t.Fatalf("Append(first): %v", err)
+	}
+	second := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Lantern", domain.EventAdded, actor)
+	second.BinID, second.BinLabel = &binID, "Bin A"
+	if err := txRepo.Append(testCtx(t), &second); err != nil {
+		t.Fatalf("Append(second): %v", err)
+	}
+	if !first.OccurredAt.Equal(second.OccurredAt) {
+		t.Fatalf("first.OccurredAt = %v, second.OccurredAt = %v, want equal (same transaction)", first.OccurredAt, second.OccurredAt)
+	}
+	if err := tx.Commit(testCtx(t)); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	got, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListByBin: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListByBin returned %d events, want 2", len(got))
+	}
+	wantFirst, wantSecond := first, second
+	if second.ID.String() > first.ID.String() {
+		wantFirst, wantSecond = second, first
+	}
+	if got[0].ID != wantFirst.ID || got[1].ID != wantSecond.ID {
+		t.Errorf("ListByBin tie-break order = [%v %v], want id-descending [%v %v]", got[0].ID, got[1].ID, wantFirst.ID, wantSecond.ID)
 	}
 }
 

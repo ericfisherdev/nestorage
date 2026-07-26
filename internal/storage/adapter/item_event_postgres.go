@@ -87,18 +87,11 @@ func (r *ItemEventRepository) Append(ctx context.Context, e *domain.ItemEvent) e
 
 // ListByItem returns itemID's events newest-first (occurred_at DESC, id
 // DESC), at most page.Limit rows, strictly older than page.Before when set —
-// the keyset page NSTR-42's item timeline reads. Returns an empty slice, not
-// an error, when itemID has no events.
+// the keyset page NSTR-42's item timeline reads, and NSTR-55's own item
+// history API endpoint. Returns an empty slice, not an error, when itemID
+// has no events.
 func (r *ItemEventRepository) ListByItem(ctx context.Context, itemID domain.ItemID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
-	q := itemEventColumns + ` WHERE item_id = $1`
-	args := []any{itemID.String()}
-	if page.Before != nil {
-		q += ` AND (occurred_at, id) < ($2, $3)`
-		args = append(args, page.Before.OccurredAt, page.Before.ID.String())
-	}
-	q += fmt.Sprintf(` ORDER BY occurred_at DESC, id DESC LIMIT $%d`, len(args)+1)
-	args = append(args, page.Limit)
-
+	q, args := buildKeysetHistoryQuery("item_id", itemID.String(), page)
 	events, err := queryItemEvents(ctx, r.dbtx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list item events by item: %w", err)
@@ -106,18 +99,42 @@ func (r *ItemEventRepository) ListByItem(ctx context.Context, itemID domain.Item
 	return events, nil
 }
 
-// ListByBin returns binID's events newest-first, at most limit rows, no
-// paging — NSTR-42's bin activity panel is a fixed window. Because
-// EventRemoved carries the bin the item left, this surfaces removals as
-// well as additions, not only EventAdded. Returns an empty slice, not an
-// error, when binID has no events.
-func (r *ItemEventRepository) ListByBin(ctx context.Context, binID domain.BinID, limit int) ([]domain.ItemEvent, error) {
-	q := itemEventColumns + ` WHERE bin_id = $1 ORDER BY occurred_at DESC, id DESC LIMIT $2`
-	events, err := queryItemEvents(ctx, r.dbtx, q, binID.String(), limit)
+// ListByBin returns binID's events newest-first (occurred_at DESC, id DESC),
+// at most page.Limit rows, strictly older than page.Before when set — the
+// same keyset shape ListByItem already implements. NSTR-42's bin activity
+// panel still only ever passes a page with no Before (a fixed first
+// window); NSTR-55's own bin history API endpoint is the first caller to
+// actually page through Before. Because EventRemoved carries the bin the
+// item left, this surfaces removals as well as additions, not only
+// EventAdded. Returns an empty slice, not an error, when binID has no
+// events.
+func (r *ItemEventRepository) ListByBin(ctx context.Context, binID domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
+	q, args := buildKeysetHistoryQuery("bin_id", binID.String(), page)
+	events, err := queryItemEvents(ctx, r.dbtx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list item events by bin: %w", err)
 	}
 	return events, nil
+}
+
+// buildKeysetHistoryQuery builds the WHERE/ORDER BY/LIMIT clause ListByItem
+// and ListByBin both need, differing only in which column scopes the query
+// — factored out here rather than left duplicated across the two methods,
+// which previously diverged only in that column name and a bare LIMIT
+// (ListByBin's own pre-NSTR-55 shape). column is always one of the two
+// literals those methods themselves pass, never request input, so building
+// it into the query string rather than a placeholder carries no injection
+// risk.
+func buildKeysetHistoryQuery(column, id string, page domain.HistoryPage) (string, []any) {
+	q := itemEventColumns + ` WHERE ` + column + ` = $1`
+	args := []any{id}
+	if page.Before != nil {
+		q += ` AND (occurred_at, id) < ($2, $3)`
+		args = append(args, page.Before.OccurredAt, page.Before.ID.String())
+	}
+	q += fmt.Sprintf(` ORDER BY occurred_at DESC, id DESC LIMIT $%d`, len(args)+1)
+	args = append(args, page.Limit)
+	return q, args
 }
 
 // queryItemEvents runs q (one of ListByItem/ListByBin's queries) and scans

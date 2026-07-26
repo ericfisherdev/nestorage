@@ -301,6 +301,12 @@ type appRouteDeps struct {
 	LocationsAPI *storageadapter.LocationsAPIHandlers
 	BinsAPI      *storageadapter.BinsAPIHandlers
 	ItemsAPI     *storageadapter.ItemsAPIHandlers
+	// OperationsAPI and HistoryAPI are NSTR-55's own /api/v1 surface: the
+	// item/bin state-transition endpoints and the two event-history reads,
+	// mounted on the exact same api.Router as LocationsAPI/BinsAPI/ItemsAPI
+	// above.
+	OperationsAPI *storageadapter.OperationsAPIHandlers
+	HistoryAPI    *storageadapter.HistoryAPIHandlers
 }
 
 func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
@@ -317,6 +323,8 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 			deps.LocationsAPI.Routes(apiRouter)
 			deps.BinsAPI.Routes(apiRouter)
 			deps.ItemsAPI.Routes(apiRouter)
+			deps.OperationsAPI.Routes(apiRouter)
+			deps.HistoryAPI.Routes(apiRouter)
 		}))
 
 		adminMux := http.NewServeMux()
