@@ -16,6 +16,20 @@ import (
 // mirrors maxDeviceTokenRequestBytes's identical rationale (devicetokenapi.go).
 const maxFederationRequestBytes = 1 << 20 // 1 MiB
 
+// invalidFederationIDMessage is the shared validation message for household,
+// member_id, and household_id — all three are backed by
+// domain.ValidateHouseholdID/ValidateMemberID's common validateFederationID
+// rule (identity/domain/federation.go), which enforces the same
+// non-blank/200-rune limit regardless of which field is being checked.
+const invalidFederationIDMessage = "must not be blank and at most 200 characters"
+
+// errInvalidRequestMessage is the generic 422 message every field-level
+// validation failure in this file responds with — mirrors
+// errInternalServerError's own doc convention (onboarding_web.go), but
+// scoped to this file since its duplication here is confined to
+// federation_api.go for this PR.
+const errInvalidRequestMessage = "invalid request"
+
 // federationService is the narrow port (ISP) FederationAPIHandlers depends
 // on, satisfied by *app.FederationService.
 type federationService interface {
@@ -132,7 +146,7 @@ func (h *FederationAPIHandlers) Accounts(w http.ResponseWriter, r *http.Request)
 
 	householdID := r.URL.Query().Get("household")
 	if err := domain.ValidateHouseholdID(householdID); err != nil {
-		writeInvalidField(w, h.logger, "household", "must not be blank and at most 200 characters")
+		writeInvalidField(w, h.logger, "household", invalidFederationIDMessage)
 		return
 	}
 
@@ -157,7 +171,7 @@ func (h *FederationAPIHandlers) Provision(w http.ResponseWriter, r *http.Request
 
 	memberID := r.PathValue("member_id")
 	if err := domain.ValidateMemberID(memberID); err != nil {
-		writeInvalidField(w, h.logger, "member_id", "must not be blank and at most 200 characters")
+		writeInvalidField(w, h.logger, "member_id", invalidFederationIDMessage)
 		return
 	}
 
@@ -168,7 +182,7 @@ func (h *FederationAPIHandlers) Provision(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := domain.ValidateHouseholdID(req.HouseholdID); err != nil {
-		writeInvalidField(w, h.logger, "household_id", "must not be blank and at most 200 characters")
+		writeInvalidField(w, h.logger, "household_id", invalidFederationIDMessage)
 		return
 	}
 	if (req.Link == nil) == (req.Account == nil) {
@@ -260,7 +274,7 @@ func federationAccountResponses(accounts []app.FederationAccount) []federationAc
 // (api_common.go); duplicated rather than shared since neither package
 // imports the other's unexported helpers.
 func writeInvalidField(w http.ResponseWriter, logger *slog.Logger, field, message string) {
-	api.WriteError(w, logger, http.StatusUnprocessableEntity, api.CodeInvalidRequest, "invalid request",
+	api.WriteError(w, logger, http.StatusUnprocessableEntity, api.CodeInvalidRequest, errInvalidRequestMessage,
 		api.FieldDetail{Field: field, Message: message})
 }
 
@@ -300,7 +314,7 @@ func mapFederationError(err error) (status int, code api.Code, message string, d
 	case errors.Is(err, domain.ErrUserNotFound):
 		return http.StatusNotFound, api.CodeNotFound, "user not found", nil, true
 	case errors.Is(err, domain.ErrInvalidRole):
-		return http.StatusUnprocessableEntity, api.CodeInvalidRequest, "invalid request",
+		return http.StatusUnprocessableEntity, api.CodeInvalidRequest, errInvalidRequestMessage,
 			&api.FieldDetail{Field: "account.role", Message: `must be "admin" or "member"`}, true
 	case errors.Is(err, domain.ErrInvalidMemberLink):
 		// Reached only if a request gets past this handler's own
@@ -308,7 +322,7 @@ func mapFederationError(err error) (status int, code api.Code, message string, d
 		// otherwise-malformed identifier — defensive, with no single field
 		// to name at this remove (mirrors storage/adapter's own
 		// ErrInvalidBin fallback, api_common.go).
-		return http.StatusUnprocessableEntity, api.CodeInvalidRequest, "invalid request", nil, true
+		return http.StatusUnprocessableEntity, api.CodeInvalidRequest, errInvalidRequestMessage, nil, true
 	default:
 		return 0, "", "", nil, false
 	}
