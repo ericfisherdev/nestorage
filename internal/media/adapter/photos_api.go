@@ -222,12 +222,17 @@ func (h *PhotosAPIHandlers) writeUploadTooLarge(w http.ResponseWriter) {
 	api.WriteError(w, h.logger, http.StatusRequestEntityTooLarge, api.CodeInvalidRequest, "request body exceeds the maximum upload size")
 }
 
-// writeUploadReadError answers a multipart-parsing failure that is not
-// itself an oversize body (a malformed boundary, a client that hung up
-// mid-part) with 400 — a genuine oversize trip is a *http.MaxBytesError,
-// which Upload checks for and routes to writeUploadTooLarge before ever
-// reaching this function.
-func (h *PhotosAPIHandlers) writeUploadReadError(w http.ResponseWriter, _ error) {
+// writeUploadReadError answers a multipart read failure: 413 when err is the
+// MaxBytesReader backstop tripping mid-scan — an oversized preamble, part
+// headers, or non-file part ahead of "photo", with a chunked or absent
+// Content-Length so Upload's own upfront precheck never fired — and 400 for
+// everything else (a malformed boundary, a client that hung up mid-part).
+func (h *PhotosAPIHandlers) writeUploadReadError(w http.ResponseWriter, err error) {
+	var mbe *http.MaxBytesError
+	if errors.As(err, &mbe) {
+		h.writeUploadTooLarge(w)
+		return
+	}
 	api.WriteError(w, h.logger, http.StatusBadRequest, api.CodeInvalidRequest, "malformed multipart request")
 }
 
