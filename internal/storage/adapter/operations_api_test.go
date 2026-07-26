@@ -55,7 +55,7 @@ func (f *fakeItemOperationService) ReturnToBin(_ context.Context, _ identity.Pri
 	return f.returnToBinOp, nil
 }
 
-// fakeBinMoveService is a configurable binMoveService fake for
+// fakeBinMoveService is a configurable binAPIMover fake for
 // OperationsAPIHandlers' hermetic unit tests.
 type fakeBinMoveService struct {
 	calls  int

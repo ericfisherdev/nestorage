@@ -26,9 +26,12 @@ type itemOperationService interface {
 	ReturnToBin(ctx context.Context, actor identity.Principal, itemID domain.ItemID, binID domain.BinID, note *string) (app.Operation, error)
 }
 
-// binMoveService is the narrow port (ISP) OperationsAPIHandlers depends on
-// to drive the bin-relocation endpoint, satisfied by *app.BinMover.
-type binMoveService interface {
+// binAPIMover is the narrow port (ISP) OperationsAPIHandlers depends on
+// to drive the bin-relocation endpoint, satisfied by *app.BinMover. Named
+// distinctly from bins_web.go's own binMover — identical single-method
+// shape, but each handler group still declares its own port per this
+// package's ISP convention (see itemOperationService's doc above).
+type binAPIMover interface {
 	Move(ctx context.Context, actor identity.Principal, binID domain.BinID, target domain.LocationID) (app.MoveResult, error)
 }
 
@@ -54,7 +57,7 @@ type itemDetailReader interface {
 // CSRF dependency, matching Locations/Bins/ItemsAPIHandlers.
 type OperationsAPIHandlers struct {
 	operations     itemOperationService
-	mover          binMoveService
+	mover          binAPIMover
 	returnRequests returnRequestOperator
 	detail         itemDetailReader
 	logger         *slog.Logger
@@ -64,12 +67,12 @@ type OperationsAPIHandlers struct {
 // dependency is required; a missing one panics at construction time,
 // matching every other WebHandlers/APIHandlers constructor in this
 // codebase.
-func NewOperationsAPIHandlers(operations itemOperationService, mover binMoveService, returnRequests returnRequestOperator, detail itemDetailReader, logger *slog.Logger) *OperationsAPIHandlers {
+func NewOperationsAPIHandlers(operations itemOperationService, mover binAPIMover, returnRequests returnRequestOperator, detail itemDetailReader, logger *slog.Logger) *OperationsAPIHandlers {
 	if operations == nil {
 		panic("storage/adapter: NewOperationsAPIHandlers requires a non-nil itemOperationService")
 	}
 	if mover == nil {
-		panic("storage/adapter: NewOperationsAPIHandlers requires a non-nil binMoveService")
+		panic("storage/adapter: NewOperationsAPIHandlers requires a non-nil binAPIMover")
 	}
 	if returnRequests == nil {
 		panic("storage/adapter: NewOperationsAPIHandlers requires a non-nil returnRequestOperator")
