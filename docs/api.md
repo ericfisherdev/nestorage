@@ -3,9 +3,12 @@
 Nestorage's JSON API is versioned and mounted at `/api/v1`. Every route under
 it is JSON-native end to end: no handler ever answers an HTML page or an
 HTML redirect, and every error shares the one envelope documented below.
-NSTR-57 extends this file with a generated OpenAPI spec; nothing here is a
-substitute for reading that spec once it exists — this is the human-readable
-contract behind it.
+NSTR-57's own OpenAPI 3.1 specification
+([`internal/platform/api/openapi.yaml`](../internal/platform/api/openapi.yaml),
+served at `GET /api/v1/openapi.yaml`) is the machine-readable version of the
+same contract — this file is the human-readable prose behind it. See
+[`docs/integrating-with-nestova.md`](integrating-with-nestova.md) for a
+worked walkthrough of driving the API end to end.
 
 ## Authentication
 

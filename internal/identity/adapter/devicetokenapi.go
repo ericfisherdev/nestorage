@@ -48,8 +48,13 @@ func NewDeviceTokenAPIHandlers(issuer deviceTokenIssuer, logger *slog.Logger) *D
 	return &DeviceTokenAPIHandlers{issuer: issuer, logger: logger}
 }
 
-// Routes registers the exchange route on mux.
-func (h *DeviceTokenAPIHandlers) Routes(mux *http.ServeMux) {
+// Routes registers the exchange route on mux — an api.Registrar (DIP),
+// matching every /api/v1 handler group's own Routes method (see
+// storage/adapter.LocationsAPIHandlers.Routes' own doc for why): NSTR-57's
+// OpenAPI route/spec sync test substitutes a recording registrar in place
+// of the concrete *http.ServeMux cmd/server/shell.go still passes here in
+// production (which satisfies api.Registrar unchanged).
+func (h *DeviceTokenAPIHandlers) Routes(mux api.Registrar) {
 	mux.HandleFunc("POST /api/v1/auth/device-tokens", h.Issue)
 }
 

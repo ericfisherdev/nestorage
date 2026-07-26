@@ -1,0 +1,1262 @@
+openapi: 3.1.0
+info:
+  title: Nestorage API
+  version: "1.0.0"
+  description: >-
+    Nestorage's public JSON API: locations, the bins that live in them, the
+    items those bins hold, item/bin state transitions, event history, and
+    item photos. Every route is JSON-native end to end — no handler ever
+    answers an HTML page or an HTML redirect — and every error shares the
+    one envelope documented on the Error schema below. See
+    docs/integrating-with-nestova.md for a worked item-lifecycle walkthrough
+    and docs/api.md for the full prose write-up this spec is the
+    machine-readable counterpart to.
+  license:
+    name: AGPL-3.0
+servers:
+  - url: /
+    description: >-
+      Relative to whatever host serves this API — a household appliance's
+      LAN or Tailscale hostname, never a fixed public origin.
+tags:
+  - name: auth
+    description: Credential issuance.
+  - name: locations
+    description: The rooms/areas bins live in.
+  - name: bins
+    description: The containers items live in.
+  - name: items
+    description: The things a household is tracking.
+  - name: operations
+    description: Item and bin placement transitions, and the return-request lifecycle.
+  - name: history
+    description: Read-only event history for an item or a bin.
+  - name: photos
+    description: Item photo upload, retrieval, and management.
+  - name: meta
+    description: The API's own published contract.
+security:
+  - deviceToken: []
+  - apiKey: []
+paths:
+  /api/v1/auth/device-tokens:
+    post:
+      operationId: issueDeviceToken
+      tags: [auth]
+      summary: Exchange a member's email and password for a per-device bearer token.
+      description: >-
+        The Android client's own credential mint. Unauthenticated — it has
+        to be reachable with no credential yet to present — but still rate
+        limited on repeated failures the same way session login is (see
+        LoginAttemptLimiter). The response's `token` field is the plaintext
+        device token; it is returned exactly once, here, and never appears
+        in any later response.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceTokenExchangeRequest'
+      responses:
+        '201':
+          description: Token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTokenExchangeResponse'
+        '400':
+          description: >-
+            `invalid_request`, field `device_name` — blank or over 100
+            characters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: >-
+            `invalid_credentials` — unknown email, wrong password, or a
+            locked-out/inactive account. Deliberately generic so this
+            endpoint cannot be used to enumerate accounts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: >-
+            `setup_required` — the household's first admin does not exist
+            yet.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/locations:
+    get:
+      operationId: listLocations
+      tags: [locations]
+      summary: List every location the caller may see.
+      parameters:
+        - $ref: '#/components/parameters/Before'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of locations, each carrying how many bins the caller may see inside it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationsListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      operationId: createLocation
+      tags: [locations]
+      summary: Create a location.
+      description: >-
+        Requires a user principal — `403 forbidden` for the account API key,
+        which has no person behind it to attribute `created_by` to.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationCreateRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Location' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: '`invalid_request` — `name` blank or over 100 characters.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/locations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/LocationID'
+    get:
+      operationId: getLocation
+      tags: [locations]
+      summary: Read one location.
+      responses:
+        '200':
+          description: The location.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Location' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: renameLocation
+      tags: [locations]
+      summary: Rename a location.
+      description: >-
+        `name` is the one mutable field the underlying service exposes —
+        this route does not offer a description/parent_id update.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationRenameRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Location' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: '`invalid_request` — `name` blank or over 100 characters.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      operationId: deleteLocation
+      tags: [locations]
+      summary: Delete a location.
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`conflict` — the location still holds a bin or a child location.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/bins:
+    get:
+      operationId: listBins
+      tags: [bins]
+      summary: List every bin the caller may see.
+      parameters:
+        - name: location
+          in: query
+          description: Narrow the listing to one location's own bins.
+          schema: { type: string }
+        - $ref: '#/components/parameters/Before'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of bins.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinsListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      operationId: createBin
+      tags: [bins]
+      summary: Create a bin.
+      description: Requires a user principal — `403 forbidden` for the account API key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BinCreateRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Bin' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: '`not_found` — the referenced `location_id` does not exist.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`conflict` — that `code` is already in use.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: >-
+            `invalid_request` — `code` blank or over 32 characters, `name`
+            blank, or `visibility` not `"public"`/`"private"`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/bins/{id}:
+    parameters:
+      - $ref: '#/components/parameters/BinID'
+    get:
+      operationId: getBin
+      tags: [bins]
+      summary: Read one bin.
+      description: >-
+        A non-owner's private bin answers `404`, never `403` — this API
+        never distinguishes "doesn't exist" from "exists but you can't see
+        it".
+      responses:
+        '200':
+          description: The bin.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Bin' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateBin
+      tags: [bins]
+      summary: Replace a bin's mutable fields.
+      description: >-
+        Full replacement of `name`, `description`, `owner_id`, and
+        `visibility` — `code` and `location_id` are immutable through this
+        route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BinUpdateRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Bin' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: >-
+            `invalid_request` — `name` blank, `owner_id` references an
+            unknown user, or `visibility` not `"public"`/`"private"`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      operationId: deleteBin
+      tags: [bins]
+      summary: Delete a bin.
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`conflict` — the bin still holds an item.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/bins/{id}/move:
+    parameters:
+      - $ref: '#/components/parameters/BinID'
+    post:
+      operationId: moveBin
+      tags: [operations]
+      summary: Relocate a bin to a different location.
+      description: >-
+        Idempotent: retrying a move already applied (the bin is already at
+        `location_id`) answers `200` with `moved_at: null` rather than a
+        conflict — no move happened this call, so there is no fresh
+        timestamp to report.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveBinRequest'
+      responses:
+        '200':
+          description: Moved (or already there — see the description above).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BinMoveResponse' }
+        '404':
+          description: '`bin_not_found` or `location_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: '`invalid_request` — malformed `location_id`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/bins/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/BinID'
+      - $ref: '#/components/parameters/Before'
+      - $ref: '#/components/parameters/HistoryLimit'
+    get:
+      operationId: getBinHistory
+      tags: [history]
+      summary: A bin's own event history, newest first.
+      description: >-
+        Because a removed event carries the bin an item LEFT (not only an
+        added event, the bin it entered), this surfaces both directions of
+        traffic through the bin.
+      responses:
+        '200':
+          description: A page of events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HistoryPageResponse' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/items:
+    get:
+      operationId: listItems
+      tags: [items]
+      summary: List every item the caller may see.
+      parameters:
+        - name: bin
+          in: query
+          description: Narrow the listing to items currently in one bin.
+          schema: { type: string }
+        - name: holder
+          in: query
+          description: Narrow the listing to items currently checked out to one user. AND-ed with `bin` when both are given.
+          schema: { type: string }
+        - $ref: '#/components/parameters/Before'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      operationId: createItem
+      tags: [items]
+      summary: Create an item, sitting in a bin.
+      description: >-
+        An item is always created sitting in a bin through this route —
+        check-out is the operations endpoint's own job, not this one's.
+        Requires a user principal — `403 forbidden` for the account API key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemCreateRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: '`not_found` — the referenced `bin_id` does not exist.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: '`invalid_request` — `name` blank or `quantity` not a positive integer.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/items/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+    get:
+      operationId: getItem
+      tags: [items]
+      summary: Read one item.
+      responses:
+        '200':
+          description: The item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateItem
+      tags: [items]
+      summary: Edit an item's name, description, and quantity.
+      description: >-
+        Placement (`bin_id`/`held_by`) never appears here — use the
+        operations endpoints (add-to-bin, check-out, return) to change where
+        an item sits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemUpdateRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: '`invalid_request` — `name` blank or `quantity` not a positive integer.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      operationId: deleteItem
+      tags: [items]
+      summary: Delete an item.
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/items/{id}/add-to-bin:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+    post:
+      operationId: addItemToBin
+      tags: [operations]
+      summary: Place a not-yet-placed item into a bin.
+      description: >-
+        Idempotent: retrying a placement already applied (the item is
+        already in `bin_id`) answers `200` with the item's current state
+        rather than a conflict.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddToBinRequest'
+      responses:
+        '200':
+          description: Placed (or already there — see the description above).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '404':
+          description: '`item_not_found` or `bin_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`item_already_in_bin` — the item is already sitting in a DIFFERENT bin than the one requested.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: '`invalid_request` — malformed `bin_id`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/items/{id}/check-out:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+    post:
+      operationId: checkOutItem
+      tags: [operations]
+      summary: Check an item out to the calling user.
+      description: >-
+        Requires a user principal — `403 holder_required` for the account
+        API key, which has no person to attribute the check-out to.
+        Idempotent: retrying a check-out already applied (the item is
+        already held by the caller) answers `200` with the item's current
+        state.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckOutRequest'
+      responses:
+        '200':
+          description: Checked out (or already held by the caller — see the description above).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '403':
+          description: '`holder_required`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: '`item_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`item_already_checked_out` — the item is already held by a DIFFERENT user.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/items/{id}/return:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+    post:
+      operationId: returnItem
+      tags: [operations]
+      summary: Return a checked-out item to a bin.
+      description: >-
+        Idempotent: retrying a return already applied (the item is already
+        sitting in `bin_id`) answers `200` with the item's current state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReturnToBinRequest'
+      responses:
+        '200':
+          description: Returned (or already there — see the description above).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '404':
+          description: '`item_not_found` or `bin_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`item_not_checked_out`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: '`invalid_request` — malformed `bin_id`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/items/{id}/return-requests:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+    post:
+      operationId: createReturnRequest
+      tags: [operations]
+      summary: Ask the current holder of an item to return it.
+      description: >-
+        Idempotent: retrying a request while the caller already has one open
+        on this item answers `200` with that existing request rather than a
+        `201`.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestReturnRequest'
+      responses:
+        '200':
+          description: The caller's own already-open request on this item (idempotent retry).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReturnRequest' }
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReturnRequest' }
+        '403':
+          description: '`holder_required`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: '`item_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`requester_holds_item` — the caller already holds the item they are requesting back.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: '`invalid_return_request_message` — `message` blank or over 500 characters.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/items/{id}/return-requests/{requestID}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+      - name: requestID
+        in: path
+        required: true
+        description: The return request's own id.
+        schema: { type: string }
+    post:
+      operationId: cancelReturnRequest
+      tags: [operations]
+      summary: Cancel an open return request.
+      description: >-
+        Idempotent: retrying a cancel already applied answers `200` with the
+        request's (cancelled) state.
+      responses:
+        '200':
+          description: Cancelled (or already cancelled — see the description above).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReturnRequest' }
+        '404':
+          description: '`item_not_found` or `return_request_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`return_request_not_open` — the request has already been fulfilled.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/items/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+      - $ref: '#/components/parameters/Before'
+      - $ref: '#/components/parameters/HistoryLimit'
+    get:
+      operationId: getItemHistory
+      tags: [history]
+      summary: An item's own event history, newest first.
+      responses:
+        '200':
+          description: A page of events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HistoryPageResponse' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/items/{id}/photos:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+    get:
+      operationId: listItemPhotos
+      tags: [photos]
+      summary: List an item's photos.
+      description: >-
+        A bare JSON array, not wrapped in a pagination envelope — household
+        scale means an item's own photo count never warrants one.
+      responses:
+        '200':
+          description: The item's photos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Photo' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: uploadItemPhoto
+      tags: [photos]
+      summary: Upload a photo for an item.
+      description: >-
+        The request body is streamed, never buffered whole, so an oversized
+        upload is rejected promptly. EXIF metadata is stripped and a
+        thumbnail generated server-side — the exact same pipeline the web
+        gallery uses.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo]
+              properties:
+                photo:
+                  type: string
+                  format: binary
+                  description: Exactly one file part, named "photo". JPEG or PNG only.
+      responses:
+        '201':
+          description: Uploaded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Photo' }
+        '400':
+          description: '`invalid_request` — unreadable or corrupt image data, or a malformed multipart body.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: >-
+            The upload exceeds the configured maximum size — answered before
+            any body byte is read when `Content-Length` already declares too
+            much, or after at most the max size plus a small framing margin
+            otherwise.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415':
+          description: Unsupported image type — only JPEG and PNG are accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: '`invalid_request` — no `photo` file part found in the body.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/items/{id}/photos/{photoID}:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+      - $ref: '#/components/parameters/PhotoID'
+    get:
+      operationId: serveItemPhoto
+      tags: [photos]
+      summary: Fetch a photo's own image bytes.
+      parameters:
+        - name: size
+          in: query
+          description: Which rendition to serve.
+          schema:
+            type: string
+            enum: [full, thumb]
+            default: full
+      responses:
+        '200':
+          description: The image bytes, streamed by this process (local storage backend).
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        '302':
+          description: >-
+            Redirect to a presigned URL (S3 storage backend) — the `url`/
+            `thumb_url` fields on the Photo schema always point back at this
+            same route; this is the one that decides which of the two
+            answers a given request.
+          headers:
+            Location:
+              description: The presigned URL.
+              schema: { type: string }
+        '400':
+          description: '`invalid_request` — `size` not `"full"`/`"thumb"`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteItemPhoto
+      tags: [photos]
+      summary: Delete a photo.
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/items/{id}/photos/{photoID}/primary:
+    parameters:
+      - $ref: '#/components/parameters/ItemID'
+      - $ref: '#/components/parameters/PhotoID'
+    put:
+      operationId: setPrimaryItemPhoto
+      tags: [photos]
+      summary: Mark a photo as the item's primary photo.
+      responses:
+        '204':
+          description: Set.
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/openapi.yaml:
+    get:
+      operationId: getOpenAPISpec
+      tags: [meta]
+      summary: This specification, served verbatim.
+      description: >-
+        Public and unauthenticated — the contract is public (the repository
+        is public); the data behind it is not.
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI 3.1 document.
+          content:
+            application/yaml:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    deviceToken:
+      type: http
+      scheme: bearer
+      description: >-
+        A per-device token minted by POST /api/v1/auth/device-tokens,
+        prefixed `nsd_`. Revocable per device at /settings/devices.
+    apiKey:
+      type: http
+      scheme: bearer
+      description: >-
+        The account-wide integration credential minted at
+        /settings/api-key, prefixed `ns_`. Authenticates as a system
+        principal with no attached user — create endpoints that need a real
+        person (locations, bins, items, check-out, return requests) reject
+        it with `403`.
+
+  parameters:
+    Before:
+      name: before
+      in: query
+      description: >-
+        The opaque continuation cursor from a previous page's `next_cursor`.
+        Omit for the first page.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      description: Page size. Defaults to 50, clamped to 200.
+      schema: { type: integer, minimum: 1 }
+    HistoryLimit:
+      name: limit
+      in: query
+      description: Page size. Defaults to 30, clamped to 100.
+      schema: { type: integer, minimum: 1 }
+    LocationID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    BinID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    ItemID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    PhotoID:
+      name: photoID
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: '`invalid_request` — a malformed request body, cursor, or query parameter.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: '`unauthorized` — no `Authorization` header, or one that does not carry a recognized credential prefix.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: '`forbidden` — the account API key attempted an action that requires a real person.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: >-
+        `not_found` — unknown, or not visible to the caller. This API never
+        distinguishes the two.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: >-
+        `rate_limited` — too many requests; retry after the number of
+        seconds `Retry-After` names. Not yet wired onto any operation above
+        (NSTR-58 is what does); declared here as the one shared shape every
+        rate-limited operation will answer with.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    FieldDetail:
+      type: object
+      required: [field, message]
+      properties:
+        field: { type: string }
+        message: { type: string }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >-
+                A stable, machine-readable identifier — e.g. `not_found`,
+                `invalid_request`, `item_already_in_bin`. See
+                docs/api.md's own code table for the full vocabulary.
+            message:
+              type: string
+              description: A human-readable message. Never parsed by a client — branch on `code` instead.
+            details:
+              type: array
+              description: Populated only alongside `invalid_request`/`invalid_*` codes that name a specific field.
+              items: { $ref: '#/components/schemas/FieldDetail' }
+
+    Location:
+      type: object
+      required: [id, name, description, parent_id, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        parent_id: { type: ['string', 'null'] }
+        bin_count:
+          type: integer
+          description: Present only on list rows — how many bins the caller may see directly inside this location.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    LocationsListResponse:
+      type: object
+      required: [locations, next_cursor]
+      properties:
+        locations:
+          type: array
+          items: { $ref: '#/components/schemas/Location' }
+        next_cursor: { type: ['string', 'null'] }
+
+    LocationCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        parent_id: { type: ['string', 'null'] }
+
+    LocationRenameRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+
+    Bin:
+      type: object
+      required: [id, code, name, description, location_id, owner_id, visibility, item_count, created_at, updated_at]
+      properties:
+        id: { type: string }
+        code: { type: string }
+        name: { type: string }
+        description: { type: string }
+        location_id: { type: string }
+        owner_id: { type: ['string', 'null'] }
+        visibility: { type: string, enum: [public, private] }
+        item_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    BinsListResponse:
+      type: object
+      required: [bins, next_cursor]
+      properties:
+        bins:
+          type: array
+          items: { $ref: '#/components/schemas/Bin' }
+        next_cursor: { type: ['string', 'null'] }
+
+    BinCreateRequest:
+      type: object
+      required: [code, name, location_id]
+      properties:
+        code: { type: string, maxLength: 32 }
+        name: { type: string }
+        description: { type: string }
+        location_id: { type: string }
+        owner_id: { type: ['string', 'null'] }
+        visibility:
+          type: string
+          enum: [public, private]
+          description: Defaults to `"public"` when omitted.
+
+    BinUpdateRequest:
+      type: object
+      required: [name, visibility]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        owner_id: { type: ['string', 'null'] }
+        visibility: { type: string, enum: [public, private] }
+
+    Item:
+      type: object
+      required: [id, name, description, quantity, state, bin_id, held_by, placement_changed_at, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: ['string', 'null'] }
+        quantity: { type: integer, minimum: 1 }
+        state:
+          type: string
+          enum: [in_bin, checked_out]
+        bin_id: { type: ['string', 'null'] }
+        held_by: { type: ['string', 'null'] }
+        placement_changed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ItemsListResponse:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Item' }
+        next_cursor: { type: ['string', 'null'] }
+
+    ItemCreateRequest:
+      type: object
+      required: [name, quantity, bin_id]
+      properties:
+        name: { type: string }
+        description: { type: ['string', 'null'] }
+        quantity: { type: integer, minimum: 1 }
+        bin_id: { type: string }
+
+    ItemUpdateRequest:
+      type: object
+      required: [name, quantity]
+      properties:
+        name: { type: string }
+        description: { type: ['string', 'null'] }
+        quantity: { type: integer, minimum: 1 }
+
+    AddToBinRequest:
+      type: object
+      required: [bin_id]
+      properties:
+        bin_id: { type: string }
+
+    CheckOutRequest:
+      type: object
+      properties:
+        note: { type: ['string', 'null'] }
+
+    ReturnToBinRequest:
+      type: object
+      required: [bin_id]
+      properties:
+        bin_id: { type: string }
+        note: { type: ['string', 'null'] }
+
+    MoveBinRequest:
+      type: object
+      required: [location_id]
+      properties:
+        location_id: { type: string }
+
+    RequestReturnRequest:
+      type: object
+      properties:
+        message: { type: ['string', 'null'], maxLength: 500 }
+
+    BinMoveResponse:
+      type: object
+      required: [bin_id, from_location_id, to_location_id, moved_at]
+      properties:
+        bin_id: { type: string }
+        from_location_id: { type: string }
+        to_location_id: { type: string }
+        moved_at:
+          type: ['string', 'null']
+          format: date-time
+          description: 'Null on an idempotent retry: no move happened this call.'
+
+    ReturnRequest:
+      type: object
+      required: [id, item_id, requester_id, holder_id, message, status, created_at, resolved_at]
+      properties:
+        id: { type: string }
+        item_id: { type: string }
+        requester_id: { type: string }
+        holder_id: { type: string }
+        message: { type: ['string', 'null'] }
+        status:
+          type: string
+          enum: [open, fulfilled, cancelled]
+        created_at: { type: string, format: date-time }
+        resolved_at: { type: ['string', 'null'], format: date-time }
+
+    HistoryActor:
+      type: object
+      required: [kind, label, user_id]
+      properties:
+        kind:
+          type: string
+          enum: [user, integration]
+        label: { type: string }
+        user_id:
+          type: ['string', 'null']
+          description: Null exactly for the integration principal, which has no person behind it to name.
+
+    HistoryBinRef:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+
+    HistoryLocationRef:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+
+    HistoryItemRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+
+    HistoryEvent:
+      type: object
+      required: [id, kind, occurred_at, note, actor, bin, from_location, to_location, changed_fields, item]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [created, added, removed, returned, moved, deleted, return_requested, return_request_cancelled, edited]
+        occurred_at: { type: string, format: date-time }
+        note: { type: ['string', 'null'] }
+        actor: { $ref: '#/components/schemas/HistoryActor' }
+        bin:
+          oneOf:
+            - { $ref: '#/components/schemas/HistoryBinRef' }
+            - type: 'null'
+        from_location:
+          oneOf:
+            - { $ref: '#/components/schemas/HistoryLocationRef' }
+            - type: 'null'
+        to_location:
+          oneOf:
+            - { $ref: '#/components/schemas/HistoryLocationRef' }
+            - type: 'null'
+        changed_fields:
+          type: array
+          items: { type: string, enum: [name, description, quantity] }
+        item: { $ref: '#/components/schemas/HistoryItemRef' }
+
+    HistoryPageResponse:
+      type: object
+      required: [events, next_cursor]
+      properties:
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/HistoryEvent' }
+        next_cursor: { type: ['string', 'null'] }
+
+    Photo:
+      type: object
+      required: [id, primary, content_type, size_bytes, url, thumb_url]
+      properties:
+        id: { type: string }
+        primary: { type: boolean }
+        content_type: { type: string }
+        size_bytes: { type: integer }
+        url:
+          type: string
+          description: This same photo's own GET route — never a raw storage locator.
+        thumb_url:
+          type: string
+          description: This same photo's own GET route with `?size=thumb`.
+
+    DeviceTokenExchangeRequest:
+      type: object
+      required: [email, password, device_name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+        device_name: { type: string, maxLength: 100 }
+
+    DeviceTokenExchangeResponse:
+      type: object
+      required: [token, id, name, created_at]
+      properties:
+        token:
+          type: string
+          description: The plaintext device token. Returned exactly once, here.
+        id: { type: string }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
