@@ -340,6 +340,55 @@ func TestPhotosAPI_Upload_LyingContentLength_413(t *testing.T) {
 	}
 }
 
+func TestPhotosAPI_Upload_OversizeNonFilePart_413(t *testing.T) {
+	// The oversize bytes sit in a field part BEFORE "photo", with no
+	// declared Content-Length (chunked) — so http.MaxBytesReader's backstop
+	// trips inside multipart.Reader.NextPart while findFilePart is still
+	// skipping past "decoy", never reaching the file part at all. This
+	// exercises writeUploadReadError's own errors.As(err, &mbe) check
+	// (Upload's findFilePart error branch), distinct from the
+	// h.photos.Upload error branch TestPhotosAPI_Upload_LyingContentLength_413
+	// already covers.
+	itemID := storagedomain.NewItemID()
+	photos := &fakePhotoOperator{}
+	server := newAPIPrincipalServer(t, testViewer(), adapter.NewPhotosAPIHandlers(photos, 4, testLogger()))
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("decoy", oversizeUploadContent); err != nil {
+		t.Fatalf("WriteField: %v", err)
+	}
+	part, err := mw.CreateFormFile("photo", "a.jpg")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := part.Write([]byte("AAA")); err != nil {
+		t.Fatalf("write part: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("multipart Close: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/items/"+itemID.String()+"/photos", &buf)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.ContentLength = -1
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+	assertErrorCode(t, resp, "invalid_request")
+	if len(photos.uploadCalls) != 0 {
+		t.Error("Upload must not be called when the body is rejected before the file part is ever reached")
+	}
+}
+
 func TestPhotosAPI_Upload_NoFilePart_422(t *testing.T) {
 	itemID := storagedomain.NewItemID()
 	photos := &fakePhotoOperator{}
