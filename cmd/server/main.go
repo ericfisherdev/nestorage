@@ -407,6 +407,19 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	}
 	apiKeyWeb := identityadapter.NewAPIKeyWebHandlers(apiKeyService, sm, newAPIKeySettingsLayout(shellData, logger), logger)
 
+	// NSTR-101's own federation surface: the account-read reconciliation
+	// feeds on, and the link/provision endpoint NSTR-106/107/108's attach
+	// and re-push calls drive. memberLinkRepo is pool-bound for
+	// FederationService's own read (List, Accounts' own join); the
+	// provisioner opens its own transaction per write (federation_provisioner.go),
+	// so it is constructed over the pool directly, the same shape
+	// NewProvisioner (first-run admin) already has. identityRepo doubles as
+	// FederationService's users lister — it already satisfies List.
+	memberLinkRepo := identityadapter.NewMemberLinkRepository(pool)
+	federationProvisioner := identityadapter.NewFederationProvisioner(pool)
+	federationService := identityapp.NewFederationService(identityRepo, memberLinkRepo, federationProvisioner, logger)
+	federationAPI := identityadapter.NewFederationAPIHandlers(federationService, logger)
+
 	// NSTR-21's admin user management: Revokers is the open seam NSTR-22
 	// plugs its device-token revoker into (OCP) — session revocation and
 	// device-token revocation, so deactivating (or resetting the password
@@ -462,6 +475,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			OperationsAPI:    operationsAPI,
 			HistoryAPI:       historyAPI,
 			PhotosAPI:        photosAPI,
+			FederationAPI:    federationAPI,
 			SpecAPI:          specAPI,
 			APILimiter:       apiLimiter,
 			AuthLimiter:      authLimiter,

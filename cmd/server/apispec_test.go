@@ -12,6 +12,7 @@ import (
 	"github.com/pb33f/libopenapi"
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
+	identityapp "github.com/ericfisherdev/nestorage/internal/identity/app"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	mediadomain "github.com/ericfisherdev/nestorage/internal/media/domain"
@@ -217,6 +218,22 @@ func (stubDeviceTokenIssuer) Issue(context.Context, string, string, string) (str
 	return "", nil, nil
 }
 
+// stubFederationService satisfies identityadapter's own federationService
+// port (FederationAPIHandlers).
+type stubFederationService struct{}
+
+func (stubFederationService) Accounts(context.Context, string) ([]identityapp.FederationAccount, error) {
+	return nil, nil
+}
+
+func (stubFederationService) Link(context.Context, string, string, identity.UserID) (*identity.User, bool, error) {
+	return nil, false, nil
+}
+
+func (stubFederationService) Upsert(context.Context, string, string, identity.FederationProfile) (*identity.User, bool, error) {
+	return nil, false, nil
+}
+
 // testAPIRouteDeps builds the appRouteDeps fields registerAPIRoutes reads,
 // plus DeviceTokenAPI and SpecAPI (registered separately, matching
 // newAppRoutes' own three call sites) — every field newAppRoutes' OTHER
@@ -236,7 +253,8 @@ func testAPIRouteDeps(logger *slog.Logger) appRouteDeps {
 		HistoryAPI: storageadapter.NewHistoryAPIHandlers(
 			stubItemDetailReader{}, stubItemEventLister{}, stubBinService{}, stubBinActivityLister{}, logger,
 		),
-		PhotosAPI: mediaadapter.NewPhotosAPIHandlers(stubPhotoOperator{}, 1<<20, logger),
+		PhotosAPI:     mediaadapter.NewPhotosAPIHandlers(stubPhotoOperator{}, 1<<20, logger),
+		FederationAPI: identityadapter.NewFederationAPIHandlers(stubFederationService{}, logger),
 	}
 }
 

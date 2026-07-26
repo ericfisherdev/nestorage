@@ -67,6 +67,15 @@ const (
 	CodeInvalidReturnRequestMessage Code = "invalid_return_request_message"
 )
 
+// CodeHouseholdMismatch is NSTR-101's own addition: the federation
+// endpoints (identity/adapter's federation_api.go) can 403 for a reason
+// distinct from CodeForbidden's generic "wrong principal kind" — a request
+// naming a household different from the one already bound — which a client
+// needs its own code to branch on. Added here, the one place this
+// vocabulary lives, rather than let identity/adapter invent its own code
+// (mirrors CodeConflict/CodeItemNotFound's identical rationale above).
+const CodeHouseholdMismatch Code = "household_mismatch"
+
 // FieldDetail names one field-level validation failure. Details is only
 // populated on CodeInvalidRequest responses — every other code describes a
 // failure with nothing field-shaped to report.
