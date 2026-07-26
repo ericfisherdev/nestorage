@@ -68,6 +68,10 @@ const labelsPrintPageTitle = "Print labels"
 // the same "notify" bounded context.
 const notificationSettingsPageTitle = "Notification settings"
 
+// passwordSettingsPageTitle names NSTR-103's own /settings/password
+// self-service password-change page.
+const passwordSettingsPageTitle = "Password"
+
 // shellHandlers serves the application shell: the embedded static assets
 // and the root redirect. NSTR-31 removed this type's own demo /bins route
 // (handleBins) and its hard-coded Owners/Stats — BinsWebHandlers now owns
@@ -294,6 +298,7 @@ type appRouteDeps struct {
 	DeviceTokenAPI *identityadapter.DeviceTokenAPIHandlers
 	DeviceTokenWeb *identityadapter.DeviceTokenWebHandlers
 	PreferencesWeb *notifyadapter.PreferencesWebHandlers
+	PasswordWeb    *identityadapter.PasswordWebHandlers
 	APIKeyWeb      *identityadapter.APIKeyWebHandlers
 	Bins           *storageadapter.BinsWebHandlers
 	Locations      *storageadapter.LocationsWebHandlers
@@ -404,6 +409,7 @@ func newAppRoutes(deps appRouteDeps) func(mux *http.ServeMux) {
 		settingsMux := http.NewServeMux()
 		deps.DeviceTokenWeb.Routes(settingsMux)
 		deps.PreferencesWeb.Routes(settingsMux)
+		deps.PasswordWeb.Routes(settingsMux)
 		mux.Handle("/settings/", userGate(settingsMux))
 
 		apiKeyMux := http.NewServeMux()
@@ -580,6 +586,15 @@ func newDeviceSettingsLayout(data *shellDataService, logger *slog.Logger) func(r
 // newDeviceSettingsLayout already has.
 func newNotificationSettingsLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
 	return newRequestAdminAwareLayout(data, notificationSettingsPageTitle, logger)
+}
+
+// newPasswordSettingsLayout returns the layout func injected into
+// identityadapter.NewPasswordWebHandlers (see newRequestAdminAwareLayout's
+// own doc) — NSTR-103's /settings/password page is reachable by any
+// signed-in household member, not only an admin, the same shellNav-
+// reflects-the-actual-viewer shape newDeviceSettingsLayout already has.
+func newPasswordSettingsLayout(data *shellDataService, logger *slog.Logger) func(r *http.Request, content templ.Component) templ.Component {
+	return newRequestAdminAwareLayout(data, passwordSettingsPageTitle, logger)
 }
 
 // newStorageLayout returns the layout func injected into
