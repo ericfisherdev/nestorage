@@ -274,6 +274,116 @@ func TestFederationAPIHandlers_Provision_ConflictMapsTo409(t *testing.T) {
 	}
 }
 
+// TestFederationAPIHandlers_Provision_MemberIDInvalid covers the member_id
+// pre-validation branch (ValidateMemberID) — reached before the request
+// body is even read, so a nil body is fine here.
+func TestFederationAPIHandlers_Provision_MemberIDInvalid(t *testing.T) {
+	h := NewFederationAPIHandlers(&fakeFederationService{}, federationAPITestLogger())
+	r := withTestPrincipal(httptest.NewRequest(http.MethodPut, "/api/v1/federation/members/", nil),
+		domain.NewIntegrationPrincipal("Nestova"))
+	r.SetPathValue("member_id", "")
+	w := httptest.NewRecorder()
+
+	h.Provision(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("Provision(blank member_id) status = %d, want 422 (body %q)", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"member_id"`) {
+		t.Errorf("Provision(blank member_id) body = %q, want field %q", body, "member_id")
+	}
+	if !strings.Contains(body, invalidFederationIDMessage) {
+		t.Errorf("Provision(blank member_id) body = %q, want message %q", body, invalidFederationIDMessage)
+	}
+}
+
+// TestFederationAPIHandlers_Provision_HouseholdIDInvalid covers
+// ValidateHouseholdID's check on the decoded body's household_id — reached
+// only once member_id has already passed and the body has decoded.
+func TestFederationAPIHandlers_Provision_HouseholdIDInvalid(t *testing.T) {
+	h := NewFederationAPIHandlers(&fakeFederationService{}, federationAPITestLogger())
+	body := `{"household_id":""}`
+	r := withTestPrincipal(httptest.NewRequest(http.MethodPut, "/api/v1/federation/members/m1", bytes.NewBufferString(body)),
+		domain.NewIntegrationPrincipal("Nestova"))
+	r.SetPathValue("member_id", "m1")
+	w := httptest.NewRecorder()
+
+	h.Provision(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("Provision(blank household_id) status = %d, want 422 (body %q)", w.Code, w.Body.String())
+	}
+	got := w.Body.String()
+	if !strings.Contains(got, `"household_id"`) {
+		t.Errorf("Provision(blank household_id) body = %q, want field %q", got, "household_id")
+	}
+	if !strings.Contains(got, invalidFederationIDMessage) {
+		t.Errorf("Provision(blank household_id) body = %q, want message %q", got, invalidFederationIDMessage)
+	}
+}
+
+// TestFederationAPIHandlers_Provision_UpsertInvalidRoleMapsTo422 covers
+// mapFederationError's domain.ErrInvalidRole branch: the request's own
+// role string parses fine (ParseRole succeeds locally), but the service
+// call itself rejects it — the defensive path a stale or race-losing
+// caller can still hit at the app layer.
+func TestFederationAPIHandlers_Provision_UpsertInvalidRoleMapsTo422(t *testing.T) {
+	svc := &fakeFederationService{upsertErr: domain.ErrInvalidRole}
+	h := NewFederationAPIHandlers(svc, federationAPITestLogger())
+	body := `{"household_id":"h1","account":{"display_name":"Maya","email":"maya@example.com","role":"member","active":true}}`
+	r := withTestPrincipal(httptest.NewRequest(http.MethodPut, "/api/v1/federation/members/m1", bytes.NewBufferString(body)),
+		domain.NewIntegrationPrincipal("Nestova"))
+	r.SetPathValue("member_id", "m1")
+	w := httptest.NewRecorder()
+
+	h.Provision(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("Provision(service rejects role) status = %d, want 422 (body %q)", w.Code, w.Body.String())
+	}
+	got := w.Body.String()
+	if !strings.Contains(got, `"account.role"`) {
+		t.Errorf("Provision(service rejects role) body = %q, want field %q", got, "account.role")
+	}
+	if !strings.Contains(got, "invalid_request") {
+		t.Errorf("Provision(service rejects role) body = %q, want code %q", got, "invalid_request")
+	}
+}
+
+// TestFederationAPIHandlers_Provision_LinkInvalidMemberLinkMapsTo422
+// covers mapFederationError's domain.ErrInvalidMemberLink branch — its
+// comment notes this is reached only if a request gets past the handler's
+// own ValidateMemberID/ValidateHouseholdID pre-validation with an
+// otherwise-malformed identifier the service itself then rejects. Unlike
+// the ErrInvalidRole case, this branch carries no FieldDetail, so the
+// response must have no "details" key at all.
+func TestFederationAPIHandlers_Provision_LinkInvalidMemberLinkMapsTo422(t *testing.T) {
+	svc := &fakeFederationService{linkErr: domain.ErrInvalidMemberLink}
+	h := NewFederationAPIHandlers(svc, federationAPITestLogger())
+	body := `{"household_id":"h1","link":{"user_id":"` + domain.NewUserID().String() + `"}}`
+	r := withTestPrincipal(httptest.NewRequest(http.MethodPut, "/api/v1/federation/members/m1", bytes.NewBufferString(body)),
+		domain.NewIntegrationPrincipal("Nestova"))
+	r.SetPathValue("member_id", "m1")
+	w := httptest.NewRecorder()
+
+	h.Provision(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("Provision(service rejects member link) status = %d, want 422 (body %q)", w.Code, w.Body.String())
+	}
+	got := w.Body.String()
+	if !strings.Contains(got, "invalid_request") {
+		t.Errorf("Provision(service rejects member link) body = %q, want code %q", got, "invalid_request")
+	}
+	if !strings.Contains(got, errInvalidRequestMessage) {
+		t.Errorf("Provision(service rejects member link) body = %q, want message %q", got, errInvalidRequestMessage)
+	}
+	if strings.Contains(got, `"details"`) {
+		t.Errorf("Provision(service rejects member link) body = %q, want no details key (nil FieldDetail)", got)
+	}
+}
+
 func TestNewFederationAPIHandlers_NilDependenciesPanic(t *testing.T) {
 	t.Run("nil service", func(t *testing.T) {
 		defer func() {
