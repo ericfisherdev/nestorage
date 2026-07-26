@@ -119,7 +119,13 @@ type fakePhotoOperator struct {
 	deleteCalls int
 }
 
-func (f *fakePhotoOperator) Upload(_ context.Context, _ identity.Principal, _ storagedomain.ItemID, r io.Reader) (*domain.Photo, error) {
+// Upload also attaches the resulting photo into f.items[itemID] — position
+// len(existing), primary iff it is the item's first — mirroring
+// mediaapp.PhotoService.Upload's own real attach-to-item step (photo_service.go)
+// closely enough that a subsequent ListForItem call (photos_api.go's own
+// Upload reload, or a test's own assertion) sees it, the same way the real
+// service's shared tables would.
+func (f *fakePhotoOperator) Upload(_ context.Context, _ identity.Principal, itemID storagedomain.ItemID, r io.Reader) (*domain.Photo, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
@@ -129,7 +135,13 @@ func (f *fakePhotoOperator) Upload(_ context.Context, _ identity.Principal, _ st
 		return nil, uploadErr
 	}
 	f.uploadCalls = append(f.uploadCalls, content)
-	return &domain.Photo{ID: domain.NewPhotoID()}, nil
+	photo := domain.Photo{ID: domain.NewPhotoID()}
+	if f.items == nil {
+		f.items = map[storagedomain.ItemID][]domain.ItemPhoto{}
+	}
+	existing := f.items[itemID]
+	f.items[itemID] = append(existing, domain.ItemPhoto{Photo: photo, Position: len(existing), IsPrimary: len(existing) == 0})
+	return &photo, nil
 }
 
 func (f *fakePhotoOperator) ListForItem(_ context.Context, _ identity.Principal, itemID storagedomain.ItemID) ([]domain.ItemPhoto, error) {
