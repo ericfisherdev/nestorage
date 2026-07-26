@@ -1,7 +1,7 @@
 package api
 
 import (
-	_ "embed"
+	_ "embed" // for the go:embed directive on openAPISpecYAML below
 	"log/slog"
 	"net/http"
 )
