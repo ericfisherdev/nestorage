@@ -89,14 +89,6 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// NSTR-100: logged once, right after config.Load succeeds — the helper
-	// never receives or emits ClientSecret (see its own doc). federationMode
-	// is resolved once here (cfg.Provider.Mode()) and passed, unchanged,
-	// into both local-password surfaces further down (identityadapter.
-	// NewHandlers, NewDeviceTokenAPIHandlers): neither handler re-derives it
-	// from cfg.Provider itself.
-	logFederationMode(logger, cfg.Provider)
-	federationMode := cfg.Provider.Mode()
 
 	// Establish the Postgres pool up front so a bad DSN or unreachable
 	// database fails fast at boot (db.New bounds its own ping with
@@ -375,7 +367,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// out of one must not get a fresh run of attempts against the other
 	// (see LoginAttemptLimiter's own doc).
 	loginLimiter := identityadapter.NewLoginAttemptLimiter()
-	login := identityadapter.NewHandlers(sm, authenticator, loginLimiter, federationMode, logger)
+	login := identityadapter.NewHandlers(sm, authenticator, loginLimiter, logger)
 	authenticate := identityadapter.Authenticate(sm, identityRepo, logger)
 
 	// NSTR-22's device tokens: DeviceTokenService implements
@@ -386,7 +378,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// timestamps are real wall-clock time in production.
 	deviceTokenRepo := identityadapter.NewDeviceTokenRepository(pool)
 	deviceTokenService := identityapp.NewDeviceTokenService(deviceTokenRepo, identityRepo, authenticator, loginLimiter, time.Now, logger)
-	deviceTokenAPI := identityadapter.NewDeviceTokenAPIHandlers(deviceTokenService, federationMode, logger)
+	deviceTokenAPI := identityadapter.NewDeviceTokenAPIHandlers(deviceTokenService, logger)
 	deviceTokenWeb := identityadapter.NewDeviceTokenWebHandlers(deviceTokenService, sm, newDeviceSettingsLayout(shellData, logger), logger)
 
 	// NSTR-45's own settings screen: any signed-in user manages only their
@@ -407,19 +399,6 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	}
 	apiKeyWeb := identityadapter.NewAPIKeyWebHandlers(apiKeyService, sm, newAPIKeySettingsLayout(shellData, logger), logger)
 
-	// NSTR-101's own federation surface: the account-read reconciliation
-	// feeds on, and the link/provision endpoint NSTR-106/107/108's attach
-	// and re-push calls drive. memberLinkRepo is pool-bound for
-	// FederationService's own read (List, Accounts' own join); the
-	// provisioner opens its own transaction per write (federation_provisioner.go),
-	// so it is constructed over the pool directly, the same shape
-	// NewProvisioner (first-run admin) already has. identityRepo doubles as
-	// FederationService's users lister — it already satisfies List.
-	memberLinkRepo := identityadapter.NewMemberLinkRepository(pool)
-	federationProvisioner := identityadapter.NewFederationProvisioner(pool)
-	federationService := identityapp.NewFederationService(identityRepo, memberLinkRepo, federationProvisioner, logger)
-	federationAPI := identityadapter.NewFederationAPIHandlers(federationService, logger)
-
 	// NSTR-21's admin user management: Revokers is the open seam NSTR-22
 	// plugs its device-token revoker into (OCP) — session revocation and
 	// device-token revocation, so deactivating (or resetting the password
@@ -430,12 +409,10 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 
 	// NSTR-103's own self-service password change: the standalone-mode half
 	// of NSTR-20's deferred scope AdminService.ResetPassword (the admin-reset
-	// half, just above) never covered. It shares the exact same Revokers fan-
-	// out — one invariant, one revocation path — and the same federationMode
-	// seam login/deviceTokenAPI already consume, plus cfg.Provider.BaseURL as
-	// the federated notice's provider link.
+	// half, just above) never covered. It shares the exact same Revokers
+	// fan-out — one invariant, one revocation path.
 	passwordService := identityapp.NewPasswordService(identityRepo, hasher, revokers, logger)
-	passwordWeb := identityadapter.NewPasswordWebHandlers(passwordService, sm, newPasswordSettingsLayout(shellData, logger), federationMode, cfg.Provider.BaseURL, logger)
+	passwordWeb := identityadapter.NewPasswordWebHandlers(passwordService, sm, newPasswordSettingsLayout(shellData, logger), logger)
 
 	// NSTR-24's principal resolution: one Chain dispatching a request's
 	// credential — the session cookie, a device token, or the account api
@@ -485,7 +462,6 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 			OperationsAPI:    operationsAPI,
 			HistoryAPI:       historyAPI,
 			PhotosAPI:        photosAPI,
-			FederationAPI:    federationAPI,
 			SpecAPI:          specAPI,
 			APILimiter:       apiLimiter,
 			AuthLimiter:      authLimiter,
@@ -572,19 +548,4 @@ func readiness(pool *pgxpool.Pool) httpserver.ReadinessFunc {
 	return func(ctx context.Context) error {
 		return db.Health(ctx, pool)
 	}
-}
-
-// logFederationMode logs the resolved FederationMode once, at info level,
-// right after config.Load succeeds (NSTR-100). provider_host (cfg.Host())
-// and client_id (cfg.ClientID, which is public — see ProviderConfig's own
-// doc) are included only in federated mode; this function never reads or
-// emits cfg.ClientSecret, so the credential can never appear in this log
-// line regardless of mode.
-func logFederationMode(logger *slog.Logger, cfg config.ProviderConfig) {
-	mode := cfg.Mode()
-	if mode != config.FederationModeFederated {
-		logger.Info("federation mode resolved", "mode", mode.String())
-		return
-	}
-	logger.Info("federation mode resolved", "mode", mode.String(), "provider_host", cfg.Host(), "client_id", cfg.ClientID)
 }

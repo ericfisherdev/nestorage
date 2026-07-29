@@ -12,7 +12,6 @@ import (
 
 	"github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
-	"github.com/ericfisherdev/nestorage/internal/platform/config"
 )
 
 // fakeDeviceTokenIssuer is a configurable deviceTokenIssuer fake: err makes
@@ -35,15 +34,8 @@ func (f *fakeDeviceTokenIssuer) Issue(_ context.Context, email, password, device
 }
 
 func newAPIMux(issuer *fakeDeviceTokenIssuer) *http.ServeMux {
-	return newAPIMuxMode(issuer, config.FederationModeStandalone)
-}
-
-// newAPIMuxMode is newAPIMux with an explicit FederationMode, so NSTR-100's
-// federated-refusal test can drive the same mux shape standalone already
-// uses.
-func newAPIMuxMode(issuer *fakeDeviceTokenIssuer, mode config.FederationMode) *http.ServeMux {
 	mux := http.NewServeMux()
-	adapter.NewDeviceTokenAPIHandlers(issuer, mode, testLogger()).Routes(mux)
+	adapter.NewDeviceTokenAPIHandlers(issuer, testLogger()).Routes(mux)
 	return mux
 }
 
@@ -60,18 +52,18 @@ func TestNewDeviceTokenAPIHandlers_NilDependenciesPanic(t *testing.T) {
 	t.Run("nil issuer", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewDeviceTokenAPIHandlers(nil, mode, logger) did not panic")
+				t.Error("NewDeviceTokenAPIHandlers(nil, logger) did not panic")
 			}
 		}()
-		adapter.NewDeviceTokenAPIHandlers(nil, config.FederationModeStandalone, testLogger())
+		adapter.NewDeviceTokenAPIHandlers(nil, testLogger())
 	})
 	t.Run("nil logger", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
-				t.Error("NewDeviceTokenAPIHandlers(issuer, mode, nil) did not panic")
+				t.Error("NewDeviceTokenAPIHandlers(issuer, nil) did not panic")
 			}
 		}()
-		adapter.NewDeviceTokenAPIHandlers(&fakeDeviceTokenIssuer{}, config.FederationModeStandalone, nil)
+		adapter.NewDeviceTokenAPIHandlers(&fakeDeviceTokenIssuer{}, nil)
 	})
 }
 
@@ -177,32 +169,5 @@ func TestDeviceTokenAPI_Issue_MethodMismatch(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET /api/v1/auth/device-tokens status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
-	}
-}
-
-// TestDeviceTokenAPI_Issue_FederatedRefusedBeforeCredentialVerification
-// asserts the exchange endpoint answers 403 through the standard error
-// envelope in federated mode, without ever calling the issuer — this
-// endpoint mints a password-derived credential, which federated mode must
-// never do (NSTR-100).
-func TestDeviceTokenAPI_Issue_FederatedRefusedBeforeCredentialVerification(t *testing.T) {
-	issuer := &fakeDeviceTokenIssuer{plaintext: "nsd_deadbeef", token: &domain.DeviceToken{ID: domain.NewDeviceTokenID()}}
-	mux := newAPIMuxMode(issuer, config.FederationModeFederated)
-
-	rec := postJSON(t, mux, `{"email":"maya@example.com","password":"correct-horse","device_name":"Maya's phone"}`)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
-	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	errBody, _ := body["error"].(map[string]any)
-	if errBody["code"] != "forbidden" {
-		t.Errorf("response error.code = %v, want %q", errBody["code"], "forbidden")
-	}
-	if issuer.gotEmail != "" {
-		t.Error("issuer.Issue was called despite federated mode refusing the exchange")
 	}
 }

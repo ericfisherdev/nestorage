@@ -33,12 +33,6 @@ tags:
     description: Read-only event history for an item or a bin.
   - name: photos
     description: Item photo upload, retrieval, and management.
-  - name: federation
-    description: >-
-      Nestova's own reconciliation surface (NSTR-101): reading existing
-      accounts to propose matches, and linking/provisioning members.
-      Integration-credential only — the inverse of every other `POST`/`PUT`
-      above, which instead reject that credential.
   - name: meta
     description: The API's own published contract.
 security:
@@ -83,14 +77,6 @@ paths:
             `invalid_credentials` — unknown email, wrong password, or a
             locked-out/inactive account. Deliberately generic so this
             endpoint cannot be used to enumerate accounts.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '403':
-          description: >-
-            `forbidden` — this household is federated (NSTR-100): local
-            password sign-in is disabled, and this endpoint mints no
-            credential without ever verifying the request body.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -906,118 +892,6 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
-  /api/v1/federation/accounts:
-    get:
-      operationId: listFederationAccounts
-      tags: [federation]
-      summary: Every account, paired with its linked Nestova member id.
-      description: >-
-        Integration-credential only (`403 forbidden` for a device token —
-        AC 7). Verifies the household binding first: the first authenticated
-        call to either federation endpoint is what records it
-        (`household_mismatch` on every later call naming a different one).
-        Deliberately unpaginated — household scale bounds it, the same
-        rationale `Location.bin_count` documents for its own in-memory
-        counts. The response never carries a password hash (AC 2).
-      parameters:
-        - name: household
-          in: query
-          required: true
-          description: The Nestova household id reconciliation is running for.
-          schema: { type: string }
-      responses:
-        '200':
-          description: Every account, `member_id` null for one with no link yet.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FederationAccountsResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          description: >-
-            `forbidden` — a device token (or any non-integration principal)
-            called this endpoint; or `household_mismatch` — a household
-            binding is already recorded and `household` names a different
-            one.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '429':
-          $ref: '#/components/responses/RateLimited'
-
-  /api/v1/federation/members/{member_id}:
-    put:
-      operationId: provisionFederationMember
-      tags: [federation]
-      summary: Link a Nestova member to an existing user, or create one.
-      description: >-
-        The single write path both an initial link/create and every later
-        re-push reuse — `PUT`, keyed by `member_id`, is what carries the
-        idempotency contract those re-pushes rely on. The body carries
-        exactly one of `link` (pair `member_id` with an existing user) or
-        `account` (create or update a federated user's profile) — both or
-        neither answers `422`. Linking never touches the existing user's
-        row: `id`, role, color, and every attributed bin/item/photo/history
-        event stay exactly as they were. A federated create stores no
-        usable local password (AC 4). Integration-credential only
-        (`403 forbidden` for a device token — AC 7).
-      parameters:
-        - name: member_id
-          in: path
-          required: true
-          description: The Nestova member id this Nestorage account is (or will be) linked to.
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/FederationProvisionRequest'
-      responses:
-        '200':
-          description: An idempotent replay, or an existing linked user's profile update.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/FederationAccount' }
-        '201':
-          description: A new link or a new federated user (plus its link) was created.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/FederationAccount' }
-        '403':
-          description: >-
-            `forbidden` — a device token (or any non-integration principal)
-            called this endpoint; or `household_mismatch` — a household
-            binding is already recorded and `household_id` names a
-            different one.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '404':
-          description: '`not_found` — `link.user_id` names an unknown user.'
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '409':
-          description: >-
-            `conflict` — the member (or the target user) is already linked
-            to someone else, the account's email is already in use, or the
-            change would leave the household with zero active admins.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '422':
-          description: >-
-            `invalid_request` — the body carried both `link` and `account`,
-            or neither; or one of `member_id`/`household_id`/`account.role`
-            was blank, over-long, or unrecognized.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '429':
-          $ref: '#/components/responses/RateLimited'
-
   /api/v1/openapi.yaml:
     get:
       operationId: getOpenAPISpec
@@ -1050,9 +924,7 @@ components:
         /settings/api-key, prefixed `ns_`. Authenticates as a system
         principal with no attached user — create endpoints that need a real
         person (locations, bins, items, check-out, return requests) reject
-        it with `403`. The `federation` tag's two endpoints are the
-        INVERSE of that rule: they require this credential and reject
-        every other principal kind instead (NSTR-101).
+        it with `403`.
 
   parameters:
     Before:
@@ -1450,59 +1322,3 @@ components:
         id: { type: string }
         name: { type: string }
         created_at: { type: string, format: date-time }
-
-    FederationAccount:
-      type: object
-      required: [id, display_name, email, active, member_id]
-      properties:
-        id: { type: string }
-        display_name: { type: string }
-        email: { type: string }
-        active: { type: boolean }
-        member_id:
-          type: ['string', 'null']
-          description: The linked Nestova member id, null when this account is not yet linked.
-
-    FederationAccountsResponse:
-      type: object
-      required: [accounts]
-      properties:
-        accounts:
-          type: array
-          items: { $ref: '#/components/schemas/FederationAccount' }
-
-    FederationLinkRequest:
-      type: object
-      required: [user_id]
-      properties:
-        user_id:
-          type: string
-          description: An existing Nestorage user id to pair member_id with.
-
-    FederationAccountRequest:
-      type: object
-      required: [display_name, email, role, active]
-      properties:
-        display_name: { type: string }
-        email: { type: string }
-        role:
-          type: string
-          enum: [admin, member]
-        active: { type: boolean }
-
-    FederationProvisionRequest:
-      type: object
-      required: [household_id]
-      description: >-
-        Exactly one of link or account must be set — both or neither
-        answers 422.
-      properties:
-        household_id: { type: string }
-        link:
-          oneOf:
-            - { $ref: '#/components/schemas/FederationLinkRequest' }
-            - type: 'null'
-        account:
-          oneOf:
-            - { $ref: '#/components/schemas/FederationAccountRequest' }
-            - type: 'null'

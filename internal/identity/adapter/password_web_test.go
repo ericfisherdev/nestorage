@@ -20,7 +20,6 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identityapp "github.com/ericfisherdev/nestorage/internal/identity/app"
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
-	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 )
 
@@ -57,12 +56,12 @@ type passwordWebFixture struct {
 	passwords *fakePasswordChanger
 }
 
-func newPasswordWebFixture(t *testing.T, user *domain.User, mode config.FederationMode, providerURL string) *passwordWebFixture {
+func newPasswordWebFixture(t *testing.T, user *domain.User) *passwordWebFixture {
 	t.Helper()
 	sm := scs.New()
 	userFinder := &fakeCurrentUserFinder{users: map[domain.UserID]*domain.User{user.ID: user}}
 	passwords := &fakePasswordChanger{}
-	handlers := adapter.NewPasswordWebHandlers(passwords, sm, passthroughLayout, mode, providerURL, testLogger())
+	handlers := adapter.NewPasswordWebHandlers(passwords, sm, passthroughLayout, testLogger())
 
 	passwordMux := http.NewServeMux()
 	handlers.Routes(passwordMux)
@@ -131,16 +130,16 @@ func TestNewPasswordWebHandlers_NilDependenciesPanic(t *testing.T) {
 		fn   func()
 	}{
 		{"nil service", func() {
-			adapter.NewPasswordWebHandlers(nil, sm, passthroughLayout, config.FederationModeStandalone, "", testLogger())
+			adapter.NewPasswordWebHandlers(nil, sm, passthroughLayout, testLogger())
 		}},
 		{"nil session manager", func() {
-			adapter.NewPasswordWebHandlers(passwords, nil, passthroughLayout, config.FederationModeStandalone, "", testLogger())
+			adapter.NewPasswordWebHandlers(passwords, nil, passthroughLayout, testLogger())
 		}},
 		{"nil layout", func() {
-			adapter.NewPasswordWebHandlers(passwords, sm, nil, config.FederationModeStandalone, "", testLogger())
+			adapter.NewPasswordWebHandlers(passwords, sm, nil, testLogger())
 		}},
 		{"nil logger", func() {
-			adapter.NewPasswordWebHandlers(passwords, sm, passthroughLayout, config.FederationModeStandalone, "", nil)
+			adapter.NewPasswordWebHandlers(passwords, sm, passthroughLayout, nil)
 		}},
 	}
 	for _, tt := range tests {
@@ -156,7 +155,7 @@ func TestNewPasswordWebHandlers_NilDependenciesPanic(t *testing.T) {
 }
 
 func TestPasswordWeb_Show_Unauthenticated_RedirectsToLogin(t *testing.T) {
-	f := newPasswordWebFixture(t, &domain.User{ID: domain.NewUserID(), Active: true}, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, &domain.User{ID: domain.NewUserID(), Active: true})
 
 	resp, err := f.client.Get(f.server.URL + "/settings/password")
 	if err != nil {
@@ -171,7 +170,7 @@ func TestPasswordWeb_Show_Unauthenticated_RedirectsToLogin(t *testing.T) {
 
 func TestPasswordWeb_Show_Standalone_RendersForm(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.seedSession(t, user.ID)
 
 	resp, err := f.client.Get(f.server.URL + "/settings/password")
@@ -189,61 +188,9 @@ func TestPasswordWeb_Show_Standalone_RendersForm(t *testing.T) {
 	}
 }
 
-// TestPasswordWeb_Show_Federated_NoticeLinksProviderNoForm is the automated
-// equivalent of this ticket's "in federated mode the interface does not
-// present a change-password form and instead directs the person to the
-// provider" criterion.
-func TestPasswordWeb_Show_Federated_NoticeLinksProviderNoForm(t *testing.T) {
-	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeFederated, "https://provider.example.com")
-	f.seedSession(t, user.ID)
-
-	resp, err := f.client.Get(f.server.URL + "/settings/password")
-	if err != nil {
-		t.Fatalf("GET /settings/password: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body: %s", resp.StatusCode, http.StatusOK, body)
-	}
-	if bytes.Contains(body, []byte(`name="current_password"`)) {
-		t.Errorf("federated GET must not render the password form: %s", body)
-	}
-	if !bytes.Contains(body, []byte("https://provider.example.com")) {
-		t.Errorf("federated GET missing the provider link: %s", body)
-	}
-}
-
-// TestPasswordWeb_Change_Federated_HandConstructedRequestForbidden is the
-// automated equivalent of this ticket's "in federated mode a
-// hand-constructed change-password request is refused rather than partially
-// applied" criterion: a well-formed POST with a valid CSRF token still gets
-// 403, and the service is never called.
-func TestPasswordWeb_Change_Federated_HandConstructedRequestForbidden(t *testing.T) {
-	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeFederated, "https://provider.example.com")
-	f.seedSession(t, user.ID)
-	csrf := f.csrfToken(t)
-
-	resp, err := f.client.PostForm(f.server.URL+"/settings/password", f.changeForm(csrf, "current", "a-new-correct-horse", "a-new-correct-horse"))
-	if err != nil {
-		t.Fatalf("POST /settings/password: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
-	}
-	if len(f.passwords.calls) != 0 {
-		t.Error("a federated household's change request must never reach ChangeOwn")
-	}
-}
-
 func TestPasswordWeb_Change_MissingCSRF_Forbidden(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.seedSession(t, user.ID)
 
 	resp, err := f.client.PostForm(f.server.URL+"/settings/password", f.changeForm("wrong-token", "current", "a-new-correct-horse", "a-new-correct-horse"))
@@ -262,7 +209,7 @@ func TestPasswordWeb_Change_MissingCSRF_Forbidden(t *testing.T) {
 
 func TestPasswordWeb_Change_Mismatch_UnprocessableEntity(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.seedSession(t, user.ID)
 	csrf := f.csrfToken(t)
 
@@ -286,7 +233,7 @@ func TestPasswordWeb_Change_Mismatch_UnprocessableEntity(t *testing.T) {
 
 func TestPasswordWeb_Change_WrongCurrentPassword_UnprocessableEntity(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.passwords.err = domain.ErrInvalidCredentials
 	f.seedSession(t, user.ID)
 	csrf := f.csrfToken(t)
@@ -308,7 +255,7 @@ func TestPasswordWeb_Change_WrongCurrentPassword_UnprocessableEntity(t *testing.
 
 func TestPasswordWeb_Change_TooShort_UnprocessableEntity(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.passwords.err = domain.ErrPasswordTooShort
 	f.seedSession(t, user.ID)
 	csrf := f.csrfToken(t)
@@ -330,7 +277,7 @@ func TestPasswordWeb_Change_TooShort_UnprocessableEntity(t *testing.T) {
 
 func TestPasswordWeb_Change_TooLong_UnprocessableEntity(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.passwords.err = domain.ErrPasswordTooLong
 	f.seedSession(t, user.ID)
 	csrf := f.csrfToken(t)
@@ -352,7 +299,7 @@ func TestPasswordWeb_Change_TooLong_UnprocessableEntity(t *testing.T) {
 
 func TestPasswordWeb_Change_UnrecognizedError_MapsTo500(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.passwords.err = errors.New("boom")
 	f.seedSession(t, user.ID)
 	csrf := f.csrfToken(t)
@@ -370,7 +317,7 @@ func TestPasswordWeb_Change_UnrecognizedError_MapsTo500(t *testing.T) {
 
 func TestPasswordWeb_Change_HTMXRequestGetsFragmentWithConfirmation(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.seedSession(t, user.ID)
 	csrf := f.csrfToken(t)
 
@@ -402,7 +349,7 @@ func TestPasswordWeb_Change_HTMXRequestGetsFragmentWithConfirmation(t *testing.T
 
 func TestPasswordWeb_Change_FullNavigation_Redirects(t *testing.T) {
 	user := &domain.User{ID: domain.NewUserID(), Active: true}
-	f := newPasswordWebFixture(t, user, config.FederationModeStandalone, "")
+	f := newPasswordWebFixture(t, user)
 	f.seedSession(t, user.ID)
 	csrf := f.csrfToken(t)
 
@@ -459,7 +406,7 @@ func newRealServicePasswordWebFixture(t *testing.T, user *domain.User) *realServ
 	userFinder := &fakePasswordWebRepo{users: map[domain.UserID]*domain.User{user.ID: user}}
 	revoker := adapter.NewSessionRevoker(sm)
 	service := identityapp.NewPasswordService(userFinder, cryptotest.Hasher(), revoker, testLogger())
-	handlers := adapter.NewPasswordWebHandlers(service, sm, passthroughLayout, config.FederationModeStandalone, "", testLogger())
+	handlers := adapter.NewPasswordWebHandlers(service, sm, passthroughLayout, testLogger())
 
 	passwordMux := http.NewServeMux()
 	handlers.Routes(passwordMux)
