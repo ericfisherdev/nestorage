@@ -76,7 +76,6 @@ have a specific field to name.
 | `internal` | 500 |
 | `rate_limited` | 429 (NSTR-58) |
 | `conflict` | 409 |
-| `household_mismatch` | 403 (NSTR-101) — a household binding is already recorded and the request names a different one. |
 
 An unmatched route or method under `/api/v1` answers through this same
 envelope (`not_found` / `method_not_allowed`) rather than net/http's own
