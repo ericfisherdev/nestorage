@@ -124,19 +124,17 @@ func TestLogin_InactiveUser(t *testing.T) {
 	}
 }
 
-// TestLogin_EmptyPasswordHash_ReturnsInvalidCredentials is NSTR-101's own
-// regression: a federated user (created by FederationProvisioner.Upsert,
-// which deliberately stores an empty PasswordHash — AC 4) must fail login
-// with the same generic ErrInvalidCredentials every other failure mode
-// answers, never a 500 and never a distinguishable error a client could use
-// to detect "this account has no local password" (which would leak that a
-// user is federated). crypto.Hasher.Verify rejects an empty/malformed
-// encoded hash with ErrMalformedHash rather than panicking, and Login folds
-// any Verify error into ErrInvalidCredentials — this asserts that fold
-// covers the empty-hash case specifically.
+// TestLogin_EmptyPasswordHash_ReturnsInvalidCredentials asserts a user with
+// no usable local password (an empty PasswordHash) fails login with the
+// same generic ErrInvalidCredentials every other failure mode answers, never
+// a 500 and never a distinguishable error a client could use to detect
+// "this account has no local password". crypto.Hasher.Verify rejects an
+// empty/malformed encoded hash with ErrMalformedHash rather than panicking,
+// and Login folds any Verify error into ErrInvalidCredentials — this asserts
+// that fold covers the empty-hash case specifically.
 func TestLogin_EmptyPasswordHash_ReturnsInvalidCredentials(t *testing.T) {
 	t.Parallel()
-	const email = "federated@example.com"
+	const email = "nopassword@example.com"
 	repo := &fakeUserFinder{
 		users: map[string]*domain.User{
 			email: {ID: domain.NewUserID(), Email: email, PasswordHash: "", Active: true},

@@ -328,14 +328,6 @@ type appRouteDeps struct {
 	// and the web gallery can never disagree on validation, EXIF scrubbing,
 	// or storage.
 	PhotosAPI *mediaadapter.PhotosAPIHandlers
-	// FederationAPI is NSTR-101's own /api/v1 surface: the account-read
-	// reconciliation feeds on, and the link/provision endpoint
-	// NSTR-106/107/108's attach and re-push calls drive. Both of its routes
-	// require the account api key (requireIntegrationPrincipal) rather than
-	// rejecting it the way every create endpoint above does, so it is
-	// mounted on the same api.Router alongside every other bearer-gated
-	// group, not treated as a special case.
-	FederationAPI *identityadapter.FederationAPIHandlers
 	// SpecAPI is NSTR-57's own route: the published OpenAPI 3.1 document,
 	// GET /api/v1/openapi.yaml. Registered on the outer mux alongside
 	// DeviceTokenAPI, NOT inside registerAPIRoutes below — the spec is
@@ -374,7 +366,6 @@ func registerAPIRoutes(deps appRouteDeps) func(api.Registrar) {
 		deps.OperationsAPI.Routes(reg)
 		deps.HistoryAPI.Routes(reg)
 		deps.PhotosAPI.Routes(reg)
-		deps.FederationAPI.Routes(reg)
 	}
 }
 

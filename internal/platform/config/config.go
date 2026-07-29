@@ -38,10 +38,6 @@ type Config struct {
 	// token-exchange rate limiters — Nestorage-local, since nestcore has no
 	// rate-limit loader (see ratelimit.go's own doc).
 	RateLimit RateLimitConfig
-	// Provider configures the Nestova identity provider Nestorage federates
-	// against (NSTR-100) — Nestorage-local, since nestcore has no
-	// federation loader (see provider.go's own doc).
-	Provider ProviderConfig
 	// Env is the deployment environment: one of corecfg.EnvDev, EnvTest, or
 	// EnvProd.
 	Env string
@@ -81,8 +77,6 @@ func Load() (Config, error) {
 	errs = append(errs, emailErrs...)
 	rateLimit, rateLimitErrs := LoadRateLimit()
 	errs = append(errs, rateLimitErrs...)
-	provider, providerErrs := LoadProvider()
-	errs = append(errs, providerErrs...)
 
 	errs = append(errs, corecfg.ValidateAppEnv(env)...)
 	errs = append(errs, server.Validate()...)
@@ -93,7 +87,6 @@ func Load() (Config, error) {
 	errs = append(errs, media.Validate()...)
 	errs = append(errs, email.Validate()...)
 	errs = append(errs, rateLimit.Validate()...)
-	errs = append(errs, provider.Validate()...)
 
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("invalid configuration:\n%w", errors.Join(errs...))
@@ -108,7 +101,6 @@ func Load() (Config, error) {
 		Media:     media,
 		Email:     email,
 		RateLimit: rateLimit,
-		Provider:  provider,
 		Env:       env,
 	}, nil
 }

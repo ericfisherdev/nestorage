@@ -45,23 +45,3 @@ func ParseAPIKeyID(s string) (APIKeyID, error) {
 	}
 	return APIKeyID(u), nil
 }
-
-// MemberLinkID uniquely identifies a provider_member_link row — the link
-// between a Nestova member and a Nestorage user (NSTR-101).
-type MemberLinkID uuid.UUID
-
-// NewMemberLinkID returns a new time-ordered (UUIDv7) member link id, the
-// same B-tree-locality rationale as NewUserID.
-func NewMemberLinkID() MemberLinkID { return MemberLinkID(uuid.Must(uuid.NewV7())) }
-
-// String returns the canonical UUID string.
-func (id MemberLinkID) String() string { return uuid.UUID(id).String() }
-
-// ParseMemberLinkID parses a canonical UUID string into a MemberLinkID.
-func ParseMemberLinkID(s string) (MemberLinkID, error) {
-	u, err := uuid.Parse(s)
-	if err != nil {
-		return MemberLinkID{}, fmt.Errorf("parse member link id: %w", err)
-	}
-	return MemberLinkID(u), nil
-}

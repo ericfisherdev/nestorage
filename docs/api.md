@@ -141,7 +141,6 @@ requested end state already holds:
 | move-bin | Bin already at the requested location | `200`, `moved_at: null` (no move happened this call) |
 | create return request | Caller already has an open request on the item | `200`, that existing request |
 | cancel return request | Request is already cancelled | `200`, that request's (cancelled) state |
-| federation link/provision (NSTR-101) | `member_id` already linked to the SAME user/profile the request names | `200`, the account's current state (no duplicate link, no duplicate user) |
 
 Any other case — the item is somewhere else, held by someone else, the bin
 is elsewhere, or the return request has been fulfilled rather than
@@ -287,86 +286,6 @@ Recovery needs no separate action: once the token bucket refills, the very
 next request succeeds. Every value above is defaulted, so an existing
 deployment keeps booting with rate limiting already active and no new
 configuration required.
-
-## Federation
-
-Nestova's own reconciliation surface (NSTR-101): reading Nestorage's
-existing accounts to propose matches, then linking a member to one of them
-or provisioning a new one. Both endpoints require the **account API key**
-— the inverse of every create endpoint above, which instead reject it —
-because this is Nestova's own integration reconciling accounts, never a
-member acting through their own device.
-
-| Method & path | Query/body | Delegates to |
-|---|---|---|
-| `GET /api/v1/federation/accounts` | `?household={id}` | `FederationService.Accounts` |
-| `PUT /api/v1/federation/members/{member_id}` | `{"household_id", "link"\|"account"}` | `FederationService.Link` / `FederationService.Upsert` |
-
-### The household binding
-
-Nestorage records the first household id it ever sees on either federation
-endpoint as its own single, permanent binding — there is no
-`PROVIDER_HOUSEHOLD_ID` configuration value; the binding lives in the
-`federation_binding` table, not `config.ProviderConfig`, so a value an
-incoming call establishes is never something an operator has to set before
-first boot. Every later call re-checks it: an equal household proceeds, a
-different one is refused with `403 household_mismatch` — refused, never
-merged. This is a hard security boundary: since either endpoint accepts the
-account API key, a compromised or misconfigured key must not be able to
-attach a second household's member data onto this install.
-
-### Reading accounts
-
-`GET /api/v1/federation/accounts?household={id}` answers an array whose
-entries carry exactly `id`, `display_name`, `email`, `active`, and
-`member_id` (`null` when unlinked) — enough for reconciliation to propose
-matches, and nothing else; the response has no password-hash field, by
-construction. Deliberately unpaginated: household scale bounds it, the same
-rationale `Location.bin_count` documents for its own in-memory counts.
-
-### Linking or provisioning a member
-
-`PUT /api/v1/federation/members/{member_id}` is the one write path an
-initial reconciliation pass and every later re-push share — `PUT`, keyed by
-the provider's own member id, is what makes a repeated call an idempotent
-replay rather than a duplicate. The body carries `household_id` plus
-**exactly one** of:
-
-```json
-{"household_id": "...", "link": {"user_id": "..."}}
-```
-
-```json
-{"household_id": "...", "account": {"display_name": "Maya", "email": "maya@example.com", "role": "member", "active": true}}
-```
-
-Both, or neither, answers `422 invalid_request`.
-
-- **`link`** pairs `member_id` with an already-existing Nestorage user.
-  This never touches the linked user's row: its `id`, role, color, and
-  every bin/item/photo/history event already attributed to it stay exactly
-  as they were. Linking to the SAME user twice succeeds unchanged
-  (idempotent); linking to a DIFFERENT user than an existing link answers
-  `409 conflict`.
-- **`account`** creates a federated user when `member_id` has no link yet
-  (a fresh user with a Nestorage-assigned owner color and **no usable
-  local password** — its stored hash is empty, which the password verifier
-  can never match), or updates the already-linked user's display name,
-  email, role, and active flag when it does. Demoting or deactivating the
-  household's only active admin still answers `409 conflict`
-  (`last_active_admin`'s own rule, unchanged by federation).
-
-Every response is the same account shape `GET .../accounts` rows use.
-`201` means a user or link was newly created this call; `200` means an
-idempotent replay or a profile update on an already-linked user.
-
-### Rejected principals
-
-Both federation endpoints answer `403 forbidden` for anything other than
-the account API key — a device token (a real member's own credential)
-included, even though it is accepted almost everywhere else in this API.
-Federation is Nestova's own integration acting on the household's behalf;
-it is never something a member's own device should be able to drive.
 
 ## Metrics
 

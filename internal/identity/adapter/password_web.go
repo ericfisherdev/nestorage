@@ -11,19 +11,9 @@ import (
 	"github.com/ericfisherdev/nestcore/render"
 
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
-	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 	"github.com/ericfisherdev/nestorage/web/components"
 )
-
-// federatedPasswordChangeMessage is the one-line message a federated
-// household's POST /settings/password is refused with, before the form is
-// parsed or the service is touched — mirrors
-// federatedLoginDisabledMessage's identical fail-closed rationale (web.go):
-// a federated install owns none of its members' passwords, so a
-// hand-constructed request must be refused outright, never partially
-// applied.
-const federatedPasswordChangeMessage = "password changes are managed by your household's identity provider"
 
 // currentPasswordIncorrectMessage is the 422 message a wrong current
 // password (or, indistinguishably, an inactive user — see
@@ -59,29 +49,18 @@ type passwordChanger interface {
 // screen: GET /settings/password and POST /settings/password, reachable by
 // any signed-in household member (not only an admin) — the same
 // self-service shape DeviceTokenWebHandlers already has for the devices
-// screen. mode and providerURL are the federation seam the composition
-// root injects (NSTR-100's cfg.Provider.Mode()/BaseURL, resolved once and
-// passed in unchanged): this handler consults the seam, it never reads
-// configuration itself. In federated mode the household owns none of its
-// members' passwords, so both routes render/refuse in favor of a notice
-// linking to the identity provider instead.
+// screen.
 type PasswordWebHandlers struct {
-	passwords   passwordChanger
-	sm          *scs.SessionManager
-	layout      requestLayoutFunc
-	mode        config.FederationMode
-	providerURL string
-	logger      *slog.Logger
+	passwords passwordChanger
+	sm        *scs.SessionManager
+	layout    requestLayoutFunc
+	logger    *slog.Logger
 }
 
-// NewPasswordWebHandlers constructs PasswordWebHandlers. passwords, sm,
-// layout, and logger are required; a missing one panics at construction
-// time, matching every other WebHandlers constructor in this codebase.
-// providerURL is meaningful only in federated mode (mode ==
-// config.FederationModeFederated) — the composition root guarantees the two
-// travel together (config.ProviderConfig.Validate rejects any partial
-// state), so this constructor does not re-check that pairing itself.
-func NewPasswordWebHandlers(passwords passwordChanger, sm *scs.SessionManager, layout requestLayoutFunc, mode config.FederationMode, providerURL string, logger *slog.Logger) *PasswordWebHandlers {
+// NewPasswordWebHandlers constructs PasswordWebHandlers. All dependencies
+// are required; a missing one panics at construction time, matching every
+// other WebHandlers constructor in this codebase.
+func NewPasswordWebHandlers(passwords passwordChanger, sm *scs.SessionManager, layout requestLayoutFunc, logger *slog.Logger) *PasswordWebHandlers {
 	if passwords == nil {
 		panic("identity/adapter: NewPasswordWebHandlers requires a non-nil passwordChanger")
 	}
@@ -94,7 +73,7 @@ func NewPasswordWebHandlers(passwords passwordChanger, sm *scs.SessionManager, l
 	if logger == nil {
 		panic("identity/adapter: NewPasswordWebHandlers requires a non-nil logger")
 	}
-	return &PasswordWebHandlers{passwords: passwords, sm: sm, layout: layout, mode: mode, providerURL: providerURL, logger: logger}
+	return &PasswordWebHandlers{passwords: passwords, sm: sm, layout: layout, logger: logger}
 }
 
 // Routes registers the password self-service routes on mux. mux is expected
@@ -105,29 +84,17 @@ func (h *PasswordWebHandlers) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /settings/password", h.Change)
 }
 
-// Show handles GET /settings/password: standalone renders the form with a
-// fresh CSRF token; federated renders the directs-to-provider notice with no
-// form at all (AC 4).
+// Show handles GET /settings/password: renders the form with a fresh CSRF
+// token.
 func (h *PasswordWebHandlers) Show(w http.ResponseWriter, r *http.Request) {
-	if h.mode == config.FederationModeFederated {
-		h.renderFederatedNotice(w, r, http.StatusOK)
-		return
-	}
 	h.renderForm(w, r, http.StatusOK, "", "")
 }
 
-// Change handles POST /settings/password. In federated mode it refuses with
-// 403 before parsing the form, verifying CSRF, or touching the service at
-// all (AC 5) — a hand-constructed request can never be partially applied.
-// Otherwise: verifyRequest's ParseForm+CSRF shape (mirrors
-// UsersWebHandlers.verifyRequest, users_web.go), the session user (guarded
-// 401 like DeviceTokenWebHandlers.Revoke), the confirmation match, then
-// ChangeOwn.
+// Change handles POST /settings/password: verifyRequest's ParseForm+CSRF
+// shape (mirrors UsersWebHandlers.verifyRequest, users_web.go), the session
+// user (guarded 401 like DeviceTokenWebHandlers.Revoke), the confirmation
+// match, then ChangeOwn.
 func (h *PasswordWebHandlers) Change(w http.ResponseWriter, r *http.Request) {
-	if h.mode == config.FederationModeFederated {
-		http.Error(w, federatedPasswordChangeMessage, http.StatusForbidden)
-		return
-	}
 	if !h.verifyRequest(w, r) {
 		return
 	}
@@ -215,12 +182,6 @@ func (h *PasswordWebHandlers) renderForm(w http.ResponseWriter, r *http.Request,
 		Success:   successMsg,
 	}
 	h.renderPage(w, r, status, view)
-}
-
-// renderFederatedNotice renders the federated directs-to-provider notice in
-// place of the form, at status — 200 for the GET page.
-func (h *PasswordWebHandlers) renderFederatedNotice(w http.ResponseWriter, r *http.Request, status int) {
-	h.renderPage(w, r, status, components.PasswordSettingsView{Federated: true, ProviderURL: h.providerURL})
 }
 
 // renderPage renders view at status: the bare fragment for an HX-Request,

@@ -42,18 +42,3 @@ func TestPasswordSettings_Standalone_ShowsSuccess(t *testing.T) {
 		t.Errorf("PasswordSettings() missing the success message: %s", out)
 	}
 }
-
-// TestPasswordSettings_Federated_NoFormLinksProvider is the automated
-// equivalent of this ticket's "in federated mode the interface does not
-// present a change-password form" criterion, at the template layer.
-func TestPasswordSettings_Federated_NoFormLinksProvider(t *testing.T) {
-	view := components.PasswordSettingsView{Federated: true, ProviderURL: "https://provider.example.com"}
-	out := renderString(t, components.PasswordSettings(view))
-
-	if strings.Contains(out, `name="current_password"`) {
-		t.Errorf("PasswordSettings(federated) must not render the password form: %s", out)
-	}
-	if !strings.Contains(out, `href="https://provider.example.com"`) {
-		t.Errorf("PasswordSettings(federated) missing the provider link: %s", out)
-	}
-}
