@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -193,7 +194,7 @@ func TestNew_AppliesCookieSettings(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	sm := session.New(pool, cfg)
+	sm := session.New(pool, cfg, slog.New(slog.DiscardHandler))
 
 	if !sm.Cookie.HttpOnly {
 		t.Error("Cookie.HttpOnly = false, want true")

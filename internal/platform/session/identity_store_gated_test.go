@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ import (
 func newGatedSessionManager(t *testing.T) *scs.SessionManager {
 	t.Helper()
 	pool := dbtest.Harness.NewIsolatedPool(t, "session")
-	return session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour})
+	return session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour}, slog.New(slog.DiscardHandler))
 }
 
 // sessionRoundTripHarness drives a real HTTP round trip with a cookie jar

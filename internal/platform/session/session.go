@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 
 	"github.com/alexedwards/scs/v2"
@@ -34,13 +35,15 @@ const csrfTokenLen = 32
 // New constructs an scs.SessionManager backed by Postgres, sharing the pool
 // the rest of the app uses. The store targets identity.sessions (NSTR-116),
 // the shared identity schema's session table — not an app-schema table; see
-// identity_store.go and the 00017_identity_schema migration. Cookie settings
-// are derived from cfg: Secure follows the resolved SESSION_COOKIE_SECURE
-// policy (auto → prod-only, or forced true/false), Lifetime from
-// SESSION_LIFETIME.
-func New(pool *pgxpool.Pool, cfg corecfg.SessionConfig) *scs.SessionManager {
+// identity_store.go and the 00017_identity_schema migration. logger is
+// required (panics on nil, matching every other constructor in this
+// codebase) — the store's background cleanup goroutine has no other way to
+// surface a failing purge. Cookie settings are derived from cfg: Secure
+// follows the resolved SESSION_COOKIE_SECURE policy (auto → prod-only, or
+// forced true/false), Lifetime from SESSION_LIFETIME.
+func New(pool *pgxpool.Pool, cfg corecfg.SessionConfig, logger *slog.Logger) *scs.SessionManager {
 	sm := scs.New()
-	sm.Store = newIdentityStore(pool)
+	sm.Store = newIdentityStore(pool, logger)
 	sm.Lifetime = cfg.Lifetime
 	// Expire idle sessions at half the absolute lifetime: active users stay
 	// signed in (each request refreshes idle time) while an abandoned

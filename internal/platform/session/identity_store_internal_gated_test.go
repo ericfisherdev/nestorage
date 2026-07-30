@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 // gated_test.go's own round-trip tests exercise those instead).
 func TestIdentityStore_NonCtxDelegatesMatchCtx(t *testing.T) {
 	pool := dbtest.Harness.NewIsolatedPool(t, "session")
-	store := newIdentityStore(pool)
+	store := newIdentityStore(pool, slog.New(slog.DiscardHandler))
 	defer store.StopCleanup()
 
 	const token = "test-token-noctx"
@@ -42,7 +43,7 @@ func TestIdentityStore_NonCtxDelegatesMatchCtx(t *testing.T) {
 // hit whose caller must separately check expiry.
 func TestIdentityStore_FindCtx_ExpiredReportsNotFound(t *testing.T) {
 	pool := dbtest.Harness.NewIsolatedPool(t, "session")
-	store := newIdentityStore(pool)
+	store := newIdentityStore(pool, slog.New(slog.DiscardHandler))
 	defer store.StopCleanup()
 
 	const token = "expired-token"
@@ -63,7 +64,7 @@ func TestIdentityStore_FindCtx_ExpiredReportsNotFound(t *testing.T) {
 // compiles.
 func TestIdentityStore_StartCleanup_PurgesExpiredRows(t *testing.T) {
 	pool := dbtest.Harness.NewIsolatedPool(t, "session")
-	store := &identityStore{pool: pool}
+	store := &identityStore{pool: pool, logger: slog.New(slog.DiscardHandler)}
 
 	const token = "cleanup-token"
 	if err := store.CommitCtx(t.Context(), token, []byte("x"), time.Now().Add(-time.Hour)); err != nil {
@@ -76,16 +77,27 @@ func TestIdentityStore_StartCleanup_PurgesExpiredRows(t *testing.T) {
 		store.startCleanup(ctx, 20*time.Millisecond)
 		close(done)
 	}()
-	time.Sleep(150 * time.Millisecond)
-	cancel()
-	<-done
+	defer func() {
+		cancel()
+		<-done
+	}()
 
-	var count int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM identity.sessions WHERE token = $1", token).Scan(&count); err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("row count after the cleanup ticker fired = %d, want 0 (expired row purged)", count)
+	// Poll for the purge rather than sleeping a fixed margin against the
+	// ticker interval, so the test fails only if the row is never purged —
+	// not if the goroutine scheduler is merely slower than expected.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var count int
+		if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM identity.sessions WHERE token = $1", token).Scan(&count); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if count == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("row count after waiting for the cleanup ticker = %d, want 0 (expired row purged)", count)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -93,6 +105,6 @@ func TestIdentityStore_StartCleanup_PurgesExpiredRows(t *testing.T) {
 // zero/negative interval returns immediately rather than starting a ticker
 // that would panic (time.NewTicker rejects a non-positive duration).
 func TestIdentityStore_StartCleanup_NonPositiveIntervalIsNoOp(t *testing.T) {
-	store := &identityStore{}
+	store := &identityStore{logger: slog.New(slog.DiscardHandler)}
 	store.startCleanup(t.Context(), 0)
 }

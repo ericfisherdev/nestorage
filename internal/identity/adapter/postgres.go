@@ -16,20 +16,27 @@ import (
 const (
 	// uniqueViolation is the PostgreSQL SQLSTATE for a unique-constraint violation.
 	uniqueViolation = "23505"
-	// identityMemberEmailUnique is the unique constraint on
-	// identity.member.email, named explicitly in the 00017_identity_schema
-	// migration so it can be matched here instead of parsing an error
-	// message.
-	identityMemberEmailUnique = "identity_member_email_unique"
+	// memberEmailUnique is the unique constraint on identity.member.email,
+	// named explicitly in the 00017_identity_schema migration — matching
+	// Nestova's own member_email_unique (its 00002_auth.sql) — so it can be
+	// matched here instead of parsing an error message, and keeps matching
+	// once nestcore owns the identity schema.
+	memberEmailUnique = "member_email_unique"
 )
 
 // userColumns is shared by every read query, keeping the column list and
 // scanUser in lockstep. color lives on Nestorage's own profile table
-// (NSTR-116), joined here so domain.User still carries it.
+// (NSTR-116); the join is LEFT, not INNER, so a member created by another
+// app against the shared identity schema (e.g. Nestova, adopting an existing
+// household per resolveHouseholdForSetup's own doc) stays readable — and
+// loginable — with the default color rather than disappearing from every
+// read while Count/HasAnyUser (which query identity.member directly, no
+// join) still count it.
 const userColumns = `
-	SELECT m.id, m.household_id, m.display_name, m.email, m.password_hash, m.role, p.color, m.active, m.created_at, m.updated_at
+	SELECT m.id, m.household_id, m.display_name, m.email, m.password_hash, m.role,
+	       COALESCE(p.color, 'indigo') AS color, m.active, m.created_at, m.updated_at
 	  FROM identity.member m
-	  JOIN profile p ON p.member_id = m.id`
+	  LEFT JOIN profile p ON p.member_id = m.id`
 
 // UserRepository is the pgx-backed domain.UserRepository. UUIDs are passed
 // and scanned as text, matching the other Nest adapters, so no pgx UUID
@@ -183,7 +190,14 @@ func (r *UserRepository) Update(ctx context.Context, u *domain.User) error {
 		return fmt.Errorf("update user: %w", err)
 	}
 
-	const profileQ = `UPDATE profile SET color = $2 WHERE member_id = $1`
+	// Upsert, not a bare UPDATE: a plain UPDATE matching no row (a member with
+	// no profile row — see userColumns' own LEFT JOIN doc) returns a nil
+	// error, which would report a successful color change that persisted
+	// nothing.
+	const profileQ = `
+		INSERT INTO profile (member_id, color)
+		VALUES ($1, $2)
+		ON CONFLICT (member_id) DO UPDATE SET color = EXCLUDED.color`
 	if _, err := tx.Exec(ctx, profileQ, u.ID.String(), u.Color.String()); err != nil {
 		return fmt.Errorf("update user: update profile: %w", err)
 	}
@@ -359,12 +373,12 @@ func (r *UserRepository) HasAnyUser(ctx context.Context) (bool, error) {
 }
 
 // isDuplicateEmail reports whether err is a unique-violation on
-// identity_member_email_unique specifically — other unique violations (e.g.
-// the primary key) are left to surface as a wrapped error rather than
+// member_email_unique specifically — other unique violations (e.g. the
+// primary key) are left to surface as a wrapped error rather than
 // misreported as a duplicate email.
 func isDuplicateEmail(err error) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == identityMemberEmailUnique
+	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == memberEmailUnique
 }
 
 // scanner abstracts pgx.Row and pgx.Rows for the shared scan helper.

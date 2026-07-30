@@ -21,8 +21,19 @@ import (
 // unique across the repo's gated test packages.
 func newTestRepo(t *testing.T) (*adapter.UserRepository, domain.HouseholdID) {
 	t.Helper()
+	repo, pool, householdID := newTestRepoWithPool(t)
+	_ = pool
+	return repo, householdID
+}
+
+// newTestRepoWithPool is newTestRepo plus the pool itself, for tests that
+// need to seed rows outside the repository's own writes (e.g. an
+// identity.member row with no profile row, to prove the LEFT JOIN/upsert
+// fixes below).
+func newTestRepoWithPool(t *testing.T) (*adapter.UserRepository, *pgxpool.Pool, domain.HouseholdID) {
+	t.Helper()
 	pool := dbtest.Harness.NewIsolatedPool(t, "identity")
-	return adapter.NewUserRepository(pool), seedHousehold(t, pool)
+	return adapter.NewUserRepository(pool), pool, seedHousehold(t, pool)
 }
 
 // seedHousehold inserts a minimal identity.household row directly — every
@@ -130,6 +141,33 @@ func TestFindByEmailNotFound(t *testing.T) {
 	}
 }
 
+// TestFindByEmail_NoProfileRowStillReadableWithDefaultColor proves
+// userColumns' LEFT JOIN: an identity.member row with no matching profile
+// row (e.g. a member another app created directly against the shared
+// identity schema) must still be findable and loginable, defaulting to
+// ColorIndigo — not silently invisible to FindByEmail/FindByID/List while
+// Count/HasAnyUser (which query identity.member directly) still count it.
+func TestFindByEmail_NoProfileRowStillReadableWithDefaultColor(t *testing.T) {
+	_, pool, householdID := newTestRepoWithPool(t)
+	repo := adapter.NewUserRepository(pool)
+
+	memberID := domain.NewUserID()
+	const memberQ = `
+		INSERT INTO identity.member (id, household_id, display_name, email, password_hash, role)
+		VALUES ($1, $2, 'No Profile', 'no-profile@example.com', 'x', 'adult')`
+	if _, err := pool.Exec(testCtx(t), memberQ, memberID.String(), householdID.String()); err != nil {
+		t.Fatalf("seed member without a profile row: %v", err)
+	}
+
+	got, err := repo.FindByEmail(testCtx(t), "no-profile@example.com")
+	if err != nil {
+		t.Fatalf("FindByEmail(no profile row) = %v, want no error", err)
+	}
+	if got.Color != domain.ColorIndigo {
+		t.Errorf("FindByEmail(no profile row).Color = %v, want the default %v", got.Color, domain.ColorIndigo)
+	}
+}
+
 func TestCreateDuplicateEmailRejectedCaseInsensitively(t *testing.T) {
 	repo, household := newTestRepo(t)
 	seedUser(t, repo, household, "maya@example.com")
@@ -185,6 +223,41 @@ func TestUpdate(t *testing.T) {
 	if got.DisplayName != "Maya Fisher" || got.Email != "maya.fisher@example.com" ||
 		got.Role != domain.RoleOwner || got.Color != domain.ColorTeal {
 		t.Errorf("FindByID after Update = %+v, want the updated fields", got)
+	}
+}
+
+// TestUpdate_NoProfileRowUpserts proves Update's profile write is an upsert,
+// not a bare UPDATE: a member with no existing profile row must still get
+// its color change persisted, not silently no-op it.
+func TestUpdate_NoProfileRowUpserts(t *testing.T) {
+	_, pool, householdID := newTestRepoWithPool(t)
+	repo := adapter.NewUserRepository(pool)
+
+	memberID := domain.NewUserID()
+	const memberQ = `
+		INSERT INTO identity.member (id, household_id, display_name, email, password_hash, role)
+		VALUES ($1, $2, 'No Profile', 'no-profile@example.com', 'x', 'adult')`
+	if _, err := pool.Exec(testCtx(t), memberQ, memberID.String(), householdID.String()); err != nil {
+		t.Fatalf("seed member without a profile row: %v", err)
+	}
+
+	u := &domain.User{
+		ID:          memberID,
+		DisplayName: "No Profile",
+		Email:       "no-profile@example.com",
+		Role:        domain.RoleAdult,
+		Color:       domain.ColorTeal,
+	}
+	if err := repo.Update(testCtx(t), u); err != nil {
+		t.Fatalf("Update(no profile row): %v", err)
+	}
+
+	got, err := repo.FindByID(testCtx(t), memberID)
+	if err != nil {
+		t.Fatalf("FindByID after Update: %v", err)
+	}
+	if got.Color != domain.ColorTeal {
+		t.Errorf("Color after Update(no profile row) = %v, want %v (the change must persist, not silently no-op)", got.Color, domain.ColorTeal)
 	}
 }
 
