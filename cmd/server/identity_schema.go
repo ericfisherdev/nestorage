@@ -35,12 +35,9 @@ const defaultIdentitySchemaName = "identity"
 //     database that was supposed to already be the shared one, and it is
 //     not — readiness fails with an actionable error naming the schema and
 //     host, never the DSN itself (which may carry credentials).
-//   - identity present, at a version older than this binary's embedded
-//     migrations: apply the pending ones, the normal upgrade path.
-//   - identity present, at a version NEWER than this binary's embedded
-//     migrations (this binary was built against an older nestcore): refuse
-//     to start rather than silently running against a schema shape it does
-//     not fully understand.
+//   - identity present, at any version: apply whatever pending migrations
+//     this binary embeds. A schema NEWER than this binary is deliberately
+//     allowed rather than refused — see upgradeIdentity's own doc for why.
 //
 // Whether Nestorage has "migrated its own schema before" is read from its
 // OWN goose version table (via ownmigrate's Runner), not from a
@@ -72,7 +69,7 @@ func ensureSharedIdentitySchema(ctx context.Context, dsn string, schemas corecfg
 	if !identityExists {
 		return bootstrapOrRefuseMissingIdentity(ctx, dsn, schemas, identityRunner)
 	}
-	return upgradeOrRefuseNewerIdentity(ctx, dsn, identityRunner)
+	return upgradeIdentity(ctx, dsn, identityRunner)
 }
 
 // bootstrapOrRefuseMissingIdentity handles the two "identity schema absent"
@@ -99,30 +96,19 @@ func bootstrapOrRefuseMissingIdentity(ctx context.Context, dsn string, schemas c
 	return nil
 }
 
-// upgradeOrRefuseNewerIdentity handles the two "identity schema present"
-// outcomes: apply pending migrations when this binary is at or ahead of the
-// applied version, or refuse to start when the schema is newer than
-// anything this binary's embedded migrations know about.
-func upgradeOrRefuseNewerIdentity(ctx context.Context, dsn string, identityRunner *ncmigrate.Runner) error {
-	statuses, err := identityRunner.Status(ctx, dsn)
-	if err != nil {
-		return fmt.Errorf("read identity schema status: %w", err)
-	}
-	var maxKnown int64
-	for _, s := range statuses {
-		if s.Version > maxKnown {
-			maxKnown = s.Version
-		}
-	}
-
-	applied, err := identityRunner.AppliedVersion(ctx, dsn)
-	if err != nil {
-		return fmt.Errorf("read identity schema version: %w", err)
-	}
-	if applied > maxKnown {
-		return fmt.Errorf("identity schema is at version %d, newer than this binary's %d; update nestorage", applied, maxKnown)
-	}
-
+// upgradeIdentity applies whatever identity migrations this binary embeds
+// and the database has not applied yet. A schema NEWER than this binary is
+// deliberately allowed rather than refused: identity/migrate's additive-only
+// discipline guarantees nothing an older binary depends on is ever removed
+// or changed, and refusing would make a Nestova-first deploy an outage for
+// every Nestorage instance still built against the older nestcore — see
+// identity/migrate's own package doc ("whichever app deploys first migrates
+// identity forward, and the other app... must keep working against the
+// newer one") and RequireVersion's doc ("a newer-than-built schema is
+// explicitly allowed"). Up is a no-op when nothing is pending, so this also
+// covers the already-current case; probing the version first would only add
+// contention against identityRunner's session lock for no behavioral gain.
+func upgradeIdentity(ctx context.Context, dsn string, identityRunner *ncmigrate.Runner) error {
 	if err := identityRunner.Up(ctx, dsn); err != nil {
 		return fmt.Errorf("apply pending identity migrations: %w", err)
 	}
