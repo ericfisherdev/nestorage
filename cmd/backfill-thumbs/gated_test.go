@@ -53,11 +53,16 @@ func TestRun_BackfillsAgainstRealDatabase(t *testing.T) {
 	items := storageadapter.NewItemRepository(pool)
 	photos := mediaadapter.NewPhotoRepository(pool)
 
+	householdID := identity.NewHouseholdID()
+	const householdQ = `INSERT INTO identity.household (id, name) VALUES ($1, 'Test Household')`
+	if _, err := pool.Exec(ctx, householdQ, householdID.String()); err != nil {
+		t.Fatalf("seed household: %v", err)
+	}
 	uploader := &identity.User{
-		ID: identity.NewUserID(), DisplayName: "Backfill Test",
+		ID: identity.NewUserID(), HouseholdID: householdID, DisplayName: "Backfill Test",
 		Email:        "backfill-" + identity.NewUserID().String() + "@example.com",
 		PasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
-		Role:         identity.RoleMember, Color: identity.ColorIndigo,
+		Role:         identity.RoleAdult, Color: identity.ColorIndigo,
 	}
 	if err := users.Create(ctx, uploader); err != nil {
 		t.Fatalf("seed user: %v", err)

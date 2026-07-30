@@ -92,7 +92,7 @@ func TestNewChain_NilDependenciesPanic(t *testing.T) {
 }
 
 func TestChain_NoAuthorizationHeader_RunsSessionResolver(t *testing.T) {
-	want := domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel")
+	want := domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Daniel")
 	sess := &stubResolver{principal: want, found: true}
 	deviceToken := &stubResolver{}
 	apiKey := &stubResolver{}
@@ -110,7 +110,7 @@ func TestChain_NoAuthorizationHeader_RunsSessionResolver(t *testing.T) {
 }
 
 func TestChain_DeviceTokenBearer_DispatchesToDeviceTokenResolver(t *testing.T) {
-	want := domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Android device")
+	want := domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Android device")
 	sess := &stubResolver{}
 	deviceToken := &stubResolver{principal: want, found: true}
 	apiKey := &stubResolver{}
@@ -129,7 +129,7 @@ func TestChain_DeviceTokenBearer_DispatchesToDeviceTokenResolver(t *testing.T) {
 
 func TestChain_APIKeyBearer_DispatchesToAPIKeyResolver_BearerBeatsSessionCookie(t *testing.T) {
 	want := domain.NewIntegrationPrincipal("Nestova")
-	sess := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdmin, "Maya"), found: true}
+	sess := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleOwner, "Maya"), found: true}
 	deviceToken := &stubResolver{}
 	apiKey := &stubResolver{principal: want, found: true}
 	chain := adapter.NewChain(sess, deviceToken, apiKey)
@@ -252,7 +252,7 @@ func TestSessionResolver_NoSession_IsNotFound(t *testing.T) {
 func TestSessionResolver_ValidSession_ResolvesUserPrincipal(t *testing.T) {
 	userID := domain.NewUserID()
 	repo := &fakeCurrentUserRepo{users: map[domain.UserID]*domain.User{
-		userID: {ID: userID, DisplayName: "Maya", Role: domain.RoleAdmin, Active: true},
+		userID: {ID: userID, DisplayName: "Maya", Role: domain.RoleOwner, Active: true},
 	}}
 	sm := scs.New()
 	resolver := adapter.NewSessionResolver(sm, repo, testLogger())
@@ -268,7 +268,7 @@ func TestSessionResolver_ValidSession_ResolvesUserPrincipal(t *testing.T) {
 	if !ok || err != nil {
 		t.Fatalf("Resolve() = (%+v, %v, %v), want ok", p, ok, err)
 	}
-	want := domain.NewUserPrincipal(userID, domain.RoleAdmin, "Maya")
+	want := domain.NewUserPrincipal(userID, domain.RoleOwner, "Maya")
 	if p != want {
 		t.Errorf("Resolve() principal = %+v, want %+v", p, want)
 	}
@@ -341,7 +341,7 @@ func TestDeviceTokenResolver_WrongPrefix_IsNotFound(t *testing.T) {
 
 func TestDeviceTokenResolver_ValidToken_ResolvesUserPrincipal(t *testing.T) {
 	userID := domain.NewUserID()
-	authn := &fakeDeviceTokenAuthenticator{user: &domain.User{ID: userID, DisplayName: "Android device", Role: domain.RoleMember, Active: true}}
+	authn := &fakeDeviceTokenAuthenticator{user: &domain.User{ID: userID, DisplayName: "Android device", Role: domain.RoleAdult, Active: true}}
 	resolver := adapter.NewDeviceTokenResolver(authn)
 	r := newBearerRequest(t, domain.DeviceTokenPrefix+"aaaa")
 
@@ -349,7 +349,7 @@ func TestDeviceTokenResolver_ValidToken_ResolvesUserPrincipal(t *testing.T) {
 	if !ok || err != nil {
 		t.Fatalf("Resolve() = (%+v, %v, %v), want ok", p, ok, err)
 	}
-	want := domain.NewUserPrincipal(userID, domain.RoleMember, "Android device")
+	want := domain.NewUserPrincipal(userID, domain.RoleAdult, "Android device")
 	if p != want {
 		t.Errorf("Resolve() principal = %+v, want %+v", p, want)
 	}

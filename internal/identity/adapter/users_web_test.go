@@ -185,7 +185,7 @@ func TestNewUsersWebHandlers_NilDependenciesPanic(t *testing.T) {
 }
 
 func TestUsersWebHandlers_List_FullNavigation_WrapsInLayout(t *testing.T) {
-	admin := &fakeAdminService{users: []domain.User{{ID: domain.NewUserID(), DisplayName: "Maya", Email: "maya@example.com", Role: domain.RoleMember, Active: true}}}
+	admin := &fakeAdminService{users: []domain.User{{ID: domain.NewUserID(), DisplayName: "Maya", Email: "maya@example.com", Role: domain.RoleAdult, Active: true}}}
 	h := newUsersWebHarness(t, admin)
 
 	resp, err := h.client.Get(h.server.URL + "/admin/users")
@@ -234,7 +234,7 @@ func TestUsersWebHandlers_Create_MissingCSRF_Forbidden(t *testing.T) {
 	admin := &fakeAdminService{}
 	h := newUsersWebHarness(t, admin)
 
-	resp, _ := h.postForm(t, "/admin/users", newUserForm("", "Maya", "maya@example.com", "correct-horse-battery-staple", "member", "indigo"), false)
+	resp, _ := h.postForm(t, "/admin/users", newUserForm("", "Maya", "maya@example.com", "correct-horse-battery-staple", "adult", "indigo"), false)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -248,7 +248,7 @@ func TestUsersWebHandlers_Create_PasswordMismatch_UnprocessableEntity(t *testing
 	h := newUsersWebHarness(t, admin)
 	csrf := h.getCSRF(t)
 
-	form := newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "member", "indigo")
+	form := newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "adult", "indigo")
 	form.Set("password_confirmation", "does-not-match")
 	resp, body := h.postForm(t, "/admin/users", form, false)
 
@@ -268,7 +268,7 @@ func TestUsersWebHandlers_Create_Success_FullNavigation_Redirects(t *testing.T) 
 	h := newUsersWebHarness(t, admin)
 	csrf := h.getCSRF(t)
 
-	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "member", "indigo"), false)
+	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "adult", "indigo"), false)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303:\n%s", resp.StatusCode, body)
 	}
@@ -285,7 +285,7 @@ func TestUsersWebHandlers_Create_Success_HTMX_RerendersFragment(t *testing.T) {
 	h := newUsersWebHarness(t, admin)
 	csrf := h.getCSRF(t)
 
-	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "member", "indigo"), true)
+	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "adult", "indigo"), true)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200:\n%s", resp.StatusCode, body)
 	}
@@ -303,13 +303,13 @@ func TestUsersWebHandlers_ChangeRole_LastActiveAdmin_MapsTo409(t *testing.T) {
 	csrf := h.getCSRF(t)
 
 	path := "/admin/users/" + domain.NewUserID().String() + "/role"
-	resp, body := h.postForm(t, path, url.Values{"csrf_token": {csrf}, "role": {"member"}}, false)
+	resp, body := h.postForm(t, path, url.Values{"csrf_token": {csrf}, "role": {"adult"}}, false)
 
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status = %d, want 409:\n%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, "last active admin") {
-		t.Errorf("body missing the inline last-active-admin message:\n%s", body)
+	if !strings.Contains(body, "last active owner") {
+		t.Errorf("body missing the inline last-active-owner message:\n%s", body)
 	}
 }
 
@@ -391,7 +391,7 @@ func TestUsersWebHandlers_ChangeRole_MalformedID_BadRequest(t *testing.T) {
 	admin := &fakeAdminService{}
 	h := newUsersWebHarness(t, admin)
 
-	resp, body := h.postForm(t, "/admin/users/not-a-uuid/role", url.Values{"role": {"admin"}}, false)
+	resp, body := h.postForm(t, "/admin/users/not-a-uuid/role", url.Values{"role": {"owner"}}, false)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400:\n%s", resp.StatusCode, body)
 	}
@@ -402,7 +402,7 @@ func TestUsersWebHandlers_Create_DuplicateEmail_MapsTo422(t *testing.T) {
 	h := newUsersWebHarness(t, admin)
 	csrf := h.getCSRF(t)
 
-	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "member", "indigo"), false)
+	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "adult", "indigo"), false)
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422:\n%s", resp.StatusCode, body)
 	}
@@ -416,7 +416,7 @@ func TestUsersWebHandlers_Create_PasswordTooShort_MapsTo422(t *testing.T) {
 	h := newUsersWebHarness(t, admin)
 	csrf := h.getCSRF(t)
 
-	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "short-but-matching", "member", "indigo"), false)
+	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "short-but-matching", "adult", "indigo"), false)
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422:\n%s", resp.StatusCode, body)
 	}
@@ -433,7 +433,7 @@ func TestUsersWebHandlers_Create_UnrecognizedError_MapsTo500(t *testing.T) {
 	h := newUsersWebHarness(t, admin)
 	csrf := h.getCSRF(t)
 
-	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "member", "indigo"), false)
+	resp, body := h.postForm(t, "/admin/users", newUserForm(csrf, "Maya", "maya@example.com", "correct-horse-battery-staple", "adult", "indigo"), false)
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500:\n%s", resp.StatusCode, body)
 	}

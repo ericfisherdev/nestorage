@@ -2,28 +2,35 @@ package domain
 
 import "fmt"
 
-// Role is a user's role within the identity context. Stored as text,
-// validated here.
+// Role is a member's role within the identity context: the unified
+// owner/adult/child vocabulary shared with Nestova (epic NSTR-112) rather
+// than an app-owned admin/member vocabulary. Stored as text, validated here.
 type Role string
 
-// User roles.
+// The unified household roles. Apps own no roles of their own: Nestorage
+// derives admin-versus-member from these, never the reverse — owner is
+// admin, adult and child are member-level (see IsAdmin). child is treated
+// exactly as member-level for now; any tighter restriction is future work,
+// not designed here.
 const (
-	RoleAdmin  Role = "admin"
-	RoleMember Role = "member"
+	RoleOwner Role = "owner"
+	RoleAdult Role = "adult"
+	RoleChild Role = "child"
 )
 
 // Valid reports whether r is a known role.
 func (r Role) Valid() bool {
 	switch r {
-	case RoleAdmin, RoleMember:
+	case RoleOwner, RoleAdult, RoleChild:
 		return true
 	default:
 		return false
 	}
 }
 
-// IsAdmin reports whether r carries administrative privileges.
-func (r Role) IsAdmin() bool { return r == RoleAdmin }
+// IsAdmin reports whether r carries administrative privileges: only
+// RoleOwner does. adult and child are both member-level.
+func (r Role) IsAdmin() bool { return r == RoleOwner }
 
 // String returns the role's stored value.
 func (r Role) String() string { return string(r) }

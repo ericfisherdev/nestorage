@@ -90,7 +90,7 @@ func (t *DeviceToken) Active() bool { return t.RevokedAt == nil }
 //
 // Error contracts:
 //   - Create returns a wrapped error if the user id is unknown (an
-//     app_user foreign-key violation); TokenHash collisions are
+//     identity.member foreign-key violation); TokenHash collisions are
 //     astronomically unlikely (256 bits of crypto/rand) but are still
 //     surfaced rather than silently overwritten.
 //   - GetByTokenHash returns the token regardless of revocation state, so

@@ -15,12 +15,13 @@ import (
 // deviceTokenFixture wires a DeviceTokenRepository and a UserRepository over
 // ONE derived database (dbtest.Harness.NewIsolatedPool must be called
 // exactly once per test — a second call resets the schema it just built,
-// wiping any data already written), so a test can seed the app_user row
-// device_token's FK requires and then exercise the repository under test.
+// wiping any data already written), so a test can seed the identity.member
+// row device_token's FK requires and then exercise the repository under test.
 type deviceTokenFixture struct {
-	pool  *pgxpool.Pool
-	repo  *adapter.DeviceTokenRepository
-	users *adapter.UserRepository
+	pool      *pgxpool.Pool
+	repo      *adapter.DeviceTokenRepository
+	users     *adapter.UserRepository
+	household domain.HouseholdID
 }
 
 // newDeviceTokenFixture derives this package's shared "identity" database —
@@ -31,16 +32,17 @@ func newDeviceTokenFixture(t *testing.T) *deviceTokenFixture {
 	t.Helper()
 	pool := dbtest.Harness.NewIsolatedPool(t, "identity")
 	return &deviceTokenFixture{
-		pool:  pool,
-		repo:  adapter.NewDeviceTokenRepository(pool),
-		users: adapter.NewUserRepository(pool),
+		pool:      pool,
+		repo:      adapter.NewDeviceTokenRepository(pool),
+		users:     adapter.NewUserRepository(pool),
+		household: seedHousehold(t, pool),
 	}
 }
 
 // seedOwner creates and returns the id of a user for device_token's FK.
 func (f *deviceTokenFixture) seedOwner(t *testing.T) domain.UserID {
 	t.Helper()
-	u := newUser("device-owner-" + domain.NewUserID().String() + "@example.com")
+	u := newUser(f.household, "device-owner-"+domain.NewUserID().String()+"@example.com")
 	if err := f.users.Create(testCtx(t), u); err != nil {
 		t.Fatalf("seed device token owner: %v", err)
 	}

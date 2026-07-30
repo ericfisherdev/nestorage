@@ -16,8 +16,8 @@ type UserRowView struct {
 	ID          string
 	DisplayName string
 	Email       string
-	// Role is the user's current role value ("admin" or "member"), used to
-	// pre-select the role dropdown's current option.
+	// Role is the user's current role value ("owner", "adult", or "child"),
+	// used to pre-select the role dropdown's current option.
 	Role   string
 	Active bool
 	Owner  OwnerView
@@ -46,7 +46,7 @@ const usersTableID = "user-list"
 
 // userRoles/userColors back the role and color <select> options, in the
 // same order every time.
-var userRoles = []string{"member", "admin"}
+var userRoles = []string{"child", "adult", "owner"}
 
 var userColors = []string{"indigo", "steel", "teal", "peri"}
 
@@ -206,7 +206,7 @@ func newUserForm(view UsersView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = roleSelect("role", "member").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = roleSelect("role", "adult").Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

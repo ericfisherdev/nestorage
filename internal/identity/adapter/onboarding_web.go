@@ -140,7 +140,7 @@ func (h *OnboardingHandlers) Submit(w http.ResponseWriter, r *http.Request) {
 		DisplayName:  displayName,
 		Email:        email,
 		PasswordHash: hash,
-		Role:         domain.RoleAdmin,
+		Role:         domain.RoleOwner,
 		Color:        domain.ColorIndigo,
 	}
 	if err := h.provisioner.CreateFirstAdmin(r.Context(), u); err != nil {

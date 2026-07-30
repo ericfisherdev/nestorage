@@ -111,4 +111,15 @@ var (
 	// ParseKind when given a string that is not a known Kind — the same
 	// naming convention as ErrInvalidRole and ErrInvalidColor.
 	ErrInvalidKind = errors.New("identity: invalid principal kind")
+
+	// ErrAmbiguousHousehold is returned by the household-attachment helper
+	// (NSTR-116) when more than one identity.household row exists: the rule
+	// is to fail loudly rather than guess which household a new member
+	// attaches to.
+	ErrAmbiguousHousehold = errors.New("identity: multiple households exist; cannot auto-attach")
+
+	// ErrNoHousehold is returned by the household-attachment helper when
+	// AdminService.Create needs an existing household (adopt-only — first-run
+	// setup already ran) but none exists.
+	ErrNoHousehold = errors.New("identity: no household exists to attach to")
 )

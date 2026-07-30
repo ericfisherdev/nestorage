@@ -22,7 +22,7 @@ func TestParseKind(t *testing.T) {
 
 func TestNewUserPrincipal(t *testing.T) {
 	id := domain.NewUserID()
-	p := domain.NewUserPrincipal(id, domain.RoleAdmin, "Maya")
+	p := domain.NewUserPrincipal(id, domain.RoleOwner, "Maya")
 
 	if p.Kind != domain.KindUser {
 		t.Errorf("Kind = %v, want KindUser", p.Kind)
@@ -30,8 +30,8 @@ func TestNewUserPrincipal(t *testing.T) {
 	if p.UserID != id {
 		t.Errorf("UserID = %v, want %v", p.UserID, id)
 	}
-	if p.Role != domain.RoleAdmin {
-		t.Errorf("Role = %v, want RoleAdmin", p.Role)
+	if p.Role != domain.RoleOwner {
+		t.Errorf("Role = %v, want RoleOwner", p.Role)
 	}
 	if p.Actor() != "Maya" {
 		t.Errorf("Actor() = %q, want %q", p.Actor(), "Maya")
@@ -44,8 +44,8 @@ func TestNewIntegrationPrincipal_HardCodesMemberRole(t *testing.T) {
 	if p.Kind != domain.KindIntegration {
 		t.Errorf("Kind = %v, want KindIntegration", p.Kind)
 	}
-	if p.Role != domain.RoleMember {
-		t.Errorf("Role = %v, want RoleMember — there must be no way to build an admin integration", p.Role)
+	if p.Role != domain.RoleAdult {
+		t.Errorf("Role = %v, want RoleAdult — there must be no way to build an admin integration", p.Role)
 	}
 	if p.UserID != (domain.UserID{}) {
 		t.Errorf("UserID = %v, want the zero UserID", p.UserID)
@@ -61,16 +61,16 @@ func TestPrincipalIsAdmin(t *testing.T) {
 		p    domain.Principal
 		want bool
 	}{
-		{"user admin", domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdmin, "Maya"), true},
-		{"user member", domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel"), false},
+		{"user admin", domain.NewUserPrincipal(domain.NewUserID(), domain.RoleOwner, "Maya"), true},
+		{"user member", domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Daniel"), false},
 		{"integration with its real (member) role", domain.NewIntegrationPrincipal("Nestova"), false},
 		{
-			// NewIntegrationPrincipal never sets RoleAdmin, so this
+			// NewIntegrationPrincipal never sets RoleOwner, so this
 			// constructs the invalid state directly to prove IsAdmin's
 			// Kind check — not just Role — is what keeps an integration
 			// out of an admin route.
 			"integration with role forced to admin",
-			domain.Principal{Kind: domain.KindIntegration, Role: domain.RoleAdmin, Label: "Nestova"},
+			domain.Principal{Kind: domain.KindIntegration, Role: domain.RoleOwner, Label: "Nestova"},
 			false,
 		},
 		{"anonymous", domain.Principal{}, false},
@@ -88,7 +88,7 @@ func TestPrincipalIsAnonymous(t *testing.T) {
 	if !(domain.Principal{}).IsAnonymous() {
 		t.Error("zero Principal.IsAnonymous() = false, want true")
 	}
-	if domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel").IsAnonymous() {
+	if domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Daniel").IsAnonymous() {
 		t.Error("a real user Principal.IsAnonymous() = true, want false")
 	}
 }

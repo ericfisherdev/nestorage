@@ -28,17 +28,28 @@ func newNotifyFixture(t *testing.T) *notifyFixture {
 	return &notifyFixture{pool: pool, repo: adapter.NewNotificationRepository(pool)}
 }
 
-// seedUser inserts a minimal app_user row directly (rather than depending
-// on the identity bounded context's own repository, which this package has
-// no reason to import) and returns its id — every notification in this
-// suite needs a real recipient_id to satisfy notification_recipient_id_fkey.
+// seedUser inserts a minimal identity.household + identity.member + profile
+// row directly (rather than depending on the identity bounded context's own
+// repository, which this package has no reason to import) and returns the
+// member's id — every notification in this suite needs a real recipient_id
+// to satisfy notification_recipient_id_fkey.
 func (f *notifyFixture) seedUser(t *testing.T) identity.UserID {
 	t.Helper()
 	id := identity.NewUserID()
-	const q = `INSERT INTO app_user (id, display_name, email, password_hash, role, color) VALUES ($1, 'Test User', $2, 'x', 'member', 'indigo')`
+	householdID := identity.NewHouseholdID()
 	email := id.String() + "@example.test"
-	if _, err := f.pool.Exec(testCtx(t), q, id.String(), email); err != nil {
+
+	const householdQ = `INSERT INTO identity.household (id, name) VALUES ($1, 'Test Household')`
+	if _, err := f.pool.Exec(testCtx(t), householdQ, householdID.String()); err != nil {
+		t.Fatalf("seed household: %v", err)
+	}
+	const memberQ = `INSERT INTO identity.member (id, household_id, display_name, email, password_hash, role) VALUES ($1, $2, 'Test User', $3, 'x', 'adult')`
+	if _, err := f.pool.Exec(testCtx(t), memberQ, id.String(), householdID.String(), email); err != nil {
 		t.Fatalf("seed user: %v", err)
+	}
+	const profileQ = `INSERT INTO profile (member_id, color) VALUES ($1, 'indigo')`
+	if _, err := f.pool.Exec(testCtx(t), profileQ, id.String()); err != nil {
+		t.Fatalf("seed user profile: %v", err)
 	}
 	return id
 }

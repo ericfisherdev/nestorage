@@ -28,7 +28,7 @@ func newBinMover(f *itemFixture) *app.BinMover {
 
 func TestBinRepository_GetForUpdate(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
@@ -51,12 +51,12 @@ func TestBinRepository_GetForUpdate_NotFound(t *testing.T) {
 
 func TestBinRepository_Move(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	from := f.seedLocation(t, creator)
 	to := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	before, err := f.bins.FindVisibleByID(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID before Move: %v", err)
@@ -91,7 +91,7 @@ func TestBinRepository_Move(t *testing.T) {
 
 func TestBinRepository_Move_NotFound(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 
 	_, err := f.bins.Move(testCtx(t), domain.NewBinID(), loc, time.Now())
@@ -102,7 +102,7 @@ func TestBinRepository_Move_NotFound(t *testing.T) {
 
 func TestBinRepository_Move_UnknownLocationRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
@@ -111,7 +111,7 @@ func TestBinRepository_Move_UnknownLocationRejected(t *testing.T) {
 		t.Errorf("Move(unknown location) = %v, want ErrLocationNotFound", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.bins.FindVisibleByID(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID after rejected Move: %v", err)
@@ -125,13 +125,13 @@ func TestBinRepository_Move_UnknownLocationRejected(t *testing.T) {
 // criterion: moving a bin updates its location.
 func TestBinMover_Move_RelocatesBin(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	from := f.seedLocation(t, creator)
 	to := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
 
 	mover := newBinMover(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	result, err := mover.Move(testCtx(t), actor, binID, to)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestBinMover_Move_RelocatesBin(t *testing.T) {
 		t.Errorf("MoveResult = %+v, want bin=%v from=%v to=%v movedBy=%v", result, binID, from, to, creator)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.bins.FindVisibleByID(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID after Move: %v", err)
@@ -155,12 +155,12 @@ func TestBinMover_Move_RelocatesBin(t *testing.T) {
 // criterion end to end through the real service and database.
 func TestBinMover_Move_NoopRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
 	mover := newBinMover(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	_, err := mover.Move(testCtx(t), actor, binID, loc)
 	if !errors.Is(err, domain.ErrBinAlreadyInLocation) {
@@ -176,12 +176,12 @@ func TestBinMover_Move_NoopRejected(t *testing.T) {
 // to the same case today, and this is that case's proof.
 func TestBinMover_Move_UnknownLocationRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
 	mover := newBinMover(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	_, err := mover.Move(testCtx(t), actor, binID, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotFound) {
@@ -196,21 +196,21 @@ func TestBinMover_Move_UnknownLocationRejected(t *testing.T) {
 // missing bin (ErrBinNotFound), never leaking that it exists.
 func TestBinMover_Move_InvisiblePrivateBinRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	to := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 
 	mover := newBinMover(f)
-	actor := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	actor := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 
 	_, err := mover.Move(testCtx(t), actor, binID, to)
 	if !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("Move(invisible private bin) = %v, want ErrBinNotFound", err)
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.bins.FindVisibleByID(testCtx(t), creatorViewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID after rejected Move: %v", err)
@@ -226,7 +226,7 @@ func TestBinMover_Move_InvisiblePrivateBinRejected(t *testing.T) {
 // table at all.
 func TestBinMover_Move_ItemsUnaffectedByMove(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	from := f.seedLocation(t, creator)
 	to := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
@@ -237,13 +237,13 @@ func TestBinMover_Move_ItemsUnaffectedByMove(t *testing.T) {
 	beforePlacementChange := it.PlacementChangedAt
 
 	mover := newBinMover(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	if _, err := mover.Move(testCtx(t), actor, binID, to); err != nil {
 		t.Fatalf("Move: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	items, err := f.repo.ListByBin(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("ListByBin after Move: %v", err)
@@ -271,14 +271,14 @@ func TestBinMover_Move_ItemsUnaffectedByMove(t *testing.T) {
 // in neither the original nor the target location).
 func TestBinMover_Move_ConcurrentAttemptsOnlyOneWins(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	from := f.seedLocation(t, creator)
 	to := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
 
 	mover := newBinMover(f)
-	actorA := identity.NewUserPrincipal(f.seedUser(t, identity.RoleMember), identity.RoleMember, "A")
-	actorB := identity.NewUserPrincipal(f.seedUser(t, identity.RoleMember), identity.RoleMember, "B")
+	actorA := identity.NewUserPrincipal(f.seedUser(t, identity.RoleAdult), identity.RoleAdult, "A")
+	actorB := identity.NewUserPrincipal(f.seedUser(t, identity.RoleAdult), identity.RoleAdult, "B")
 
 	var wg sync.WaitGroup
 	results := make([]error, 2)
@@ -308,7 +308,7 @@ func TestBinMover_Move_ConcurrentAttemptsOnlyOneWins(t *testing.T) {
 		t.Errorf("concurrent Move: succeeded=%d failed=%d, want exactly one of each", succeeded, failed)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.bins.FindVisibleByID(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID after concurrent Move: %v", err)
@@ -331,7 +331,7 @@ func TestBinMover_Move_ConcurrentAttemptsOnlyOneWins(t *testing.T) {
 // one moved row per item.
 func TestBinMoveFanOutCommitsAtomically(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	from := f.seedLocation(t, creator)
 	to := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
@@ -345,8 +345,8 @@ func TestBinMoveFanOutCommitsAtomically(t *testing.T) {
 	}
 
 	mover := newBinMover(f)
-	actorA := identity.NewUserPrincipal(f.seedUser(t, identity.RoleMember), identity.RoleMember, "A")
-	actorB := identity.NewUserPrincipal(f.seedUser(t, identity.RoleMember), identity.RoleMember, "B")
+	actorA := identity.NewUserPrincipal(f.seedUser(t, identity.RoleAdult), identity.RoleAdult, "A")
+	actorB := identity.NewUserPrincipal(f.seedUser(t, identity.RoleAdult), identity.RoleAdult, "B")
 
 	var wg sync.WaitGroup
 	results := make([]error, 2)

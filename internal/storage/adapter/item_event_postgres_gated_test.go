@@ -23,18 +23,20 @@ import (
 // Location/Bin/Item repository — a bare domain.NewItemID()/NewBinID() is a
 // legitimate event target.
 type itemEventFixture struct {
-	pool  *pgxpool.Pool
-	repo  *adapter.ItemEventRepository
-	users *identityadapter.UserRepository
+	pool      *pgxpool.Pool
+	repo      *adapter.ItemEventRepository
+	users     *identityadapter.UserRepository
+	household identity.HouseholdID
 }
 
 func newItemEventFixture(t *testing.T) *itemEventFixture {
 	t.Helper()
 	pool := dbtest.Harness.NewIsolatedPool(t, "storage")
 	return &itemEventFixture{
-		pool:  pool,
-		repo:  adapter.NewItemEventRepository(pool),
-		users: identityadapter.NewUserRepository(pool),
+		pool:      pool,
+		repo:      adapter.NewItemEventRepository(pool),
+		users:     identityadapter.NewUserRepository(pool),
+		household: seedHousehold(t, pool),
 	}
 }
 
@@ -44,6 +46,7 @@ func (f *itemEventFixture) seedUser(t *testing.T, role identity.Role) *identity.
 	t.Helper()
 	u := &identity.User{
 		ID:           identity.NewUserID(),
+		HouseholdID:  f.household,
 		DisplayName:  "Maya",
 		Email:        "item-event-user-" + identity.NewUserID().String() + "@example.com",
 		PasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
@@ -67,7 +70,7 @@ func TestNewItemEventRepository_NilExecutorPanics(t *testing.T) {
 
 func TestItemEventRepository_Append_UserActorRoundTrips(t *testing.T) {
 	f := newItemEventFixture(t)
-	u := f.seedUser(t, identity.RoleMember)
+	u := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
 	binID := domain.NewBinID()
 
@@ -129,7 +132,7 @@ func TestItemEventRepository_Append_IntegrationActorRoundTrips(t *testing.T) {
 
 func TestItemEventRepository_Append_MovedEventRoundTripsLocations(t *testing.T) {
 	f := newItemEventFixture(t)
-	u := f.seedUser(t, identity.RoleMember)
+	u := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
 	binID, fromLoc, toLoc := domain.NewBinID(), domain.NewLocationID(), domain.NewLocationID()
 
@@ -163,7 +166,7 @@ func TestItemEventRepository_Append_MovedEventRoundTripsLocations(t *testing.T) 
 
 func TestItemEventRepository_Append_EditedEventRoundTripsChangedFields(t *testing.T) {
 	f := newItemEventFixture(t)
-	u := f.seedUser(t, identity.RoleMember)
+	u := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
 
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventEdited, actor)
@@ -267,7 +270,7 @@ func TestItemEventRepository_Append_UserActorWithoutUserIDRejected(t *testing.T)
 
 func TestItemEventRepository_Append_UnknownActorUserRejected(t *testing.T) {
 	f := newItemEventFixture(t)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Ghost")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Ghost")
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 
 	err := f.repo.Append(testCtx(t), &e)
@@ -290,7 +293,7 @@ func TestItemEventRepository_Append_NilEventRejected(t *testing.T) {
 // snapshot regardless of the join.
 func TestItemEventRepository_Append_DeactivatedUserStillResolves(t *testing.T) {
 	f := newItemEventFixture(t)
-	u := f.seedUser(t, identity.RoleMember)
+	u := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 	if err := f.repo.Append(testCtx(t), &e); err != nil {

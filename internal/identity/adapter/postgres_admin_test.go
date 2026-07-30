@@ -12,8 +12,8 @@ import (
 // ticket's "the last active admin cannot be deactivated" acceptance
 // criterion.
 func TestSetActive_LastActiveAdminRejected(t *testing.T) {
-	repo := newTestRepo(t)
-	admin := seedAdmin(t, repo, "admin@example.com")
+	repo, household := newTestRepo(t)
+	admin := seedAdmin(t, repo, household, "admin@example.com")
 
 	err := repo.SetActive(testCtx(t), admin.ID, false)
 	if !errors.Is(err, domain.ErrLastActiveAdmin) {
@@ -32,10 +32,10 @@ func TestSetActive_LastActiveAdminRejected(t *testing.T) {
 // TestSetRole_LastActiveAdminRejected is the automated equivalent of this
 // ticket's "the last active admin cannot be demoted" acceptance criterion.
 func TestSetRole_LastActiveAdminRejected(t *testing.T) {
-	repo := newTestRepo(t)
-	admin := seedAdmin(t, repo, "admin@example.com")
+	repo, household := newTestRepo(t)
+	admin := seedAdmin(t, repo, household, "admin@example.com")
 
-	err := repo.SetRole(testCtx(t), admin.ID, domain.RoleMember)
+	err := repo.SetRole(testCtx(t), admin.ID, domain.RoleAdult)
 	if !errors.Is(err, domain.ErrLastActiveAdmin) {
 		t.Fatalf("SetRole(member) on the only active admin = %v, want ErrLastActiveAdmin", err)
 	}
@@ -44,7 +44,7 @@ func TestSetRole_LastActiveAdminRejected(t *testing.T) {
 	if findErr != nil {
 		t.Fatalf("FindByID: %v", findErr)
 	}
-	if got.Role != domain.RoleAdmin {
+	if got.Role != domain.RoleOwner {
 		t.Error("a rejected demotion must leave the row untouched — Role is now member")
 	}
 }
@@ -55,9 +55,9 @@ func TestSetRole_LastActiveAdminRejected(t *testing.T) {
 // name — after deactivation, never an error or a blanked field. A second
 // admin is seeded first so the deactivation itself is not rejected.
 func TestSetActive_DeactivatedUserFieldsIntact(t *testing.T) {
-	repo := newTestRepo(t)
-	seedAdmin(t, repo, "admin@example.com")
-	member := seedUser(t, repo, "maya@example.com")
+	repo, household := newTestRepo(t)
+	seedAdmin(t, repo, household, "admin@example.com")
+	member := seedUser(t, repo, household, "maya@example.com")
 
 	if err := repo.SetActive(testCtx(t), member.ID, false); err != nil {
 		t.Fatalf("SetActive(false): %v", err)
@@ -81,9 +81,9 @@ func TestSetActive_DeactivatedUserFieldsIntact(t *testing.T) {
 // never zero (a plain read-then-write would let both succeed) and never
 // both rejected (the lock must not deadlock or over-reject).
 func TestSetRole_ConcurrentDemotionsOfTwoAdmins_LeaveExactlyOneActiveAdmin(t *testing.T) {
-	repo := newTestRepo(t)
-	adminA := seedAdmin(t, repo, "admin-a@example.com")
-	adminB := seedAdmin(t, repo, "admin-b@example.com")
+	repo, household := newTestRepo(t)
+	adminA := seedAdmin(t, repo, household, "admin-a@example.com")
+	adminB := seedAdmin(t, repo, household, "admin-b@example.com")
 	ctx := testCtx(t)
 
 	errs := make([]error, 2)
@@ -91,11 +91,11 @@ func TestSetRole_ConcurrentDemotionsOfTwoAdmins_LeaveExactlyOneActiveAdmin(t *te
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		errs[0] = repo.SetRole(ctx, adminA.ID, domain.RoleMember)
+		errs[0] = repo.SetRole(ctx, adminA.ID, domain.RoleAdult)
 	}()
 	go func() {
 		defer wg.Done()
-		errs[1] = repo.SetRole(ctx, adminB.ID, domain.RoleMember)
+		errs[1] = repo.SetRole(ctx, adminB.ID, domain.RoleAdult)
 	}()
 	wg.Wait()
 
@@ -120,7 +120,7 @@ func TestSetRole_ConcurrentDemotionsOfTwoAdmins_LeaveExactlyOneActiveAdmin(t *te
 		if err != nil {
 			t.Fatalf("FindByID: %v", err)
 		}
-		if u.Role == domain.RoleAdmin && u.Active {
+		if u.Role == domain.RoleOwner && u.Active {
 			activeAdmins++
 		}
 	}

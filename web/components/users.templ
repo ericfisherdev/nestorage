@@ -8,8 +8,8 @@ type UserRowView struct {
 	ID          string
 	DisplayName string
 	Email       string
-	// Role is the user's current role value ("admin" or "member"), used to
-	// pre-select the role dropdown's current option.
+	// Role is the user's current role value ("owner", "adult", or "child"),
+	// used to pre-select the role dropdown's current option.
 	Role   string
 	Active bool
 	Owner  OwnerView
@@ -38,7 +38,7 @@ const usersTableID = "user-list"
 
 // userRoles/userColors back the role and color <select> options, in the
 // same order every time.
-var userRoles = []string{"member", "admin"}
+var userRoles = []string{"child", "adult", "owner"}
 
 var userColors = []string{"indigo", "steel", "teal", "peri"}
 
@@ -109,7 +109,7 @@ templ newUserForm(view UsersView) {
 				required
 				class="rounded-input border border-border-input bg-surface px-3 py-2 text-base text-text placeholder:text-text-faint focus:border-primary focus:outline-none"
 			/>
-			@roleSelect("role", "member")
+			@roleSelect("role", "adult")
 			@colorSelect("color", "indigo")
 		</div>
 		<button

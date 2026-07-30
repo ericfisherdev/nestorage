@@ -23,7 +23,7 @@ func TestPrincipalKindLabel_NoPrincipal_Anonymous(t *testing.T) {
 // exactly what Resolve wrote, the same round trip api.Observe relies on in
 // production.
 func TestPrincipalKindLabel_UserPrincipal_User(t *testing.T) {
-	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel"), found: true}
+	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Daniel"), found: true}
 	chain := adapter.NewChain(session, &stubResolver{}, &stubResolver{})
 	denier := adapter.NewDenier(testLogger())
 

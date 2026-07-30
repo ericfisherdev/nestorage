@@ -133,9 +133,9 @@ func TestItemSQLPredicateAgreesWithCanSeeBin(t *testing.T) {
 	binID := domain.NewBinID()
 
 	principals := []identity.Principal{
-		identity.NewUserPrincipal(other, identity.RoleAdmin, "Admin"),
-		identity.NewUserPrincipal(creator, identity.RoleMember, "Creator"),
-		identity.NewUserPrincipal(other, identity.RoleMember, "Non-creator member"),
+		identity.NewUserPrincipal(other, identity.RoleOwner, "Admin"),
+		identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator"),
+		identity.NewUserPrincipal(other, identity.RoleAdult, "Non-creator member"),
 		identity.NewIntegrationPrincipal("Nestova"),
 		{}, // anonymous
 	}

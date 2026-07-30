@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"net/http"
 
-	"github.com/alexedwards/scs/pgxstore"
 	"github.com/alexedwards/scs/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -32,14 +31,16 @@ const keyCSRF = "csrf_token"
 // csrfTokenLen is the CSRF token length in bytes (64-char hex string).
 const csrfTokenLen = 32
 
-// New constructs an scs.SessionManager backed by Postgres via pgxstore,
-// sharing the pool the rest of the app uses — pgxstore does not create its
-// own table; see the 00003_sessions migration. Cookie settings are derived
-// from cfg: Secure follows the resolved SESSION_COOKIE_SECURE policy (auto →
-// prod-only, or forced true/false), Lifetime from SESSION_LIFETIME.
+// New constructs an scs.SessionManager backed by Postgres, sharing the pool
+// the rest of the app uses. The store targets identity.sessions (NSTR-116),
+// the shared identity schema's session table — not an app-schema table; see
+// identity_store.go and the 00017_identity_schema migration. Cookie settings
+// are derived from cfg: Secure follows the resolved SESSION_COOKIE_SECURE
+// policy (auto → prod-only, or forced true/false), Lifetime from
+// SESSION_LIFETIME.
 func New(pool *pgxpool.Pool, cfg corecfg.SessionConfig) *scs.SessionManager {
 	sm := scs.New()
-	sm.Store = pgxstore.New(pool)
+	sm.Store = newIdentityStore(pool)
 	sm.Lifetime = cfg.Lifetime
 	// Expire idle sessions at half the absolute lifetime: active users stay
 	// signed in (each request refreshes idle time) while an abandoned

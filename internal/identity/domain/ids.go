@@ -27,6 +27,25 @@ func ParseUserID(s string) (UserID, error) {
 	return UserID(u), nil
 }
 
+// HouseholdID uniquely identifies the household a member belongs to.
+type HouseholdID uuid.UUID
+
+// NewHouseholdID returns a new time-ordered (UUIDv7) household id, the same
+// B-tree-locality rationale as NewUserID.
+func NewHouseholdID() HouseholdID { return HouseholdID(uuid.Must(uuid.NewV7())) }
+
+// String returns the canonical UUID string.
+func (id HouseholdID) String() string { return uuid.UUID(id).String() }
+
+// ParseHouseholdID parses a canonical UUID string into a HouseholdID.
+func ParseHouseholdID(s string) (HouseholdID, error) {
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return HouseholdID{}, fmt.Errorf("parse household id: %w", err)
+	}
+	return HouseholdID(u), nil
+}
+
 // APIKeyID uniquely identifies the account's api key (NSTR-23).
 type APIKeyID uuid.UUID
 

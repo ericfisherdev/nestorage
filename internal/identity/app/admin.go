@@ -19,6 +19,14 @@ type userRepository interface {
 	SetPasswordHash(ctx context.Context, id domain.UserID, hash string) error
 }
 
+// householdResolver is the narrow port (ISP) AdminService depends on to
+// attach a newly created member to the household first-run setup already
+// established: only List, satisfied by domain.HouseholdRepository (a
+// superset) and by test fakes.
+type householdResolver interface {
+	List(ctx context.Context) ([]domain.Household, error)
+}
+
 // passwordCreator is the narrow seam (ISP) AdminService depends on to derive
 // a new or reset password hash: only Hash, never Verify — verifying a
 // credential is Authenticator's job, not admin user management's. Satisfied
@@ -33,18 +41,22 @@ type passwordCreator interface {
 // ResetPassword) also fans out to revoker, so a stale credential cannot
 // outlive the action that was supposed to invalidate it.
 type AdminService struct {
-	users   userRepository
-	hasher  passwordCreator
-	revoker CredentialRevoker
-	logger  *slog.Logger
+	users      userRepository
+	households householdResolver
+	hasher     passwordCreator
+	revoker    CredentialRevoker
+	logger     *slog.Logger
 }
 
 // NewAdminService constructs AdminService. All dependencies are required; a
 // missing one panics at construction time, matching every other constructor
 // in this codebase (see NewAuthenticator).
-func NewAdminService(users userRepository, hasher passwordCreator, revoker CredentialRevoker, logger *slog.Logger) *AdminService {
+func NewAdminService(users userRepository, households householdResolver, hasher passwordCreator, revoker CredentialRevoker, logger *slog.Logger) *AdminService {
 	if users == nil {
 		panic("identity/app: NewAdminService requires a non-nil userRepository")
+	}
+	if households == nil {
+		panic("identity/app: NewAdminService requires a non-nil householdResolver")
 	}
 	if hasher == nil {
 		panic("identity/app: NewAdminService requires a non-nil password hasher")
@@ -55,7 +67,7 @@ func NewAdminService(users userRepository, hasher passwordCreator, revoker Crede
 	if logger == nil {
 		panic("identity/app: NewAdminService requires a non-nil logger")
 	}
-	return &AdminService{users: users, hasher: hasher, revoker: revoker, logger: logger}
+	return &AdminService{users: users, households: households, hasher: hasher, revoker: revoker, logger: logger}
 }
 
 // List returns every user in the household, ordered by display name.
@@ -68,12 +80,23 @@ func (s *AdminService) List(ctx context.Context) ([]domain.User, error) {
 }
 
 // Create validates password against domain.ValidatePassword, hashes it, and
-// creates a new user with the given role and color. Returns a wrapped
-// domain.ErrPasswordTooShort/ErrPasswordTooLong from validation, or a
+// creates a new user with the given role and color, attached to the
+// household first-run setup already established (NSTR-116's adopt-only
+// rule — see domain.ResolveExistingHousehold). Returns a wrapped
+// domain.ErrPasswordTooShort/ErrPasswordTooLong from validation, a wrapped
+// domain.ErrNoHousehold/ErrAmbiguousHousehold from household resolution, or a
 // wrapped domain.ErrDuplicateEmail when email is already taken.
 func (s *AdminService) Create(ctx context.Context, displayName, email, password string, role domain.Role, color domain.UserColor) (*domain.User, error) {
 	if err := domain.ValidatePassword(password); err != nil {
 		return nil, err
+	}
+	households, err := s.households.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("admin: create user: list households: %w", err)
+	}
+	householdID, err := domain.ResolveExistingHousehold(households)
+	if err != nil {
+		return nil, fmt.Errorf("admin: create user: %w", err)
 	}
 	hash, err := s.hasher.Hash(password)
 	if err != nil {
@@ -82,6 +105,7 @@ func (s *AdminService) Create(ctx context.Context, displayName, email, password 
 
 	u := &domain.User{
 		ID:           domain.NewUserID(),
+		HouseholdID:  householdID,
 		DisplayName:  displayName,
 		Email:        email,
 		PasswordHash: hash,
@@ -97,7 +121,7 @@ func (s *AdminService) Create(ctx context.Context, displayName, email, password 
 
 // ChangeRole sets id's role. Returns a wrapped domain.ErrLastActiveAdmin
 // when id is the household's only active admin and role is not
-// domain.RoleAdmin, or a wrapped domain.ErrUserNotFound for an unknown id.
+// domain.RoleOwner, or a wrapped domain.ErrUserNotFound for an unknown id.
 func (s *AdminService) ChangeRole(ctx context.Context, id domain.UserID, role domain.Role) error {
 	if err := s.users.SetRole(ctx, id, role); err != nil {
 		return fmt.Errorf("admin: change role: %w", err)

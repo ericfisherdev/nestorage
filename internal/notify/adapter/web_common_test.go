@@ -94,5 +94,5 @@ func testLayout(_ *http.Request, content templ.Component) templ.Component {
 }
 
 func testViewer() identity.Principal {
-	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alex")
+	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alex")
 }

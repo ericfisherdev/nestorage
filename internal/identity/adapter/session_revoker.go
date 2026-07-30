@@ -33,8 +33,8 @@ func NewSessionRevoker(sm *scs.SessionManager) *SessionRevoker {
 
 // RevokeAll iterates every active session in the store and destroys the ones
 // belonging to id. sm.Iterate requires the store to implement
-// scs.IterableStore — verified against the vendored pgxstore.PostgresStore
-// (it defines both All and AllCtx) — and panics if it does not, which is a
+// scs.IterableStore — verified against internal/platform/session's own
+// identityStore (it defines AllCtx) — and panics if it does not, which is a
 // wiring bug the composition root should catch immediately, not a runtime
 // condition this method needs to guard against.
 func (r *SessionRevoker) RevokeAll(ctx context.Context, id domain.UserID) error {

@@ -12,22 +12,24 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/storage/domain"
 )
 
-// itemDetailColumns left-joins bin, location, and app_user (the item's
-// holder) onto item's own columns — FindVisibleDetail's one query for the
-// names the bare Item entity (ids only) does not carry: the current bin's
-// own name/code, its location's name, or (for a checked-out item) the
-// holder's display name/color. LEFT, not INNER, on every join: a held item
-// has neither a bin nor a location, and an in-bin item has no holder — the
-// same LEFT JOIN shape itemVisibleColumns uses for the visibility predicate
-// itself.
+// itemDetailColumns left-joins bin, location, and identity.member (the
+// item's holder) onto item's own columns — FindVisibleDetail's one query for
+// the names the bare Item entity (ids only) does not carry: the current
+// bin's own name/code, its location's name, or (for a checked-out item) the
+// holder's display name/color. color lives on Nestorage's own profile table
+// (NSTR-116), not identity.member, so it needs its own join. LEFT, not
+// INNER, on every join: a held item has neither a bin nor a location, and an
+// in-bin item has no holder — the same LEFT JOIN shape itemVisibleColumns
+// uses for the visibility predicate itself.
 const itemDetailColumns = `
 	SELECT i.id, i.name, i.description, i.quantity, i.current_bin_id, i.held_by, i.created_by,
 	       i.placement_changed_at, i.created_at, i.updated_at,
-	       b.name, b.code, l.name, au.display_name, au.color
+	       b.name, b.code, l.name, au.display_name, ap.color
 	FROM item i
 	LEFT JOIN bin b ON b.id = i.current_bin_id
 	LEFT JOIN location l ON l.id = b.location_id
-	LEFT JOIN app_user au ON au.id = i.held_by`
+	LEFT JOIN identity.member au ON au.id = i.held_by
+	LEFT JOIN profile ap ON ap.member_id = au.id`
 
 // itemSearchColumns is SearchVisible's own version of itemDetailColumns,
 // selecting only the columns the results list renders (see
@@ -38,7 +40,7 @@ const itemSearchColumns = `
 	FROM item i
 	LEFT JOIN bin b ON b.id = i.current_bin_id
 	LEFT JOIN location l ON l.id = b.location_id
-	LEFT JOIN app_user au ON au.id = i.held_by`
+	LEFT JOIN identity.member au ON au.id = i.held_by`
 
 // FindVisibleDetail returns id's detail read model, scoped to what viewer
 // may see (itemVisibilityWhere's own rule, including the held-item

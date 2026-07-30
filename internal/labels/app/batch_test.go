@@ -21,7 +21,7 @@ func testLogger() *slog.Logger {
 }
 
 func testViewer() identity.Principal {
-	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 }
 
 // fakeVisibleBinLister is a configurable visibleBinLister fake for

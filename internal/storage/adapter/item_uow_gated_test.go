@@ -27,7 +27,7 @@ func newItemService(f *itemFixture) *app.ItemService {
 // 00012_item_event.sql's own comment).
 func TestDeletedItemEventSurvivesItemDelete(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -36,13 +36,13 @@ func TestDeletedItemEventSurvivesItemDelete(t *testing.T) {
 	}
 
 	svc := newItemService(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	if err := svc.Delete(testCtx(t), it.ID, actor); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	if _, err := f.repo.Get(testCtx(t), viewer, it.ID); !errors.Is(err, domain.ErrItemNotFound) {
 		t.Fatalf("Get after Delete = %v, want ErrItemNotFound", err)
 	}
@@ -64,19 +64,19 @@ func TestDeletedItemEventSurvivesItemDelete(t *testing.T) {
 // leaves both the item row and exactly one created event.
 func TestCreateAndEventCommitTogether(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
 	svc := newItemService(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	it, err := svc.Create(testCtx(t), "Stove", nil, 1, bin, actor)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	if _, err := f.repo.Get(testCtx(t), viewer, it.ID); err != nil {
 		t.Fatalf("Get after Create: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestCreateAndEventCommitTogether(t *testing.T) {
 // event naming the changed field.
 func TestEditAndEventCommitTogether(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -105,13 +105,13 @@ func TestEditAndEventCommitTogether(t *testing.T) {
 	}
 
 	svc := newItemService(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	if err := svc.Edit(testCtx(t), it.ID, "Camping stove", nil, 2, actor); err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after Edit: %v", err)
@@ -146,9 +146,9 @@ func TestEditAndEventCommitTogether(t *testing.T) {
 // proof there is nothing partially committed.
 func TestEditAndEventRollBackTogether(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	svc := newItemService(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	unknownID := domain.NewItemID()
 
 	err := svc.Edit(testCtx(t), unknownID, "Stove", nil, 1, actor)

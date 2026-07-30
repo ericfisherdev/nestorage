@@ -134,7 +134,7 @@ func TestLocationService_List_CarriesBinCounts(t *testing.T) {
 		{ID: domain.NewBinID(), LocationID: attic.ID},
 	}}
 	svc := app.NewLocationService(locs, bins, testLogger())
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.List(context.Background(), viewer)
 	if err != nil {
@@ -166,7 +166,7 @@ func TestLocationService_List_RepositoryErrorWrapped(t *testing.T) {
 func TestLocationService_List_BinListerErrorWrapped(t *testing.T) {
 	bins := &fakeBinLister{err: errors.New("boom")}
 	svc := app.NewLocationService(newFakeLocationRepo(), bins, testLogger())
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.List(context.Background(), viewer)
 	if err == nil {
@@ -176,7 +176,7 @@ func TestLocationService_List_BinListerErrorWrapped(t *testing.T) {
 
 func TestLocationService_Get_NotFoundWrapped(t *testing.T) {
 	svc := app.NewLocationService(newFakeLocationRepo(), &fakeBinLister{}, testLogger())
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.Get(context.Background(), viewer, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotFound) {
@@ -191,7 +191,7 @@ func TestLocationService_Get_Success(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.Get(context.Background(), viewer, garage.ID)
 	if err != nil {

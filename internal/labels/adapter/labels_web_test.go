@@ -36,7 +36,7 @@ func testLogger() *slog.Logger {
 }
 
 func testViewer() identity.Principal {
-	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 }
 
 // testLayout wraps content in an identifiable marker so a test can assert a

@@ -283,7 +283,7 @@ func TestParseOptionalUserID(t *testing.T) {
 func TestRequireUserPrincipal(t *testing.T) {
 	t.Run("user principal allowed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+		viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 		if !requireUserPrincipal(rec, testAPILogger(), viewer) {
 			t.Error("requireUserPrincipal(user) = false, want true")
 		}

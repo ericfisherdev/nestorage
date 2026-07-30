@@ -288,8 +288,8 @@ func TestSubmit_Success_CreatesAdminAndSignsIn(t *testing.T) {
 	if u.Email != "maya@example.com" {
 		t.Errorf("Email = %q, want the normalized form %q", u.Email, "maya@example.com")
 	}
-	if u.Role != domain.RoleAdmin {
-		t.Errorf("Role = %q, want %q", u.Role, domain.RoleAdmin)
+	if u.Role != domain.RoleOwner {
+		t.Errorf("Role = %q, want %q", u.Role, domain.RoleOwner)
 	}
 	if !strings.HasPrefix(u.PasswordHash, "$argon2id$") {
 		t.Errorf("PasswordHash = %q, want a PHC-encoded argon2id hash", u.PasswordHash)

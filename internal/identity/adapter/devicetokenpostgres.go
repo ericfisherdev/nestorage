@@ -19,7 +19,7 @@ const (
 	foreignKeyViolation = "23503"
 	// deviceTokenUserFK is device_token's Postgres-assigned default FK
 	// constraint name (<table>_<column>_fkey — the 00004_device_token
-	// migration does not name it explicitly, unlike app_user_email_unique).
+	// migration does not name it explicitly, unlike identity_member_email_unique).
 	deviceTokenUserFK = "device_token_user_id_fkey"
 )
 

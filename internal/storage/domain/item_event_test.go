@@ -103,7 +103,7 @@ func TestParseEditedField_UnknownRejected(t *testing.T) {
 // Principal shape, so NewUserPrincipal alone exercises both).
 func TestNewItemEvent_UserPrincipalAttribution(t *testing.T) {
 	userID := identity.NewUserID()
-	actor := identity.NewUserPrincipal(userID, identity.RoleMember, "Maya")
+	actor := identity.NewUserPrincipal(userID, identity.RoleAdult, "Maya")
 
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 
@@ -141,7 +141,7 @@ func TestNewItemEvent_IntegrationPrincipalAttribution(t *testing.T) {
 // point every TestItemEvent_Validate case mutates.
 func baseEvent(t *testing.T) domain.ItemEvent {
 	t.Helper()
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Maya")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Maya")
 	return domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 }
 

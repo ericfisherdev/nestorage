@@ -161,8 +161,8 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	apiLimiter := identityadapter.NewKeyedRateLimiter(rate.Limit(cfg.RateLimit.APIRPS), cfg.RateLimit.APIBurst)
 	authLimiter := identityadapter.NewKeyedRateLimiter(rate.Every(time.Minute/time.Duration(cfg.RateLimit.AuthRPM)), cfg.RateLimit.AuthBurst)
 
-	// Identity composition: the session manager (backed by the shared pool
-	// via pgxstore), the user repository, the first-run provisioner, and
+	// Identity composition: the session manager (backed by the shared pool,
+	// targeting identity.sessions), the user repository, the first-run provisioner, and
 	// the onboarding wizard it backs. SetupGuard must be the outermost
 	// feature middleware so an unconfigured app is sent to the wizard
 	// before anything else — including session loading — runs; LoadAndSave
@@ -404,7 +404,8 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// device-token revocation, so deactivating (or resetting the password
 	// of) a user invalidates both.
 	revokers := identityapp.Revokers{identityadapter.NewSessionRevoker(sm), deviceTokenService}
-	adminService := identityapp.NewAdminService(identityRepo, hasher, revokers, logger)
+	householdRepo := identityadapter.NewHouseholdRepository(pool)
+	adminService := identityapp.NewAdminService(identityRepo, householdRepo, hasher, revokers, logger)
 	usersHandlers := identityadapter.NewUsersWebHandlers(adminService, sm, newAdminUsersLayout(shellData, logger), logger)
 
 	// NSTR-103's own self-service password change: the standalone-mode half
