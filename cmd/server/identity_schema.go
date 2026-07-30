@@ -12,6 +12,13 @@ import (
 	ownmigrate "github.com/ericfisherdev/nestorage/internal/platform/db/migrate"
 )
 
+// defaultIdentitySchemaName is the only DB_SCHEMA_IDENTITY value nestcore's
+// identity/migrate package actually migrates against today — its schema
+// name is a compile-time constant, not wired to corecfg.SchemaConfig (see
+// that type's own doc). ensureSharedIdentitySchema rejects any other
+// configured value rather than half-honor it.
+const defaultIdentitySchemaName = "identity"
+
 // ensureSharedIdentitySchema implements NSTR-123's startup compatibility
 // check against nestcore's shared identity schema (epic NSTR-112), called
 // from serve() before the main connection pool is built. It never migrates
@@ -43,6 +50,15 @@ import (
 // version already means exactly "has this app booted and migrated against
 // this database before", independent of which schema its tables live in.
 func ensureSharedIdentitySchema(ctx context.Context, dsn string, schemas corecfg.SchemaConfig) error {
+	// nestcore's identity/migrate hard-codes its schema name (see
+	// corecfg.SchemaConfig's own doc), so a configured value other than the
+	// default would be probed here but never migrated against — refuse
+	// rather than silently diverge into an unreachable state.
+	if schemas.Identity != defaultIdentitySchemaName {
+		return fmt.Errorf("DB_SCHEMA_IDENTITY=%q is not supported yet: nestcore's identity migrations are hard-coded to %q; leave it unset",
+			schemas.Identity, defaultIdentitySchemaName)
+	}
+
 	identityExists, err := ncmigrate.SchemaExists(ctx, dsn, schemas.Identity)
 	if err != nil {
 		return fmt.Errorf("probe identity schema: %w", err)
