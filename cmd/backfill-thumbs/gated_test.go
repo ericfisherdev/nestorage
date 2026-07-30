@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
@@ -47,26 +49,12 @@ func TestRun_BackfillsAgainstRealDatabase(t *testing.T) {
 	t.Setenv("MEDIA_ROOT", mediaRoot)
 
 	ctx := context.Background()
-	users := identityadapter.NewUserRepository(pool)
 	locs := storageadapter.NewLocationRepository(pool)
 	bins := storageadapter.NewBinRepository(pool)
 	items := storageadapter.NewItemRepository(pool)
 	photos := mediaadapter.NewPhotoRepository(pool)
 
-	householdID := identity.NewHouseholdID()
-	const householdQ = `INSERT INTO identity.household (id, name) VALUES ($1, 'Test Household')`
-	if _, err := pool.Exec(ctx, householdQ, householdID.String()); err != nil {
-		t.Fatalf("seed household: %v", err)
-	}
-	uploader := &identity.User{
-		ID: identity.NewUserID(), HouseholdID: householdID, DisplayName: "Backfill Test",
-		Email:        "backfill-" + identity.NewUserID().String() + "@example.com",
-		PasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
-		Role:         identity.RoleAdult, Color: identity.ColorIndigo,
-	}
-	if err := users.Create(ctx, uploader); err != nil {
-		t.Fatalf("seed user: %v", err)
-	}
+	uploader := seedBackfillUploader(ctx, t, pool)
 	loc := &storagedomain.Location{ID: storagedomain.NewLocationID(), Name: "Garage", CreatedBy: uploader.ID}
 	if err := locs.Create(ctx, loc); err != nil {
 		t.Fatalf("seed location: %v", err)
@@ -139,6 +127,29 @@ func TestRun_BackfillsAgainstRealDatabase(t *testing.T) {
 	if err := run(logger); err != nil {
 		t.Fatalf("second run() = %v, want nil (idempotent)", err)
 	}
+}
+
+// seedBackfillUploader seeds an identity.household and an identity.member —
+// the uploader every seeded photo/item/bin/location in this test attributes
+// to — split out of the test body proper to keep its own cognitive
+// complexity under the linter's threshold.
+func seedBackfillUploader(ctx context.Context, t *testing.T, pool *pgxpool.Pool) *identity.User {
+	t.Helper()
+	householdID := identity.NewHouseholdID()
+	const householdQ = `INSERT INTO identity.household (id, name) VALUES ($1, 'Test Household')`
+	if _, err := pool.Exec(ctx, householdQ, householdID.String()); err != nil {
+		t.Fatalf("seed household: %v", err)
+	}
+	uploader := &identity.User{
+		ID: identity.NewUserID(), HouseholdID: householdID, DisplayName: "Backfill Test",
+		Email:        "backfill-" + identity.NewUserID().String() + "@example.com",
+		PasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
+		Role:         identity.RoleAdult, Color: identity.ColorIndigo,
+	}
+	if err := identityadapter.NewUserRepository(pool).Create(ctx, uploader); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	return uploader
 }
 
 // testJPEGBytes builds an 800x600 JPEG comfortably larger than the 400px

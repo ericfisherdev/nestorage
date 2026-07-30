@@ -70,8 +70,11 @@ GATED_COVERAGE_OUT := coverage.gated.out
 # mirrors cmd/server's TestServe_Lifecycle; internal/notify is Sprint 6's
 # bounded context (NSTR-44); internal/labels joins them at NSTR-51, whose
 # per-user label size preference is the labels bounded context's first
-# database-backed adapter (NSTR-47/49/50 needed no database at all).
-GATED_TEST_PACKAGES := ./internal/platform/db/... ./cmd/migrate/... ./cmd/server/... ./cmd/backfill-thumbs/... ./internal/identity/... ./internal/storage/... ./internal/media/... ./internal/notify/... ./internal/labels/...
+# database-backed adapter (NSTR-47/49/50 needed no database at all);
+# internal/platform/session joins at NSTR-116, whose interim identity.sessions
+# store (identity_store.go) is the platform layer's first database-backed
+# adapter.
+GATED_TEST_PACKAGES := ./internal/platform/db/... ./cmd/migrate/... ./cmd/server/... ./cmd/backfill-thumbs/... ./internal/identity/... ./internal/storage/... ./internal/media/... ./internal/notify/... ./internal/labels/... ./internal/platform/session/...
 
 .PHONY: all build run test test-gated cover lint fmt generate assets hooks hooks-uninstall tidy clean help \
 	migrate-up migrate-down migrate-status migrate-reset migrate-create
