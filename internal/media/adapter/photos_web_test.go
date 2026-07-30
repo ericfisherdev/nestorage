@@ -34,7 +34,7 @@ func testLogger() *slog.Logger {
 }
 
 func testViewer() identity.Principal {
-	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 }
 
 // fixedPrincipalResolver and absentCredentialResolver mirror

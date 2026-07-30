@@ -179,7 +179,7 @@ func TestBinMover_Move_Success(t *testing.T) {
 	mover := app.NewBinMover(uow, bins, locs, fixedClock(now), testLogger())
 
 	holder := identity.NewUserID()
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	result, err := mover.Move(context.Background(), actor, binID, to)
 	if err != nil {
@@ -222,7 +222,7 @@ func TestBinMoveEmitsMovedEventPerItem(t *testing.T) {
 	events := &fakeEventAppender{}
 	uow := &fakeBinUnitOfWork{store: store, items: &fakeBinItemIDLister{refs: []domain.ItemRef{itemA, itemB}}, events: events}
 	mover := app.NewBinMover(uow, bins, locs, fixedClock(time.Now()), testLogger())
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	if _, err := mover.Move(context.Background(), actor, binID, to); err != nil {
 		t.Fatalf("Move: %v", err)
@@ -263,7 +263,7 @@ func TestBinMoveEventFailureAbortsMove(t *testing.T) {
 	events := &fakeEventAppender{appendErr: errors.New("boom")}
 	uow := &fakeBinUnitOfWork{store: store, items: &fakeBinItemIDLister{refs: refs}, events: events}
 	mover := app.NewBinMover(uow, bins, locs, fixedClock(time.Now()), testLogger())
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := mover.Move(context.Background(), actor, binID, to)
 	if err == nil {
@@ -281,7 +281,7 @@ func TestBinMover_Move_NoopRejected(t *testing.T) {
 	loc := domain.NewLocationID()
 	store, bins, locs, binID := movableFixture(loc)
 	mover, events := newTestBinMover(store, bins, locs)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := mover.Move(context.Background(), actor, binID, loc)
 	if !errors.Is(err, domain.ErrBinAlreadyInLocation) {
@@ -303,7 +303,7 @@ func TestBinMover_Move_UnknownBinRejected(t *testing.T) {
 	bins.bin = nil
 	bins.notFoundErr = domain.ErrBinNotFound
 	mover, _ := newTestBinMover(store, bins, locs)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := mover.Move(context.Background(), actor, domain.NewBinID(), domain.NewLocationID())
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -318,7 +318,7 @@ func TestBinMover_Move_UnknownLocationRejected(t *testing.T) {
 	store, bins, locs, binID := movableFixture(domain.NewLocationID())
 	locs.notFoundErr = domain.ErrLocationNotFound
 	mover, _ := newTestBinMover(store, bins, locs)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := mover.Move(context.Background(), actor, binID, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotFound) {
@@ -343,8 +343,8 @@ func TestBinMover_Move_SecondAttemptFailsAfterFirstSucceeds(t *testing.T) {
 	store, bins, locs, binID := movableFixture(from)
 	locs.add(domain.Location{ID: to, Name: "Attic"})
 	mover, _ := newTestBinMover(store, bins, locs)
-	first := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
-	second := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Bob")
+	first := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
+	second := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Bob")
 
 	if _, err := mover.Move(context.Background(), first, binID, to); err != nil {
 		t.Fatalf("first Move: %v", err)

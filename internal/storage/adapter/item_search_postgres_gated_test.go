@@ -15,7 +15,7 @@ import (
 // TestItemRepository_CreateAndGet's own in-bin fixture.
 func TestItemRepository_FindVisibleDetail_InBin(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Camping stove", bin, creator)
@@ -23,7 +23,7 @@ func TestItemRepository_FindVisibleDetail_InBin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.FindVisibleDetail(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("FindVisibleDetail: %v", err)
@@ -48,14 +48,14 @@ func TestItemRepository_FindVisibleDetail_InBin(t *testing.T) {
 // TestItemRepository_Create_HeldByRoundTrips' own held fixture.
 func TestItemRepository_FindVisibleDetail_CheckedOut(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
 	it := &domain.Item{ID: domain.NewItemID(), Name: "Sleeping bag", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.FindVisibleDetail(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("FindVisibleDetail: %v", err)
@@ -73,8 +73,8 @@ func TestItemRepository_FindVisibleDetail_CheckedOut(t *testing.T) {
 
 func TestItemRepository_FindVisibleDetail_NotFound(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creator := f.seedUser(t, identity.RoleAdult)
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	_, err := f.repo.FindVisibleDetail(testCtx(t), viewer, domain.NewItemID())
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -87,9 +87,9 @@ func TestItemRepository_FindVisibleDetail_NotFound(t *testing.T) {
 // over FindVisibleDetail's identical visibility predicate.
 func TestItemRepository_FindVisibleDetail_VisibilityMatrix(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
-	admin := f.seedUser(t, identity.RoleAdmin)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
+	admin := f.seedUser(t, identity.RoleOwner)
 	loc := f.seedLocation(t, creator)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 	it := newItem("Private item", privateBin, creator)
@@ -102,9 +102,9 @@ func TestItemRepository_FindVisibleDetail_VisibilityMatrix(t *testing.T) {
 		p       identity.Principal
 		visible bool
 	}{
-		{"admin", identity.NewUserPrincipal(admin, identity.RoleAdmin, "Admin"), true},
-		{"creator", identity.NewUserPrincipal(creator, identity.RoleMember, "Creator"), true},
-		{"non-creator member", identity.NewUserPrincipal(other, identity.RoleMember, "Other"), false},
+		{"admin", identity.NewUserPrincipal(admin, identity.RoleOwner, "Admin"), true},
+		{"creator", identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator"), true},
+		{"non-creator member", identity.NewUserPrincipal(other, identity.RoleAdult, "Other"), false},
 		{"integration", identity.NewIntegrationPrincipal("Nestova"), false},
 		{"anonymous", identity.Principal{}, false},
 	}
@@ -126,7 +126,7 @@ func TestItemRepository_FindVisibleDetail_VisibilityMatrix(t *testing.T) {
 // non-matching sibling in the same bin is excluded.
 func TestItemRepository_SearchVisible_MatchesByItemName(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	target := newItem("Camping Stove Deluxe", bin, creator)
@@ -137,7 +137,7 @@ func TestItemRepository_SearchVisible_MatchesByItemName(t *testing.T) {
 		t.Fatalf("Create(decoy): %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "stove", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -155,7 +155,7 @@ func TestItemRepository_SearchVisible_MatchesByItemName(t *testing.T) {
 // "searching a bin or location name surfaces the items inside it" rule.
 func TestItemRepository_SearchVisible_MatchesByBinName(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binID := domain.NewBinID()
 	bin := &domain.Bin{
@@ -170,7 +170,7 @@ func TestItemRepository_SearchVisible_MatchesByBinName(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "Holiday Decorations", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -184,7 +184,7 @@ func TestItemRepository_SearchVisible_MatchesByBinName(t *testing.T) {
 // half of MatchesByBinName's own doc.
 func TestItemRepository_SearchVisible_MatchesByLocationName(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	locID := domain.NewLocationID()
 	loc := &domain.Location{ID: locID, Name: "Attic Storage Nook", CreatedBy: creator}
 	if err := f.locations.Create(testCtx(t), loc); err != nil {
@@ -196,7 +196,7 @@ func TestItemRepository_SearchVisible_MatchesByLocationName(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "Attic Storage", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -212,13 +212,13 @@ func TestItemRepository_SearchVisible_MatchesByLocationName(t *testing.T) {
 // columns are NULL for that row's LEFT JOINs).
 func TestItemRepository_SearchVisible_HeldItemMatchesOwnNameOnly(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	it := &domain.Item{ID: domain.NewItemID(), Name: "Unique Held Flashlight", Quantity: 1, HeldBy: &creator, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "Flashlight", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -243,8 +243,8 @@ func TestItemRepository_SearchVisible_HeldItemMatchesOwnNameOnly(t *testing.T) {
 // member's private bin, while the owner's own search still finds it.
 func TestItemRepository_SearchVisible_ExcludesPrivateBinForNonOwner(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 	it := newItem("Unique Private Widget", privateBin, creator)
@@ -252,7 +252,7 @@ func TestItemRepository_SearchVisible_ExcludesPrivateBinForNonOwner(t *testing.T
 		t.Fatalf("Create: %v", err)
 	}
 
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 	got, err := f.repo.SearchVisible(testCtx(t), otherViewer, "Private Widget", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible(non-owner): %v", err)
@@ -261,7 +261,7 @@ func TestItemRepository_SearchVisible_ExcludesPrivateBinForNonOwner(t *testing.T
 		t.Errorf("SearchVisible(non-owner, private bin item) = %+v, want no results", got)
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err = f.repo.SearchVisible(testCtx(t), creatorViewer, "Private Widget", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible(creator): %v", err)
@@ -278,7 +278,7 @@ func TestItemRepository_SearchVisible_ExcludesPrivateBinForNonOwner(t *testing.T
 // passes if escapeLikeTerm actually ran.
 func TestItemRepository_SearchVisible_EscapesWildcardCharacters(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	target := newItem("100%_Cotton_Towel", bin, creator)
@@ -290,7 +290,7 @@ func TestItemRepository_SearchVisible_EscapesWildcardCharacters(t *testing.T) {
 		t.Fatalf("Create(decoy): %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "100%_Cotton", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -302,8 +302,8 @@ func TestItemRepository_SearchVisible_EscapesWildcardCharacters(t *testing.T) {
 
 func TestItemRepository_SearchVisible_NoMatchIsEmptySlice(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creator := f.seedUser(t, identity.RoleAdult)
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "nonexistent-zzz", 10)
 	if err != nil {
@@ -321,7 +321,7 @@ func TestItemRepository_SearchVisible_NoMatchIsEmptySlice(t *testing.T) {
 // sequential scan over the item table.
 func TestItemRepository_SearchVisible_UsesTrigramIndex(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 

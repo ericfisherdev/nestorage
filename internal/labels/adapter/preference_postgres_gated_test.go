@@ -28,16 +28,27 @@ func newPreferenceFixture(t *testing.T) *preferenceFixture {
 	return &preferenceFixture{pool: pool, repo: adapter.NewSizePreferenceRepository(pool)}
 }
 
-// seedUser inserts a minimal app_user row directly — this package has no
-// reason to import the identity bounded context's own repository just for a
-// test fixture, mirroring notify/adapter's own seedUser rationale.
+// seedUser inserts a minimal identity.household + identity.member + profile
+// row directly — this package has no reason to import the identity bounded
+// context's own repository just for a test fixture, mirroring notify/adapter's
+// own seedUser rationale.
 func (f *preferenceFixture) seedUser(t *testing.T) identity.UserID {
 	t.Helper()
 	id := identity.NewUserID()
-	const q = `INSERT INTO app_user (id, display_name, email, password_hash, role, color) VALUES ($1, 'Test User', $2, 'x', 'member', 'indigo')`
+	householdID := identity.NewHouseholdID()
 	email := id.String() + "@example.test"
-	if _, err := f.pool.Exec(testCtx(t), q, id.String(), email); err != nil {
+
+	const householdQ = `INSERT INTO identity.household (id, name) VALUES ($1, 'Test Household')`
+	if _, err := f.pool.Exec(testCtx(t), householdQ, householdID.String()); err != nil {
+		t.Fatalf("seed household: %v", err)
+	}
+	const memberQ = `INSERT INTO identity.member (id, household_id, display_name, email, password_hash, role) VALUES ($1, $2, 'Test User', $3, 'x', 'adult')`
+	if _, err := f.pool.Exec(testCtx(t), memberQ, id.String(), householdID.String(), email); err != nil {
 		t.Fatalf("seed user: %v", err)
+	}
+	const profileQ = `INSERT INTO profile (member_id, color) VALUES ($1, 'indigo')`
+	if _, err := f.pool.Exec(testCtx(t), profileQ, id.String()); err != nil {
+		t.Fatalf("seed user profile: %v", err)
 	}
 	return id
 }
@@ -111,7 +122,7 @@ func TestSizePreferenceRepository_Upsert_ScopedToUser(t *testing.T) {
 }
 
 // TestSizePreferenceRepository_OnDeleteCascade_RemovesPreference proves the
-// migration's ON DELETE CASCADE: deleting the owning app_user row leaves no
+// migration's ON DELETE CASCADE: deleting the owning identity.member row leaves no
 // orphaned preference row behind.
 func TestSizePreferenceRepository_OnDeleteCascade_RemovesPreference(t *testing.T) {
 	f := newPreferenceFixture(t)
@@ -121,8 +132,8 @@ func TestSizePreferenceRepository_OnDeleteCascade_RemovesPreference(t *testing.T
 	if err := f.repo.Upsert(ctx, userID, domain.LabelSizeAvery5160); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if _, err := f.pool.Exec(ctx, `DELETE FROM app_user WHERE id = $1`, userID.String()); err != nil {
-		t.Fatalf("delete app_user: %v", err)
+	if _, err := f.pool.Exec(ctx, `DELETE FROM identity.member WHERE id = $1`, userID.String()); err != nil {
+		t.Fatalf("delete identity.member: %v", err)
 	}
 
 	_, err := f.repo.Get(ctx, userID)

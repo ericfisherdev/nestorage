@@ -177,7 +177,7 @@ func TestReturnRequestService_Request_Success(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(holder)}
 	svc, requests, events, notifier := newTestReturnRequestService(itemGetter)
 	requester := identity.NewUserID()
-	actor := identity.NewUserPrincipal(requester, identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(requester, identity.RoleAdult, "Riley")
 	message := "please, I need this back"
 
 	req, err := svc.Request(context.Background(), actor, itemGetter.item.ID, &message)
@@ -229,7 +229,7 @@ func TestReturnRequestService_Request_IntegrationPrincipalRejected(t *testing.T)
 func TestReturnRequestService_Request_InvalidMessageRejected(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(identity.NewUserID())}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 	blank := "   "
 
 	_, err := svc.Request(context.Background(), actor, itemGetter.item.ID, &blank)
@@ -241,7 +241,7 @@ func TestReturnRequestService_Request_InvalidMessageRejected(t *testing.T) {
 func TestReturnRequestService_Request_InvisibleItemMasked(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{getErr: domain.ErrItemNotFound}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 
 	_, err := svc.Request(context.Background(), actor, domain.NewItemID(), nil)
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -252,7 +252,7 @@ func TestReturnRequestService_Request_InvisibleItemMasked(t *testing.T) {
 func TestReturnRequestService_Request_ItemInBinRejected(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{item: binnedItemFixture()}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 
 	_, err := svc.Request(context.Background(), actor, itemGetter.item.ID, nil)
 	if !errors.Is(err, domain.ErrItemNotCheckedOut) {
@@ -264,7 +264,7 @@ func TestReturnRequestService_Request_HolderRejected(t *testing.T) {
 	holder := identity.NewUserID()
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(holder)}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
 
 	_, err := svc.Request(context.Background(), actor, itemGetter.item.ID, nil)
 	if !errors.Is(err, domain.ErrRequesterHoldsItem) {
@@ -277,7 +277,7 @@ func TestReturnRequestService_Request_DuplicateOpenRejected(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(holder)}
 	svc, _, _, notifier := newTestReturnRequestService(itemGetter)
 	requester := identity.NewUserID()
-	actor := identity.NewUserPrincipal(requester, identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(requester, identity.RoleAdult, "Riley")
 
 	if _, err := svc.Request(context.Background(), actor, itemGetter.item.ID, nil); err != nil {
 		t.Fatalf("first Request: %v", err)
@@ -299,7 +299,7 @@ func TestReturnRequestService_Request_EventAppendFailureAbortsRequest(t *testing
 	uow := &fakeReturnRequestUOW{requests: requests, events: events}
 	notifier := &fakeReturnRequestNotifier{}
 	svc := app.NewReturnRequestService(itemGetter, requests, uow, notifier, testLogger())
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 
 	_, err := svc.Request(context.Background(), actor, itemGetter.item.ID, nil)
 	if err == nil {
@@ -318,7 +318,7 @@ func TestReturnRequestService_Cancel_Success(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(holder)}
 	svc, requests, events, _ := newTestReturnRequestService(itemGetter)
 	requester := identity.NewUserID()
-	actor := identity.NewUserPrincipal(requester, identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(requester, identity.RoleAdult, "Riley")
 
 	req, err := svc.Request(context.Background(), actor, itemGetter.item.ID, nil)
 	if err != nil {
@@ -346,7 +346,7 @@ func TestReturnRequestService_Cancel_Success(t *testing.T) {
 func TestReturnRequestService_Cancel_InvisibleItemMasked(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{getErr: domain.ErrItemNotFound}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 
 	err := svc.Cancel(context.Background(), actor, domain.NewItemID(), domain.NewReturnRequestID())
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -357,7 +357,7 @@ func TestReturnRequestService_Cancel_InvisibleItemMasked(t *testing.T) {
 func TestReturnRequestService_Cancel_UnknownRequestNotFound(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(identity.NewUserID())}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 
 	err := svc.Cancel(context.Background(), actor, itemGetter.item.ID, domain.NewReturnRequestID())
 	if !errors.Is(err, domain.ErrReturnRequestNotFound) {
@@ -373,8 +373,8 @@ func TestReturnRequestService_Cancel_StrangerMasked(t *testing.T) {
 	holder := identity.NewUserID()
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(holder)}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	requester := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
-	stranger := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Stranger")
+	requester := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
+	stranger := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Stranger")
 
 	req, err := svc.Request(context.Background(), requester, itemGetter.item.ID, nil)
 	if err != nil {
@@ -391,7 +391,7 @@ func TestReturnRequestService_Cancel_AlreadyResolvedRejected(t *testing.T) {
 	holder := identity.NewUserID()
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(holder)}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	requester := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	requester := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 
 	req, err := svc.Request(context.Background(), requester, itemGetter.item.ID, nil)
 	if err != nil {
@@ -411,7 +411,7 @@ func TestReturnRequestService_ListForItem(t *testing.T) {
 	holder := identity.NewUserID()
 	itemGetter := &fakeReturnRequestItemGetter{item: checkedOutItem(holder)}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 
 	if _, err := svc.Request(context.Background(), actor, itemGetter.item.ID, nil); err != nil {
 		t.Fatalf("Request: %v", err)
@@ -429,7 +429,7 @@ func TestReturnRequestService_ListForItem(t *testing.T) {
 func TestReturnRequestService_ListForItem_InvisibleItemMasked(t *testing.T) {
 	itemGetter := &fakeReturnRequestItemGetter{getErr: domain.ErrItemNotFound}
 	svc, _, _, _ := newTestReturnRequestService(itemGetter)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Riley")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Riley")
 
 	_, err := svc.ListForItem(context.Background(), actor, domain.NewItemID())
 	if !errors.Is(err, domain.ErrItemNotFound) {

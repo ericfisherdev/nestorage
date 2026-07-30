@@ -18,13 +18,14 @@ import (
 // locationFixture wires a LocationRepository and an identity UserRepository
 // over ONE derived database (dbtest.Harness.NewIsolatedPool must be called
 // exactly once per test — a second call resets the schema it just built,
-// wiping any data already written), so a test can seed the app_user row
-// location's created_by FK requires and then exercise the repository under
-// test.
+// wiping any data already written), so a test can seed the identity.member
+// row location's created_by FK requires and then exercise the repository
+// under test.
 type locationFixture struct {
-	pool  *pgxpool.Pool
-	repo  *adapter.LocationRepository
-	users *identityadapter.UserRepository
+	pool      *pgxpool.Pool
+	repo      *adapter.LocationRepository
+	users     *identityadapter.UserRepository
+	household identity.HouseholdID
 }
 
 // newLocationFixture derives this package's own "storage" database — the
@@ -34,10 +35,24 @@ func newLocationFixture(t *testing.T) *locationFixture {
 	t.Helper()
 	pool := dbtest.Harness.NewIsolatedPool(t, "storage")
 	return &locationFixture{
-		pool:  pool,
-		repo:  adapter.NewLocationRepository(pool),
-		users: identityadapter.NewUserRepository(pool),
+		pool:      pool,
+		repo:      adapter.NewLocationRepository(pool),
+		users:     identityadapter.NewUserRepository(pool),
+		household: seedHousehold(t, pool),
 	}
+}
+
+// seedHousehold inserts a minimal identity.household row directly — every
+// gated fixture in this package that seeds a user needs one, since
+// identity.member.household_id is NOT NULL.
+func seedHousehold(t *testing.T, pool *pgxpool.Pool) identity.HouseholdID {
+	t.Helper()
+	id := identity.NewHouseholdID()
+	const q = `INSERT INTO identity.household (id, name) VALUES ($1, 'Test Household')`
+	if _, err := pool.Exec(testCtx(t), q, id.String()); err != nil {
+		t.Fatalf("seed household: %v", err)
+	}
+	return id
 }
 
 // testCtx returns a per-call context bounded so a slow/unresponsive database
@@ -55,10 +70,11 @@ func (f *locationFixture) seedOwner(t *testing.T) identity.UserID {
 	t.Helper()
 	u := &identity.User{
 		ID:           identity.NewUserID(),
+		HouseholdID:  f.household,
 		DisplayName:  "Maya",
 		Email:        "location-owner-" + identity.NewUserID().String() + "@example.com",
 		PasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
-		Role:         identity.RoleMember,
+		Role:         identity.RoleAdult,
 		Color:        identity.ColorIndigo,
 	}
 	if err := f.users.Create(testCtx(t), u); err != nil {
@@ -142,7 +158,7 @@ func TestLocationRepository_FindVisibleByID(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Anyone")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Anyone")
 	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, loc.ID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID: %v", err)
@@ -154,7 +170,7 @@ func TestLocationRepository_FindVisibleByID(t *testing.T) {
 
 func TestLocationRepository_FindVisibleByID_NotFound(t *testing.T) {
 	f := newLocationFixture(t)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Anyone")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Anyone")
 
 	_, err := f.repo.FindVisibleByID(testCtx(t), viewer, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotFound) {

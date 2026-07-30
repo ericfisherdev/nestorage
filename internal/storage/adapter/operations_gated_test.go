@@ -39,10 +39,10 @@ func newOperationService(f *itemFixture) *app.OperationService {
 
 func TestOperationService_AddToBin_MovesHeldItemIntoBin(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	holder := f.seedUser(t, identity.RoleMember)
+	holder := f.seedUser(t, identity.RoleAdult)
 	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -50,7 +50,7 @@ func TestOperationService_AddToBin_MovesHeldItemIntoBin(t *testing.T) {
 	beforeAdd := it.PlacementChangedAt
 
 	svc := newOperationService(f)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
 
 	time.Sleep(2 * time.Millisecond)
 	op, err := svc.AddToBin(testCtx(t), actor, it.ID, bin)
@@ -67,7 +67,7 @@ func TestOperationService_AddToBin_MovesHeldItemIntoBin(t *testing.T) {
 		t.Errorf("AddToBin: PlacementChangedAt = %v, want strictly after %v", op.Item.PlacementChangedAt, beforeAdd)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after AddToBin: %v", err)
@@ -82,7 +82,7 @@ func TestOperationService_AddToBin_MovesHeldItemIntoBin(t *testing.T) {
 
 func TestOperationService_AddToBin_AlreadyInBinRejected_NoPartialWrite(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
@@ -93,7 +93,7 @@ func TestOperationService_AddToBin_AlreadyInBinRejected_NoPartialWrite(t *testin
 	beforeAttempt := it.PlacementChangedAt
 
 	svc := newOperationService(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	_, err := svc.AddToBin(testCtx(t), actor, it.ID, binB)
 	if !errors.Is(err, domain.ErrItemAlreadyInBin) {
@@ -114,7 +114,7 @@ func TestOperationService_AddToBin_AlreadyInBinRejected_NoPartialWrite(t *testin
 
 func TestOperationService_RemoveFromBin_ChecksOutBinnedItem(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -124,8 +124,8 @@ func TestOperationService_RemoveFromBin_ChecksOutBinnedItem(t *testing.T) {
 	beforeRemove := it.PlacementChangedAt
 
 	svc := newOperationService(f)
-	holder := f.seedUser(t, identity.RoleMember)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
+	holder := f.seedUser(t, identity.RoleAdult)
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
 
 	time.Sleep(2 * time.Millisecond)
 	op, err := svc.RemoveFromBin(testCtx(t), actor, it.ID, nil)
@@ -145,7 +145,7 @@ func TestOperationService_RemoveFromBin_ChecksOutBinnedItem(t *testing.T) {
 
 func TestOperationService_RemoveFromBin_IntegrationPrincipalRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -161,7 +161,7 @@ func TestOperationService_RemoveFromBin_IntegrationPrincipalRejected(t *testing.
 		t.Errorf("RemoveFromBin(integration principal) = %v, want ErrHolderRequired", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after rejected RemoveFromBin: %v", err)
@@ -173,10 +173,10 @@ func TestOperationService_RemoveFromBin_IntegrationPrincipalRejected(t *testing.
 
 func TestOperationService_ReturnToBin_ReturnsHeldItem(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	holder := f.seedUser(t, identity.RoleMember)
+	holder := f.seedUser(t, identity.RoleAdult)
 	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -184,7 +184,7 @@ func TestOperationService_ReturnToBin_ReturnsHeldItem(t *testing.T) {
 	beforeReturn := it.PlacementChangedAt
 
 	svc := newOperationService(f)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
 
 	time.Sleep(2 * time.Millisecond)
 	op, err := svc.ReturnToBin(testCtx(t), actor, it.ID, bin, nil)
@@ -204,7 +204,7 @@ func TestOperationService_ReturnToBin_ReturnsHeldItem(t *testing.T) {
 
 func TestOperationService_ReturnToBin_NotCheckedOutRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
@@ -214,7 +214,7 @@ func TestOperationService_ReturnToBin_NotCheckedOutRejected(t *testing.T) {
 	}
 
 	svc := newOperationService(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	_, err := svc.ReturnToBin(testCtx(t), actor, it.ID, binB, nil)
 	if !errors.Is(err, domain.ErrItemNotCheckedOut) {
@@ -233,7 +233,7 @@ func TestOperationService_ReturnToBin_NotCheckedOutRejected(t *testing.T) {
 // every op" siblings above.
 func TestOperationService_Edit_DoesNotAdvancePlacementChangedAt(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -249,7 +249,7 @@ func TestOperationService_Edit_DoesNotAdvancePlacementChangedAt(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after Update: %v", err)
@@ -270,7 +270,7 @@ func TestOperationService_Edit_DoesNotAdvancePlacementChangedAt(t *testing.T) {
 // exercised here under real concurrency rather than only sequentially).
 func TestOperationService_RemoveFromBin_ConcurrentAttemptsOnlyOneWins(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -279,10 +279,10 @@ func TestOperationService_RemoveFromBin_ConcurrentAttemptsOnlyOneWins(t *testing
 	}
 
 	svc := newOperationService(f)
-	holderA := f.seedUser(t, identity.RoleMember)
-	holderB := f.seedUser(t, identity.RoleMember)
-	actorA := identity.NewUserPrincipal(holderA, identity.RoleMember, "A")
-	actorB := identity.NewUserPrincipal(holderB, identity.RoleMember, "B")
+	holderA := f.seedUser(t, identity.RoleAdult)
+	holderB := f.seedUser(t, identity.RoleAdult)
+	actorA := identity.NewUserPrincipal(holderA, identity.RoleAdult, "A")
+	actorB := identity.NewUserPrincipal(holderB, identity.RoleAdult, "B")
 
 	var wg sync.WaitGroup
 	results := make([]error, 2)
@@ -312,7 +312,7 @@ func TestOperationService_RemoveFromBin_ConcurrentAttemptsOnlyOneWins(t *testing
 		t.Errorf("concurrent RemoveFromBin: succeeded=%d failed=%d, want exactly one of each", succeeded, failed)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after concurrent RemoveFromBin: %v", err)
@@ -340,23 +340,23 @@ func TestNewPostgresUnitOfWork_NilPoolPanics(t *testing.T) {
 // the app package's simulated-rollback fake.
 func TestOperationAndEventCommitTogether(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	holder := f.seedUser(t, identity.RoleMember)
+	holder := f.seedUser(t, identity.RoleAdult)
 	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	svc := newOperationService(f)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
 
 	if _, err := svc.AddToBin(testCtx(t), actor, it.ID, bin); err != nil {
 		t.Fatalf("AddToBin: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after AddToBin: %v", err)
@@ -384,7 +384,7 @@ func TestOperationAndEventCommitTogether(t *testing.T) {
 // change nor any event row, over a real pgx transaction.
 func TestOperationAndEventRollBackTogether(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
@@ -394,14 +394,14 @@ func TestOperationAndEventRollBackTogether(t *testing.T) {
 	}
 
 	svc := newOperationService(f)
-	actor := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	_, err := svc.AddToBin(testCtx(t), actor, it.ID, binB)
 	if !errors.Is(err, domain.ErrItemAlreadyInBin) {
 		t.Fatalf("AddToBin(already in bin) = %v, want ErrItemAlreadyInBin", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after rejected AddToBin: %v", err)
@@ -427,23 +427,23 @@ func TestOperationAndEventRollBackTogether(t *testing.T) {
 // surfaced on Operation.FulfilledReturnRequests.
 func TestOperationService_ReturnToBin_FulfillsOpenReturnRequest(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	holder := f.seedUser(t, identity.RoleMember)
+	holder := f.seedUser(t, identity.RoleAdult)
 	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	requester := f.seedUser(t, identity.RoleMember)
+	requester := f.seedUser(t, identity.RoleAdult)
 	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
 	if err := f.requests.Create(testCtx(t), req); err != nil {
 		t.Fatalf("seed return request: %v", err)
 	}
 
 	svc := newOperationService(f)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Holder")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
 
 	op, err := svc.ReturnToBin(testCtx(t), actor, it.ID, bin, nil)
 	if err != nil {

@@ -283,7 +283,7 @@ func (h *binsWebHarness) postForm(t *testing.T, path string, form url.Values, ht
 }
 
 func testViewer() identity.Principal {
-	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 }
 
 func TestNewBinsWebHandlers_NilDependenciesPanic(t *testing.T) {

@@ -133,7 +133,7 @@ func TestItemLinkService_Add(t *testing.T) {
 	items := &fakeItemLinkItemGetter{}
 	svc := app.NewItemLinkService(repo, items, testLogger())
 	itemID := domain.NewItemID()
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	l, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com/manual.pdf")
 	if err != nil {
@@ -154,7 +154,7 @@ func TestItemLinkService_Add_AssignsNextPosition(t *testing.T) {
 	repo := newFakeItemLinkRepo()
 	svc := app.NewItemLinkService(repo, &fakeItemLinkItemGetter{}, testLogger())
 	itemID := domain.NewItemID()
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	first, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com/manual")
 	if err != nil {
@@ -174,7 +174,7 @@ func TestItemLinkService_Add_ValidationRejected(t *testing.T) {
 	items := &fakeItemLinkItemGetter{}
 	svc := app.NewItemLinkService(repo, items, testLogger())
 	itemID := domain.NewItemID()
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	tests := []struct {
 		name    string
@@ -219,7 +219,7 @@ func TestItemLinkService_Edit(t *testing.T) {
 	repo := newFakeItemLinkRepo()
 	svc := app.NewItemLinkService(repo, &fakeItemLinkItemGetter{}, testLogger())
 	itemID := domain.NewItemID()
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	l, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com/old")
 	if err != nil {
@@ -237,7 +237,7 @@ func TestItemLinkService_Edit(t *testing.T) {
 
 func TestItemLinkService_Edit_ValidationRejected(t *testing.T) {
 	svc := app.NewItemLinkService(newFakeItemLinkRepo(), &fakeItemLinkItemGetter{}, testLogger())
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	err := svc.Edit(context.Background(), viewer, domain.NewItemID(), domain.NewItemLinkID(), "", "https://example.com")
 	if !errors.Is(err, domain.ErrItemLinkLabelRequired) {
@@ -247,7 +247,7 @@ func TestItemLinkService_Edit_ValidationRejected(t *testing.T) {
 
 func TestItemLinkService_Edit_NotFoundWrapped(t *testing.T) {
 	svc := app.NewItemLinkService(newFakeItemLinkRepo(), &fakeItemLinkItemGetter{}, testLogger())
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	err := svc.Edit(context.Background(), viewer, domain.NewItemID(), domain.NewItemLinkID(), "Manual", "https://example.com")
 	if !errors.Is(err, domain.ErrItemLinkNotFound) {
@@ -269,7 +269,7 @@ func TestItemLinkService_Remove(t *testing.T) {
 	repo := newFakeItemLinkRepo()
 	svc := app.NewItemLinkService(repo, &fakeItemLinkItemGetter{}, testLogger())
 	itemID := domain.NewItemID()
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	l, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com")
 	if err != nil {
@@ -295,7 +295,7 @@ func TestItemLinkService_Remove_ItemNotVisibleWrapped(t *testing.T) {
 
 func TestItemLinkService_Remove_NotFoundWrapped(t *testing.T) {
 	svc := app.NewItemLinkService(newFakeItemLinkRepo(), &fakeItemLinkItemGetter{}, testLogger())
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	err := svc.Remove(context.Background(), viewer, domain.NewItemID(), domain.NewItemLinkID())
 	if !errors.Is(err, domain.ErrItemLinkNotFound) {
@@ -307,7 +307,7 @@ func TestItemLinkService_ListForItem(t *testing.T) {
 	repo := newFakeItemLinkRepo()
 	svc := app.NewItemLinkService(repo, &fakeItemLinkItemGetter{}, testLogger())
 	itemID := domain.NewItemID()
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	if _, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com"); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -337,7 +337,7 @@ func TestItemLinkService_ListForItem_ItemNotVisibleWrapped(t *testing.T) {
 
 func TestItemLinkService_ListForItem_Empty(t *testing.T) {
 	svc := app.NewItemLinkService(newFakeItemLinkRepo(), &fakeItemLinkItemGetter{}, testLogger())
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.ListForItem(context.Background(), viewer, domain.NewItemID())
 	if err != nil {

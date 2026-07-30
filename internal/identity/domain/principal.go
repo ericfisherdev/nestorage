@@ -60,19 +60,19 @@ func NewUserPrincipal(id UserID, role Role, label string) Principal {
 
 // NewIntegrationPrincipal returns the Principal for NSTR-23's account api
 // key: the Nestova integration authenticates as this, not as any household
-// member. It hard-codes RoleMember — there is deliberately no way to build
-// an admin integration through this constructor, which is what makes
-// IsAdmin's two-part check correct even if a future bug ever set Role to
-// RoleAdmin on one of these by some other path.
+// member. It hard-codes RoleAdult (member-level) — there is deliberately no
+// way to build an admin integration through this constructor, which is what
+// makes IsAdmin's two-part check correct even if a future bug ever set Role
+// to RoleOwner on one of these by some other path.
 func NewIntegrationPrincipal(label string) Principal {
-	return Principal{Kind: KindIntegration, Role: RoleMember, Label: label}
+	return Principal{Kind: KindIntegration, Role: RoleAdult, Label: label}
 }
 
 // IsAdmin reports whether p carries administrative privileges. Both parts of
 // the check matter: Kind == KindUser is what stops a mis-constructed
 // integration principal from ever reaching an admin route, even one whose
-// Role somehow reads RoleAdmin — Role alone is not a sufficient check.
-func (p Principal) IsAdmin() bool { return p.Kind == KindUser && p.Role == RoleAdmin }
+// Role somehow reads RoleOwner — Role alone is not a sufficient check.
+func (p Principal) IsAdmin() bool { return p.Kind == KindUser && p.Role == RoleOwner }
 
 // IsAnonymous reports whether p is the zero Principal — no credential
 // resolved for this request.

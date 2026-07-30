@@ -70,7 +70,7 @@ func TestResolve_Anonymous_PassesThroughWithNoPrincipal(t *testing.T) {
 }
 
 func TestResolve_ValidCredential_StoresPrincipalForNextToRead(t *testing.T) {
-	want := domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdmin, "Maya")
+	want := domain.NewUserPrincipal(domain.NewUserID(), domain.RoleOwner, "Maya")
 	session := &stubResolver{principal: want, found: true}
 	chain := adapter.NewChain(session, &stubResolver{}, &stubResolver{})
 	denier := adapter.NewDenier(testLogger())
@@ -162,7 +162,7 @@ func TestRequireAuthenticated_Anonymous_RedirectsToLogin(t *testing.T) {
 }
 
 func TestRequireAuthenticated_Authenticated_PassesThrough(t *testing.T) {
-	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel"), found: true}
+	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Daniel"), found: true}
 	chain := adapter.NewChain(session, &stubResolver{}, &stubResolver{})
 	denier := adapter.NewDenier(testLogger())
 	next, called := calledFlagHandler()
@@ -208,7 +208,7 @@ func TestRequireAdmin_Anonymous_Returns401(t *testing.T) {
 }
 
 func TestRequireAdmin_Member_Returns403(t *testing.T) {
-	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel"), found: true}
+	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Daniel"), found: true}
 	chain := adapter.NewChain(session, &stubResolver{}, &stubResolver{})
 	denier := adapter.NewDenier(testLogger())
 	next, called := calledFlagHandler()
@@ -278,7 +278,7 @@ func TestRequireAPICredential_AbsentHeader_Returns401(t *testing.T) {
 // the chain) turned it into a valid Principal — a bearer credential is
 // required regardless of what CurrentPrincipal already holds.
 func TestRequireAPICredential_CookieOnly_Returns401(t *testing.T) {
-	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel"), found: true}
+	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Daniel"), found: true}
 	chain := adapter.NewChain(session, &stubResolver{}, &stubResolver{})
 	denier := adapter.NewDenier(testLogger())
 	next, called := calledFlagHandler()
@@ -316,7 +316,7 @@ func TestRequireAPICredential_BearerResolvedPrincipal_PassesThrough(t *testing.T
 }
 
 func TestRequireAdmin_Admin_PassesThrough(t *testing.T) {
-	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdmin, "Maya"), found: true}
+	session := &stubResolver{principal: domain.NewUserPrincipal(domain.NewUserID(), domain.RoleOwner, "Maya"), found: true}
 	chain := adapter.NewChain(session, &stubResolver{}, &stubResolver{})
 	denier := adapter.NewDenier(testLogger())
 	next, called := calledFlagHandler()

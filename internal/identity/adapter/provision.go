@@ -45,7 +45,9 @@ func NewProvisioner(pool *pgxpool.Pool) *Provisioner {
 
 // CreateFirstAdmin creates u as the first admin user inside a transaction
 // serialized by a fixed-key advisory lock, so a concurrent submission
-// cannot race the "no user yet" check with the insert. Returns
+// cannot race the "no user yet" check with the insert. Before creating u, it
+// resolves u.HouseholdID via NSTR-116's household attachment rule: adopt the
+// single existing household, or create one when none exists. Returns
 // domain.ErrSetupComplete when a user already exists — the lost-race case,
 // which the caller treats as "setup is already done", not a failure.
 func (p *Provisioner) CreateFirstAdmin(ctx context.Context, u *domain.User) error {
@@ -67,6 +69,13 @@ func (p *Provisioner) CreateFirstAdmin(ctx context.Context, u *domain.User) erro
 	if has {
 		return domain.ErrSetupComplete
 	}
+
+	householdID, err := resolveHouseholdForSetup(ctx, NewHouseholdRepository(tx))
+	if err != nil {
+		return fmt.Errorf("provision first admin: resolve household: %w", err)
+	}
+	u.HouseholdID = householdID
+
 	if err := repo.Create(ctx, u); err != nil {
 		return fmt.Errorf("provision first admin: create user: %w", err)
 	}

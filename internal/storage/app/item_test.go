@@ -207,7 +207,7 @@ func TestItemService_Create(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
 	binID := domain.NewBinID()
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	it, err := svc.Create(context.Background(), "Camping stove", nil, 1, binID, actor)
 	if err != nil {
@@ -229,7 +229,7 @@ func TestItemService_Create(t *testing.T) {
 func TestCreateEmitsCreatedEvent(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, events := newTestItemService(repo)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if err != nil {
@@ -259,7 +259,7 @@ func TestCreateEventFailureAbortsCreate(t *testing.T) {
 	events := &fakeEventAppender{appendErr: errors.New("boom")}
 	uow := &fakeItemTxUnitOfWork{store: repo, events: events}
 	svc := app.NewItemService(repo, uow, testLogger())
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if err == nil {
@@ -274,7 +274,7 @@ func TestItemService_Create_ValidationRejected(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
 	binID := domain.NewBinID()
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	tests := []struct {
 		name     string
@@ -303,7 +303,7 @@ func TestItemService_Create_RepositoryErrorWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
 	repo.createErr = domain.ErrBinNotFound
 	svc, _ := newTestItemService(repo)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -315,7 +315,7 @@ func TestItemService_Edit(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
 	binID := domain.NewBinID()
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 	it, err := svc.Create(context.Background(), "Stove", nil, 1, binID, actor)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -357,7 +357,7 @@ func TestEditEmitsEditedEventWithChangedFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeItemRepo()
 			svc, events := newTestItemService(repo)
-			actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+			actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 			it, err := svc.Create(context.Background(), "Stove", strPtr(baseDesc), 1, domain.NewBinID(), actor)
 			if err != nil {
 				t.Fatalf("Create: %v", err)
@@ -388,7 +388,7 @@ func TestEditEmitsEditedEventWithChangedFields(t *testing.T) {
 func TestEditWithNoChangesEmitsNoEvent(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, events := newTestItemService(repo)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 	desc := "same description"
 	it, err := svc.Create(context.Background(), "Stove", &desc, 1, domain.NewBinID(), actor)
 	if err != nil {
@@ -409,7 +409,7 @@ func TestEditWithNoChangesEmitsNoEvent(t *testing.T) {
 // rollback — the field change Update already wrote does not land.
 func TestEditEventFailureAbortsEdit(t *testing.T) {
 	repo := newFakeItemRepo()
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 	svc, events := newTestItemService(repo)
 	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if err != nil {
@@ -436,8 +436,8 @@ func TestEditEventAttribution(t *testing.T) {
 		name  string
 		actor identity.Principal
 	}{
-		{"session principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")},
-		{"device-token principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Bob")},
+		{"session principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")},
+		{"device-token principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Bob")},
 		{"integration principal", identity.NewIntegrationPrincipal("Nestova")},
 	}
 	for _, tt := range tests {
@@ -470,7 +470,7 @@ func TestEditEventAttribution(t *testing.T) {
 func TestItemService_Edit_ValidationRejected(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	if err := svc.Edit(context.Background(), domain.NewItemID(), "", nil, 1, actor); !errors.Is(err, domain.ErrItemNameRequired) {
 		t.Errorf("Edit(blank name) error = %v, want ErrItemNameRequired", err)
@@ -483,7 +483,7 @@ func TestItemService_Edit_ValidationRejected(t *testing.T) {
 func TestItemService_Edit_NotFoundWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	err := svc.Edit(context.Background(), domain.NewItemID(), "Stove", nil, 1, actor)
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -494,8 +494,8 @@ func TestItemService_Edit_NotFoundWrapped(t *testing.T) {
 func TestItemService_Get(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if err != nil {
@@ -514,7 +514,7 @@ func TestItemService_Get(t *testing.T) {
 func TestItemService_Get_NotFoundWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.Get(context.Background(), viewer, domain.NewItemID())
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -525,8 +525,8 @@ func TestItemService_Get_NotFoundWrapped(t *testing.T) {
 func TestItemService_ListInBin(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 	binID := domain.NewBinID()
 
 	if _, err := svc.Create(context.Background(), "Stove", nil, 1, binID, actor); err != nil {
@@ -548,8 +548,8 @@ func TestItemService_ListInBin(t *testing.T) {
 func TestItemService_ListVisible(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 	binID := domain.NewBinID()
 
 	if _, err := svc.Create(context.Background(), "Stove", nil, 1, binID, actor); err != nil {
@@ -584,7 +584,7 @@ func TestItemService_ListVisible_RepositoryErrorWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
 	repo.listVisibleErr = errors.New("boom")
 	svc, _ := newTestItemService(repo)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	if _, err := svc.ListVisible(context.Background(), viewer, domain.ItemFilter{}); err == nil {
 		t.Error("ListVisible() error = nil, want the wrapped repository error")
@@ -594,7 +594,7 @@ func TestItemService_ListVisible_RepositoryErrorWrapped(t *testing.T) {
 func TestItemService_Delete(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if err != nil {
@@ -618,7 +618,7 @@ func TestItemService_Delete(t *testing.T) {
 func TestDeleteEmitsDeletedEvent(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, events := newTestItemService(repo)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 	it, err := svc.Create(context.Background(), "Stove", nil, 1, domain.NewBinID(), actor)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -642,7 +642,7 @@ func TestDeleteEmitsDeletedEvent(t *testing.T) {
 func TestItemService_Delete_NotFoundWrapped(t *testing.T) {
 	repo := newFakeItemRepo()
 	svc, _ := newTestItemService(repo)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	err := svc.Delete(context.Background(), domain.NewItemID(), actor)
 	if !errors.Is(err, domain.ErrItemNotFound) {

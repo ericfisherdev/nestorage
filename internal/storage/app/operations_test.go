@@ -260,7 +260,7 @@ func TestOperationService_AddToBin(t *testing.T) {
 	destBinID := domain.NewBinID()
 	bins.bin = &domain.Bin{ID: destBinID, Code: "B2", Name: "Bin B"}
 	svc, _ := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	op, err := svc.AddToBin(context.Background(), actor, store.item.ID, destBinID)
 	if err != nil {
@@ -293,7 +293,7 @@ func TestOperationService_AddToBin_EmitsExactlyOneAddedEvent(t *testing.T) {
 	destBinID := domain.NewBinID()
 	bins.bin = &domain.Bin{ID: destBinID, Code: "B2", Name: "Bin B"}
 	svc, events := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	if _, err := svc.AddToBin(context.Background(), actor, store.item.ID, destBinID); err != nil {
 		t.Fatalf("AddToBin: %v", err)
@@ -319,7 +319,7 @@ func TestOperationService_AddToBin_AlreadyInBinRejected(t *testing.T) {
 	destBinID := domain.NewBinID()
 	bins.bin = &domain.Bin{ID: destBinID}
 	svc, events := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 	originalBin := *store.item.CurrentBinID
 
 	_, err := svc.AddToBin(context.Background(), actor, store.item.ID, destBinID)
@@ -338,7 +338,7 @@ func TestOperationService_AddToBin_UnknownBinRejected(t *testing.T) {
 	store, _ := heldFixture(identity.NewUserID())
 	bins := &fakeBinVisibility{notFoundErr: domain.ErrBinNotFound}
 	svc, _ := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := svc.AddToBin(context.Background(), actor, store.item.ID, domain.NewBinID())
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -351,7 +351,7 @@ func TestOperationService_AddToBin_UnknownItemRejected(t *testing.T) {
 	store := &fakeItemStore{}
 	bins := &fakeBinVisibility{bin: &domain.Bin{ID: destBinID}}
 	svc, _ := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := svc.AddToBin(context.Background(), actor, domain.NewItemID(), destBinID)
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -363,7 +363,7 @@ func TestOperationService_RemoveFromBin(t *testing.T) {
 	store, bins, _ := binnedFixture()
 	svc, _ := newTestOperationService(store, bins)
 	holder := identity.NewUserID()
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Bob")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Bob")
 
 	op, err := svc.RemoveFromBin(context.Background(), actor, store.item.ID, nil)
 	if err != nil {
@@ -394,7 +394,7 @@ func TestOperationService_RemoveFromBin_EmitsExactlyOneRemovedEvent(t *testing.T
 	store, bins, sourceBinID := binnedFixture()
 	svc, events := newTestOperationService(store, bins)
 	holder := identity.NewUserID()
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Bob")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Bob")
 	note := "smells like gasoline"
 
 	if _, err := svc.RemoveFromBin(context.Background(), actor, store.item.ID, &note); err != nil {
@@ -438,7 +438,7 @@ func TestOperationService_RemoveFromBin_AlreadyCheckedOutRejected(t *testing.T) 
 	existingHolder := identity.NewUserID()
 	store, bins := heldFixture(existingHolder)
 	svc, events := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Bob")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Bob")
 
 	_, err := svc.RemoveFromBin(context.Background(), actor, store.item.ID, nil)
 	if !errors.Is(err, domain.ErrItemAlreadyCheckedOut) {
@@ -463,7 +463,7 @@ func TestOperationService_RemoveFromBin_EventAppendFailureAbortsOperation(t *tes
 	events := &fakeEventAppender{appendErr: errors.New("boom")}
 	uow := &fakeUnitOfWork{store: store, events: events}
 	svc := app.NewOperationService(uow, bins, &fakeUserLabelResolver{}, &fakeReturnRequestNotifier{}, testLogger())
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Bob")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Bob")
 
 	_, err := svc.RemoveFromBin(context.Background(), actor, store.item.ID, nil)
 	if err == nil {
@@ -494,8 +494,8 @@ func TestOperationService_EventAttribution(t *testing.T) {
 		name  string
 		actor identity.Principal
 	}{
-		{"session principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")},
-		{"device-token principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Bob")},
+		{"session principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")},
+		{"device-token principal", identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Bob")},
 		{"integration principal", identity.NewIntegrationPrincipal("Nestova")},
 	}
 	for _, tt := range tests {
@@ -537,8 +537,8 @@ func TestOperationService_EventAttribution(t *testing.T) {
 func TestOperationService_RemoveFromBin_SecondAttemptFailsAfterFirstSucceeds(t *testing.T) {
 	store, bins, _ := binnedFixture()
 	svc, _ := newTestOperationService(store, bins)
-	first := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
-	second := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Bob")
+	first := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
+	second := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Bob")
 
 	if _, err := svc.RemoveFromBin(context.Background(), first, store.item.ID, nil); err != nil {
 		t.Fatalf("first RemoveFromBin: %v", err)
@@ -559,7 +559,7 @@ func TestOperationService_ReturnToBin(t *testing.T) {
 	destBinID := domain.NewBinID()
 	bins.bin = &domain.Bin{ID: destBinID}
 	svc, _ := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	op, err := svc.ReturnToBin(context.Background(), actor, store.item.ID, destBinID, nil)
 	if err != nil {
@@ -588,7 +588,7 @@ func TestOperationService_ReturnToBin_EmitsExactlyOneReturnedEvent(t *testing.T)
 	destBinID := domain.NewBinID()
 	bins.bin = &domain.Bin{ID: destBinID, Code: "B2", Name: "Bin B"}
 	svc, events := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 	note := "back on the shelf"
 
 	if _, err := svc.ReturnToBin(context.Background(), actor, store.item.ID, destBinID, &note); err != nil {
@@ -615,7 +615,7 @@ func TestOperationService_ReturnToBin_NotCheckedOutRejected(t *testing.T) {
 	destBinID := domain.NewBinID()
 	bins.bin = &domain.Bin{ID: destBinID}
 	svc, events := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := svc.ReturnToBin(context.Background(), actor, store.item.ID, destBinID, nil)
 	if !errors.Is(err, domain.ErrItemNotCheckedOut) {
@@ -633,7 +633,7 @@ func TestOperationService_ReturnToBin_UnknownBinRejected(t *testing.T) {
 	store, bins := heldFixture(identity.NewUserID())
 	bins.notFoundErr = domain.ErrBinNotFound
 	svc, _ := newTestOperationService(store, bins)
-	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
 
 	_, err := svc.ReturnToBin(context.Background(), actor, store.item.ID, domain.NewBinID(), nil)
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -668,7 +668,7 @@ func TestOperationService_AddToBin_FulfilsOpenReturnRequests(t *testing.T) {
 	open := openReturnRequestOn(store.item.ID, requester, holder)
 	users := map[identity.UserID]*identity.User{requester: {ID: requester, DisplayName: "Riley"}}
 	svc, _, _, notifier := newTestOperationServiceWithReturnRequests(store, bins, []domain.ReturnRequest{open}, users)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	op, err := svc.AddToBin(context.Background(), actor, store.item.ID, destBinID)
 	if err != nil {
@@ -710,7 +710,7 @@ func TestOperationService_ReturnToBin_FulfilsOpenReturnRequests(t *testing.T) {
 	open := openReturnRequestOn(store.item.ID, requester, holder)
 	users := map[identity.UserID]*identity.User{requester: {ID: requester, DisplayName: "Riley"}}
 	svc, _, _, notifier := newTestOperationServiceWithReturnRequests(store, bins, []domain.ReturnRequest{open}, users)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	op, err := svc.ReturnToBin(context.Background(), actor, store.item.ID, destBinID, nil)
 	if err != nil {
@@ -739,7 +739,7 @@ func TestOperationService_ReturnToBin_MultipleOpenRequestsAllFulfilled(t *testin
 		openReturnRequestOn(store.item.ID, second, holder),
 	}
 	svc, _, _, notifier := newTestOperationServiceWithReturnRequests(store, bins, open, nil)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	op, err := svc.ReturnToBin(context.Background(), actor, store.item.ID, destBinID, nil)
 	if err != nil {
@@ -762,7 +762,7 @@ func TestOperationService_ReturnToBin_NoOpenRequestsNeverNotifies(t *testing.T) 
 	destBinID := domain.NewBinID()
 	bins.bin = &domain.Bin{ID: destBinID}
 	svc, _, _, notifier := newTestOperationServiceWithReturnRequests(store, bins, nil, nil)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	op, err := svc.ReturnToBin(context.Background(), actor, store.item.ID, destBinID, nil)
 	if err != nil {
@@ -787,7 +787,7 @@ func TestOperationService_RemoveFromBin_NeverFulfils(t *testing.T) {
 	open := openReturnRequestOn(store.item.ID, requester, identity.NewUserID())
 	svc, _, _, notifier := newTestOperationServiceWithReturnRequests(store, bins, []domain.ReturnRequest{open}, nil)
 	holder := identity.NewUserID()
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Bob")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Bob")
 
 	op, err := svc.RemoveFromBin(context.Background(), actor, store.item.ID, nil)
 	if err != nil {
@@ -816,7 +816,7 @@ func TestOperationService_ReturnToBin_FulfillFailureAbortsOperation(t *testing.T
 	uow := &fakeUnitOfWork{store: store, events: events, requests: requests}
 	notifier := &fakeReturnRequestNotifier{}
 	svc := app.NewOperationService(uow, bins, &fakeUserLabelResolver{}, notifier, testLogger())
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	_, err := svc.ReturnToBin(context.Background(), actor, store.item.ID, destBinID, nil)
 	if err == nil {
@@ -849,7 +849,7 @@ func TestOperationService_AddToBin_NotifierErrorNeverFailsOperation(t *testing.T
 	requester := identity.NewUserID()
 	open := openReturnRequestOn(store.item.ID, requester, holder)
 	svc, _, _, notifier := newTestOperationServiceWithReturnRequests(store, bins, []domain.ReturnRequest{open}, nil)
-	actor := identity.NewUserPrincipal(holder, identity.RoleMember, "Alice")
+	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
 
 	op, err := svc.AddToBin(context.Background(), actor, store.item.ID, destBinID)
 	if err != nil {

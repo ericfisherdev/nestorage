@@ -269,7 +269,7 @@ func resolvedPrincipalRequest(t *testing.T, principal domain.Principal, r *http.
 
 func TestPrincipalRateKey_UserPrincipal(t *testing.T) {
 	id := domain.NewUserID()
-	principal := domain.NewUserPrincipal(id, domain.RoleMember, "Daniel")
+	principal := domain.NewUserPrincipal(id, domain.RoleAdult, "Daniel")
 	r := resolvedPrincipalRequest(t, principal, httptest.NewRequest(http.MethodGet, "/api/v1/bins", nil))
 
 	want := "user:" + id.String()
@@ -309,7 +309,7 @@ func TestClientIPRateKey_AlwaysKeysByClientIP(t *testing.T) {
 	// Even with a resolved principal in context (shouldn't happen for the
 	// unauthenticated exchange route in production, but ClientIPRateKey
 	// must ignore it regardless), the key stays IP-based.
-	principal := domain.NewUserPrincipal(domain.NewUserID(), domain.RoleMember, "Daniel")
+	principal := domain.NewUserPrincipal(domain.NewUserID(), domain.RoleAdult, "Daniel")
 	r = resolvedPrincipalRequest(t, principal, r)
 
 	var got string

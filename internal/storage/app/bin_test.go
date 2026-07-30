@@ -187,7 +187,7 @@ func TestBinService_ListVisible_EnrichesOwnerAndCount(t *testing.T) {
 	members := &fakeMemberDirectory{members: []identity.User{owner}}
 	items := &fakeItemCounter{counts: map[domain.BinID]int{b.ID: 24}}
 	svc := newBinService(bins, members, items)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.ListVisible(context.Background(), viewer)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestBinService_ListVisible_UnknownOwnerYieldsNilOwner(t *testing.T) {
 	}
 
 	svc := newBinService(bins, &fakeMemberDirectory{}, &fakeItemCounter{})
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.ListVisible(context.Background(), viewer)
 	if err != nil {
@@ -234,7 +234,7 @@ func TestBinService_ListVisible_OwnerBlankNameYieldsQuestionMarkInitials(t *test
 	}
 	members := &fakeMemberDirectory{members: []identity.User{owner}}
 	svc := newBinService(bins, members, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.ListVisible(context.Background(), viewer)
 	if err != nil {
@@ -257,7 +257,7 @@ func TestBinService_ListVisibleByLocation(t *testing.T) {
 	}
 
 	svc := newBinService(bins, nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.ListVisibleByLocation(context.Background(), viewer, garage)
 	if err != nil {
@@ -272,7 +272,7 @@ func TestBinService_ListVisible_RepositoryErrorWrapped(t *testing.T) {
 	bins := newFakeBinReadWriter()
 	bins.listErr = errors.New("boom")
 	svc := newBinService(bins, nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.ListVisible(context.Background(), viewer)
 	if err == nil {
@@ -284,7 +284,7 @@ func TestBinService_ListVisible_MemberListErrorWrapped(t *testing.T) {
 	bins := newFakeBinReadWriter()
 	members := &fakeMemberDirectory{err: errors.New("directory down")}
 	svc := newBinService(bins, members, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.ListVisible(context.Background(), viewer)
 	if err == nil {
@@ -296,7 +296,7 @@ func TestBinService_ListVisible_ItemCounterErrorWrapped(t *testing.T) {
 	bins := newFakeBinReadWriter()
 	items := &fakeItemCounter{err: errors.New("counts down")}
 	svc := newBinService(bins, nil, items)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.ListVisible(context.Background(), viewer)
 	if err == nil {
@@ -308,7 +308,7 @@ func TestBinService_ListVisibleByLocation_RepositoryErrorWrapped(t *testing.T) {
 	bins := newFakeBinReadWriter()
 	bins.listByLocErr = errors.New("boom")
 	svc := newBinService(bins, nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.ListVisibleByLocation(context.Background(), viewer, domain.NewLocationID())
 	if err == nil {
@@ -326,7 +326,7 @@ func TestBinService_GetByID_Success_EnrichesView(t *testing.T) {
 	members := &fakeMemberDirectory{members: []identity.User{owner}}
 	items := &fakeItemCounter{counts: map[domain.BinID]int{b.ID: 5}}
 	svc := newBinService(bins, members, items)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.GetByID(context.Background(), viewer, b.ID)
 	if err != nil {
@@ -350,7 +350,7 @@ func TestBinService_GetByCode_Success_EnrichesView(t *testing.T) {
 		t.Fatalf("seed bin: %v", err)
 	}
 	svc := newBinService(bins, nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	got, err := svc.GetByCode(context.Background(), viewer, "a1")
 	if err != nil {
@@ -363,7 +363,7 @@ func TestBinService_GetByCode_Success_EnrichesView(t *testing.T) {
 
 func TestBinService_GetByID_NotFoundWrapped(t *testing.T) {
 	svc := newBinService(newFakeBinReadWriter(), nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.GetByID(context.Background(), viewer, domain.NewBinID())
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -373,7 +373,7 @@ func TestBinService_GetByID_NotFoundWrapped(t *testing.T) {
 
 func TestBinService_GetByCode_NotFoundWrapped(t *testing.T) {
 	svc := newBinService(newFakeBinReadWriter(), nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	_, err := svc.GetByCode(context.Background(), viewer, "GHOST")
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -423,7 +423,7 @@ func TestBinService_Create_RepositoryErrorWrapped(t *testing.T) {
 
 func TestBinService_Edit_NotFoundWrapped(t *testing.T) {
 	svc := newBinService(newFakeBinReadWriter(), nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	err := svc.Edit(context.Background(), viewer, domain.NewBinID(), "Name", "", nil, domain.VisibilityPublic)
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -439,7 +439,7 @@ func TestBinService_Edit_NeverTouchesCodeOrLocation(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	svc := newBinService(bins, nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	if err := svc.Edit(context.Background(), viewer, b.ID, "New Name", "desc", nil, domain.VisibilityPrivate); err != nil {
 		t.Fatalf("Edit: %v", err)
@@ -460,7 +460,7 @@ func TestBinService_Delete_Success(t *testing.T) {
 		t.Fatalf("seed bin: %v", err)
 	}
 	svc := newBinService(bins, nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	if err := svc.Delete(context.Background(), viewer, b.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -474,7 +474,7 @@ func TestBinService_Delete_NotEmptyWrapped(t *testing.T) {
 	bins := newFakeBinReadWriter()
 	bins.deleteErr = domain.ErrBinNotEmpty
 	svc := newBinService(bins, nil, nil)
-	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
 	err := svc.Delete(context.Background(), viewer, domain.NewBinID())
 	if !errors.Is(err, domain.ErrBinNotEmpty) {

@@ -20,7 +20,7 @@ import (
 //     ValidateLocationName; the store does not re-validate it either.
 //
 // Error contracts:
-//   - Create returns a wrapped error if created_by is unknown (an app_user
+//   - Create returns a wrapped error if created_by is unknown (an identity.member
 //     foreign-key violation) or if parent_id is unknown (a location
 //     foreign-key violation).
 //   - FindByID and FindVisibleByID return ErrLocationNotFound when id is

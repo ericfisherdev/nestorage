@@ -335,7 +335,7 @@ func parseNewUserForm(r *http.Request) (displayName, email, password string, rol
 func mapAdminError(err error) (status int, message string, ok bool) {
 	switch {
 	case errors.Is(err, domain.ErrLastActiveAdmin):
-		return http.StatusConflict, "This is the household's last active admin — promote someone else first.", true
+		return http.StatusConflict, "This is the household's last active owner — promote someone else first.", true
 	case errors.Is(err, domain.ErrUserNotFound):
 		return http.StatusNotFound, "That user no longer exists.", true
 	case errors.Is(err, domain.ErrDuplicateEmail):

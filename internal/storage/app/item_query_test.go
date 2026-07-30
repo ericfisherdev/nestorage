@@ -42,7 +42,7 @@ func (f *fakeItemDetailSearcher) SearchVisible(_ context.Context, _ identity.Pri
 }
 
 func testViewer() identity.Principal {
-	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Viewer")
+	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 }
 
 func TestNewItemQueryService_PanicsOnNilDeps(t *testing.T) {

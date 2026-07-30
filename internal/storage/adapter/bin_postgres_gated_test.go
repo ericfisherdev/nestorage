@@ -24,6 +24,7 @@ type binFixture struct {
 	repo      *adapter.BinRepository
 	locations *adapter.LocationRepository
 	users     *identityadapter.UserRepository
+	household identity.HouseholdID
 }
 
 func newBinFixture(t *testing.T) *binFixture {
@@ -34,6 +35,7 @@ func newBinFixture(t *testing.T) *binFixture {
 		repo:      adapter.NewBinRepository(pool),
 		locations: adapter.NewLocationRepository(pool),
 		users:     identityadapter.NewUserRepository(pool),
+		household: seedHousehold(t, pool),
 	}
 }
 
@@ -43,6 +45,7 @@ func (f *binFixture) seedUser(t *testing.T, role identity.Role) identity.UserID 
 	t.Helper()
 	u := &identity.User{
 		ID:           identity.NewUserID(),
+		HouseholdID:  f.household,
 		DisplayName:  "Test User",
 		Email:        "bin-user-" + identity.NewUserID().String() + "@example.com",
 		PasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
@@ -78,7 +81,7 @@ func newBin(code string, location domain.LocationID, createdBy identity.UserID) 
 
 func TestBinRepository_CreateAndFindVisibleByID(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("A1", loc, creator)
 	bin.Description = "Camping gear"
@@ -93,7 +96,7 @@ func TestBinRepository_CreateAndFindVisibleByID(t *testing.T) {
 		t.Errorf("Create defaulted Visibility = %q, want %q", bin.Visibility, domain.VisibilityPublic)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, bin.ID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID: %v", err)
@@ -109,14 +112,14 @@ func TestBinRepository_CreateAndFindVisibleByID(t *testing.T) {
 
 func TestBinRepository_FindVisibleByCode_Normalizes(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("A2", loc, creator)
 	if err := f.repo.Create(testCtx(t), bin); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.FindVisibleByCode(testCtx(t), viewer, "  a2 ")
 	if err != nil {
 		t.Fatalf("FindVisibleByCode: %v", err)
@@ -128,8 +131,8 @@ func TestBinRepository_FindVisibleByCode_Normalizes(t *testing.T) {
 
 func TestBinRepository_FindVisibleByCode_NotFound(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creator := f.seedUser(t, identity.RoleAdult)
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	_, err := f.repo.FindVisibleByCode(testCtx(t), viewer, "GHOST")
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -139,7 +142,7 @@ func TestBinRepository_FindVisibleByCode_NotFound(t *testing.T) {
 
 func TestBinRepository_Create_DuplicateCodeRejected(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	if err := f.repo.Create(testCtx(t), newBin("DUP1", loc, creator)); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -153,7 +156,7 @@ func TestBinRepository_Create_DuplicateCodeRejected(t *testing.T) {
 
 func TestBinRepository_Create_UnknownLocationRejected(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	bin := newBin("A3", domain.NewLocationID(), creator)
 
 	err := f.repo.Create(testCtx(t), bin)
@@ -164,7 +167,7 @@ func TestBinRepository_Create_UnknownLocationRejected(t *testing.T) {
 
 func TestBinRepository_Create_UnknownCreatedByRejected(t *testing.T) {
 	f := newBinFixture(t)
-	admin := f.seedUser(t, identity.RoleAdmin)
+	admin := f.seedUser(t, identity.RoleOwner)
 	loc := f.seedLocation(t, admin)
 	bin := newBin("A4", loc, identity.NewUserID())
 
@@ -176,7 +179,7 @@ func TestBinRepository_Create_UnknownCreatedByRejected(t *testing.T) {
 
 func TestBinRepository_Create_UnknownOwnerRejected(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("A5", loc, creator)
 	unknownOwner := identity.NewUserID()
@@ -190,8 +193,8 @@ func TestBinRepository_Create_UnknownOwnerRejected(t *testing.T) {
 
 func TestBinRepository_Create_OwnerRoundTrips(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	owner := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	owner := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 
 	shared := newBin("SH1", loc, creator)
@@ -205,7 +208,7 @@ func TestBinRepository_Create_OwnerRoundTrips(t *testing.T) {
 		t.Fatalf("Create(owned): %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	gotShared, err := f.repo.FindVisibleByID(testCtx(t), viewer, shared.ID)
 	if err != nil {
@@ -229,9 +232,9 @@ func TestBinRepository_Create_OwnerRoundTrips(t *testing.T) {
 // ListVisible, while its creator and an admin can.
 func TestBinRepository_PrivateBin_ScopedToCreatorAndAdmin(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
-	admin := f.seedUser(t, identity.RoleAdmin)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
+	admin := f.seedUser(t, identity.RoleOwner)
 	loc := f.seedLocation(t, creator)
 
 	private := newBin("PRIV1", loc, creator)
@@ -240,9 +243,9 @@ func TestBinRepository_PrivateBin_ScopedToCreatorAndAdmin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
-	adminViewer := identity.NewUserPrincipal(admin, identity.RoleAdmin, "Admin")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	adminViewer := identity.NewUserPrincipal(admin, identity.RoleOwner, "Admin")
 
 	if _, err := f.repo.FindVisibleByID(testCtx(t), creatorViewer, private.ID); err != nil {
 		t.Errorf("creator FindVisibleByID = %v, want nil", err)
@@ -281,8 +284,8 @@ func TestBinRepository_PrivateBin_ScopedToCreatorAndAdmin(t *testing.T) {
 
 func TestBinRepository_ListVisible_Empty(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creator := f.seedUser(t, identity.RoleAdult)
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	got, err := f.repo.ListVisible(testCtx(t), viewer)
 	if err != nil {
@@ -300,8 +303,8 @@ func TestBinRepository_ListVisible_Empty(t *testing.T) {
 // — so a public fixture here would prove nothing about scoping.
 func TestBinRepository_UpdateVisibility(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("UPD1", loc, creator)
 	bin.Visibility = domain.VisibilityPrivate
@@ -309,8 +312,8 @@ func TestBinRepository_UpdateVisibility(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 
 	if err := f.repo.UpdateVisibility(testCtx(t), otherViewer, bin.ID, domain.VisibilityPublic); !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("UpdateVisibility(non-creator, private bin) = %v, want ErrBinNotFound", err)
@@ -339,15 +342,15 @@ func TestBinRepository_UpdateVisibility(t *testing.T) {
 // mirrored here.
 func TestBinRepository_UpdateVisibility_PublicBinMutableByAnyone(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("PUB1", loc, creator)
 	if err := f.repo.Create(testCtx(t), bin); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 	if err := f.repo.UpdateVisibility(testCtx(t), otherViewer, bin.ID, domain.VisibilityPrivate); err != nil {
 		t.Errorf("UpdateVisibility(non-creator, public bin) = %v, want nil under today's CanMutateBin", err)
 	}
@@ -355,8 +358,8 @@ func TestBinRepository_UpdateVisibility_PublicBinMutableByAnyone(t *testing.T) {
 
 func TestBinRepository_UpdateVisibility_NotFound(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creator := f.seedUser(t, identity.RoleAdult)
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	err := f.repo.UpdateVisibility(testCtx(t), viewer, domain.NewBinID(), domain.VisibilityPrivate)
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -369,8 +372,8 @@ func TestBinRepository_UpdateVisibility_NotFound(t *testing.T) {
 // would not exercise scoping at all.
 func TestBinRepository_Delete(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("DEL1", loc, creator)
 	bin.Visibility = domain.VisibilityPrivate
@@ -378,8 +381,8 @@ func TestBinRepository_Delete(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 
 	if err := f.repo.Delete(testCtx(t), otherViewer, bin.ID); !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("Delete(non-creator, private bin) = %v, want ErrBinNotFound", err)
@@ -396,8 +399,8 @@ func TestBinRepository_Delete(t *testing.T) {
 
 func TestBinRepository_Delete_NotFound(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creator := f.seedUser(t, identity.RoleAdult)
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	err := f.repo.Delete(testCtx(t), viewer, domain.NewBinID())
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -413,7 +416,7 @@ func TestBinRepository_Delete_NotFound(t *testing.T) {
 // cover bins too, not only child locations.
 func TestLocationRepository_Delete_WithBinRejected(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("LOC1", loc, creator)
 	if err := f.repo.Create(testCtx(t), bin); err != nil {
@@ -442,8 +445,8 @@ func TestLocationRepository_Delete_WithBinRejected(t *testing.T) {
 // FindVisibleByID — while the bin's own creator still resolves it.
 func TestBinRepository_FindVisibleByCode_PrivateBin_NotFoundForNonOwner(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	private := newBin("PRIVCODE1", loc, creator)
 	private.Visibility = domain.VisibilityPrivate
@@ -451,8 +454,8 @@ func TestBinRepository_FindVisibleByCode_PrivateBin_NotFoundForNonOwner(t *testi
 		t.Fatalf("Create: %v", err)
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 
 	if _, err := f.repo.FindVisibleByCode(testCtx(t), otherViewer, "PRIVCODE1"); !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("non-owner FindVisibleByCode(private bin's code) = %v, want ErrBinNotFound", err)
@@ -468,8 +471,8 @@ func TestBinRepository_FindVisibleByCode_PrivateBin_NotFoundForNonOwner(t *testi
 // from its own location's list exactly as it is from ListVisible's.
 func TestBinRepository_ListVisibleByLocation(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	locA := f.seedLocation(t, creator)
 	locB := domain.NewLocationID()
 	if err := f.locations.Create(testCtx(t), &domain.Location{ID: locB, Name: "Attic", CreatedBy: creator}); err != nil {
@@ -486,8 +489,8 @@ func TestBinRepository_ListVisibleByLocation(t *testing.T) {
 		}
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 
 	creatorList, err := f.repo.ListVisibleByLocation(testCtx(t), creatorViewer, locA)
 	if err != nil {
@@ -512,8 +515,8 @@ func TestBinRepository_ListVisibleByLocation(t *testing.T) {
 // and confirms Update never touches code or location_id.
 func TestBinRepository_Update(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("UPDFULL1", loc, creator)
 	bin.Visibility = domain.VisibilityPrivate
@@ -521,8 +524,8 @@ func TestBinRepository_Update(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 
 	rejected := &domain.Bin{ID: bin.ID, Name: "Should not apply", Visibility: domain.VisibilityPublic}
 	if err := f.repo.Update(testCtx(t), otherViewer, rejected); !errors.Is(err, domain.ErrBinNotFound) {
@@ -554,14 +557,14 @@ func TestBinRepository_Update(t *testing.T) {
 
 func TestBinRepository_Update_UnknownOwnerRejected(t *testing.T) {
 	f := newBinFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := newBin("UPDOWN1", loc, creator)
 	if err := f.repo.Create(testCtx(t), bin); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	unknownOwner := identity.NewUserID()
 	update := &domain.Bin{ID: bin.ID, Name: bin.Name, OwnerID: &unknownOwner, Visibility: domain.VisibilityPublic}
 

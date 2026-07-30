@@ -27,7 +27,7 @@ func TestNewItemLinkRepository_NilExecutorPanics(t *testing.T) {
 func TestItemLinkRepository_CreateAndListByItem(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -55,7 +55,7 @@ func TestItemLinkRepository_CreateAndListByItem(t *testing.T) {
 func TestItemLinkRepository_ListByItem_OrderedByPosition(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -87,7 +87,7 @@ func TestItemLinkRepository_ListByItem_OrderedByPosition(t *testing.T) {
 func TestItemLinkRepository_ListByItem_TieBreaksByID(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -146,7 +146,7 @@ func TestItemLinkRepository_Create_UnknownItemRejected(t *testing.T) {
 func TestItemLinkRepository_NextPosition(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -179,7 +179,7 @@ func TestItemLinkRepository_NextPosition(t *testing.T) {
 func TestItemLinkRepository_Update(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -219,7 +219,7 @@ func TestItemLinkRepository_Update_NotFound(t *testing.T) {
 func TestItemLinkRepository_Update_WrongItemRejected(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	itA := newItem("Stove", bin, creator)
@@ -244,7 +244,7 @@ func TestItemLinkRepository_Update_WrongItemRejected(t *testing.T) {
 func TestItemLinkRepository_Delete(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -282,7 +282,7 @@ func TestItemLinkRepository_Delete_NotFound(t *testing.T) {
 func TestItemLinkRepository_Delete_WrongItemRejected(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	itA := newItem("Stove", bin, creator)
@@ -317,7 +317,7 @@ func TestItemLinkRepository_Delete_WrongItemRejected(t *testing.T) {
 func TestItemLinkRepository_CascadeDeleteWithItem(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)

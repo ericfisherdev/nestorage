@@ -20,7 +20,7 @@ import (
 )
 
 // newWizardServer wires the real UserRepository, Provisioner, and a
-// pgxstore-backed session manager over one derived database, then starts an
+// session-manager over one derived database, then starts an
 // httptest.Server over the wizard's routes — the same composition
 // cmd/server/main.go builds, minus the setup guard (this test drives the
 // wizard's own routes directly).

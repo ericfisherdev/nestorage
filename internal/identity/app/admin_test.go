@@ -89,8 +89,24 @@ func (f *fakeRevoker) RevokeAll(_ context.Context, id domain.UserID) error {
 	return f.err
 }
 
+// fakeHouseholds is a configurable householdResolver fake. By default it
+// reports exactly one household (the steady-state after first-run setup);
+// tests override households or err to exercise the zero/many/error paths.
+type fakeHouseholds struct {
+	households []domain.Household
+	err        error
+}
+
+func newFakeHouseholds() *fakeHouseholds {
+	return &fakeHouseholds{households: []domain.Household{{ID: domain.NewHouseholdID(), Name: "Household"}}}
+}
+
+func (f *fakeHouseholds) List(_ context.Context) ([]domain.Household, error) {
+	return f.households, f.err
+}
+
 func newAdminService(repo *fakeAdminRepo, revoker *fakeRevoker) *app.AdminService {
-	return app.NewAdminService(repo, cryptotest.Hasher(), revoker, testLogger())
+	return app.NewAdminService(repo, newFakeHouseholds(), cryptotest.Hasher(), revoker, testLogger())
 }
 
 func TestNewAdminService_NilDependenciesPanic(t *testing.T) {
@@ -99,10 +115,21 @@ func TestNewAdminService_NilDependenciesPanic(t *testing.T) {
 		name string
 		fn   func()
 	}{
-		{"nil repo", func() { app.NewAdminService(nil, cryptotest.Hasher(), &fakeRevoker{}, testLogger()) }},
-		{"nil hasher", func() { app.NewAdminService(newFakeAdminRepo(), nil, &fakeRevoker{}, testLogger()) }},
-		{"nil revoker", func() { app.NewAdminService(newFakeAdminRepo(), cryptotest.Hasher(), nil, testLogger()) }},
-		{"nil logger", func() { app.NewAdminService(newFakeAdminRepo(), cryptotest.Hasher(), &fakeRevoker{}, nil) }},
+		{"nil repo", func() {
+			app.NewAdminService(nil, newFakeHouseholds(), cryptotest.Hasher(), &fakeRevoker{}, testLogger())
+		}},
+		{"nil households", func() {
+			app.NewAdminService(newFakeAdminRepo(), nil, cryptotest.Hasher(), &fakeRevoker{}, testLogger())
+		}},
+		{"nil hasher", func() {
+			app.NewAdminService(newFakeAdminRepo(), newFakeHouseholds(), nil, &fakeRevoker{}, testLogger())
+		}},
+		{"nil revoker", func() {
+			app.NewAdminService(newFakeAdminRepo(), newFakeHouseholds(), cryptotest.Hasher(), nil, testLogger())
+		}},
+		{"nil logger", func() {
+			app.NewAdminService(newFakeAdminRepo(), newFakeHouseholds(), cryptotest.Hasher(), &fakeRevoker{}, nil)
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,7 +176,7 @@ func TestAdminService_List_RepositoryErrorWrapped(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("list boom")
 	repo := &fakeAdminRepoListErr{fakeAdminRepo: newFakeAdminRepo(), err: wantErr}
-	svc := app.NewAdminService(repo, cryptotest.Hasher(), &fakeRevoker{}, testLogger())
+	svc := app.NewAdminService(repo, newFakeHouseholds(), cryptotest.Hasher(), &fakeRevoker{}, testLogger())
 
 	_, err := svc.List(context.Background())
 	if !errors.Is(err, wantErr) {
@@ -160,14 +187,18 @@ func TestAdminService_List_RepositoryErrorWrapped(t *testing.T) {
 func TestAdminService_Create_Succeeds(t *testing.T) {
 	t.Parallel()
 	repo := newFakeAdminRepo()
-	svc := newAdminService(repo, &fakeRevoker{})
+	households := newFakeHouseholds()
+	svc := app.NewAdminService(repo, households, cryptotest.Hasher(), &fakeRevoker{}, testLogger())
 
-	u, err := svc.Create(context.Background(), "Maya", "maya@example.com", "correct-horse-battery-staple", domain.RoleMember, domain.ColorIndigo)
+	u, err := svc.Create(context.Background(), "Maya", "maya@example.com", "correct-horse-battery-staple", domain.RoleAdult, domain.ColorIndigo)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if u.PasswordHash == "" {
 		t.Error("Create left PasswordHash empty")
+	}
+	if u.HouseholdID != households.households[0].ID {
+		t.Errorf("Create HouseholdID = %v, want the sole existing household %v", u.HouseholdID, households.households[0].ID)
 	}
 	if _, ok := repo.users[u.ID]; !ok {
 		t.Error("Create did not persist the user via the repository")
@@ -178,9 +209,46 @@ func TestAdminService_Create_ValidatesPassword(t *testing.T) {
 	t.Parallel()
 	svc := newAdminService(newFakeAdminRepo(), &fakeRevoker{})
 
-	_, err := svc.Create(context.Background(), "Maya", "maya@example.com", "short", domain.RoleMember, domain.ColorIndigo)
+	_, err := svc.Create(context.Background(), "Maya", "maya@example.com", "short", domain.RoleAdult, domain.ColorIndigo)
 	if !errors.Is(err, domain.ErrPasswordTooShort) {
 		t.Errorf("Create(short password) error = %v, want ErrPasswordTooShort", err)
+	}
+}
+
+// TestAdminService_Create_NoHouseholdFails asserts Create refuses to invent a
+// household (NSTR-116's adopt-only rule): zero existing households is a
+// genuine invariant violation once first-run setup should already have run.
+func TestAdminService_Create_NoHouseholdFails(t *testing.T) {
+	t.Parallel()
+	repo := newFakeAdminRepo()
+	svc := app.NewAdminService(repo, &fakeHouseholds{}, cryptotest.Hasher(), &fakeRevoker{}, testLogger())
+
+	_, err := svc.Create(context.Background(), "Maya", "maya@example.com", "correct-horse-battery-staple", domain.RoleAdult, domain.ColorIndigo)
+	if !errors.Is(err, domain.ErrNoHousehold) {
+		t.Errorf("Create(no households) error = %v, want ErrNoHousehold", err)
+	}
+	if len(repo.users) != 0 {
+		t.Error("Create must not persist a user when household resolution fails")
+	}
+}
+
+// TestAdminService_Create_AmbiguousHouseholdFails asserts Create fails loudly
+// rather than guessing when several households exist.
+func TestAdminService_Create_AmbiguousHouseholdFails(t *testing.T) {
+	t.Parallel()
+	repo := newFakeAdminRepo()
+	households := &fakeHouseholds{households: []domain.Household{
+		{ID: domain.NewHouseholdID()},
+		{ID: domain.NewHouseholdID()},
+	}}
+	svc := app.NewAdminService(repo, households, cryptotest.Hasher(), &fakeRevoker{}, testLogger())
+
+	_, err := svc.Create(context.Background(), "Maya", "maya@example.com", "correct-horse-battery-staple", domain.RoleAdult, domain.ColorIndigo)
+	if !errors.Is(err, domain.ErrAmbiguousHousehold) {
+		t.Errorf("Create(ambiguous households) error = %v, want ErrAmbiguousHousehold", err)
+	}
+	if len(repo.users) != 0 {
+		t.Error("Create must not persist a user when household resolution fails")
 	}
 }
 
@@ -236,7 +304,7 @@ func TestAdminService_Deactivate_LastActiveAdminPropagatesUnchanged(t *testing.T
 	t.Parallel()
 	id := domain.NewUserID()
 	repo := newFakeAdminRepo()
-	repo.users[id] = &domain.User{ID: id, Role: domain.RoleAdmin, Active: true}
+	repo.users[id] = &domain.User{ID: id, Role: domain.RoleOwner, Active: true}
 	repo.setActiveErr = domain.ErrLastActiveAdmin
 	revoker := &fakeRevoker{}
 	svc := newAdminService(repo, revoker)
@@ -254,14 +322,14 @@ func TestAdminService_ChangeRole_Succeeds(t *testing.T) {
 	t.Parallel()
 	id := domain.NewUserID()
 	repo := newFakeAdminRepo()
-	repo.users[id] = &domain.User{ID: id, Role: domain.RoleMember, Active: true}
+	repo.users[id] = &domain.User{ID: id, Role: domain.RoleAdult, Active: true}
 	svc := newAdminService(repo, &fakeRevoker{})
 
-	if err := svc.ChangeRole(context.Background(), id, domain.RoleAdmin); err != nil {
+	if err := svc.ChangeRole(context.Background(), id, domain.RoleOwner); err != nil {
 		t.Fatalf("ChangeRole: %v", err)
 	}
-	if repo.users[id].Role != domain.RoleAdmin {
-		t.Errorf("Role after ChangeRole = %v, want RoleAdmin", repo.users[id].Role)
+	if repo.users[id].Role != domain.RoleOwner {
+		t.Errorf("Role after ChangeRole = %v, want RoleOwner", repo.users[id].Role)
 	}
 }
 
@@ -269,11 +337,11 @@ func TestAdminService_ChangeRole_LastActiveAdminPropagatesUnchanged(t *testing.T
 	t.Parallel()
 	id := domain.NewUserID()
 	repo := newFakeAdminRepo()
-	repo.users[id] = &domain.User{ID: id, Role: domain.RoleAdmin, Active: true}
+	repo.users[id] = &domain.User{ID: id, Role: domain.RoleOwner, Active: true}
 	repo.setRoleErr = domain.ErrLastActiveAdmin
 	svc := newAdminService(repo, &fakeRevoker{})
 
-	err := svc.ChangeRole(context.Background(), id, domain.RoleMember)
+	err := svc.ChangeRole(context.Background(), id, domain.RoleAdult)
 	if !errors.Is(err, domain.ErrLastActiveAdmin) {
 		t.Errorf("ChangeRole error = %v, want ErrLastActiveAdmin", err)
 	}

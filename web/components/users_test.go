@@ -49,7 +49,7 @@ func TestUsersTable_EmptyState(t *testing.T) {
 func TestUsersTable_CSRFTokenInEveryForm(t *testing.T) {
 	view := testUsersView(components.UserRowView{
 		ID: "11111111-1111-7111-8111-111111111111", DisplayName: "Maya", Email: "maya@example.com",
-		Role: "member", Active: true, Owner: components.OwnerView{Name: "Maya", Initials: "M", Color: components.OwnerIndigo},
+		Role: "adult", Active: true, Owner: components.OwnerView{Name: "Maya", Initials: "M", Color: components.OwnerIndigo},
 	})
 	out := renderString(t, components.UsersTable(view))
 
@@ -99,7 +99,7 @@ func TestUsersTable_ActiveRow_DeactivateFormWiredCorrectly(t *testing.T) {
 	const id = "22222222-2222-7222-8222-222222222222"
 	view := testUsersView(components.UserRowView{
 		ID: id, DisplayName: "Daniel", Email: "daniel@example.com",
-		Role: "member", Active: true, Owner: components.OwnerView{Name: "Daniel", Initials: "D", Color: components.OwnerSteel},
+		Role: "adult", Active: true, Owner: components.OwnerView{Name: "Daniel", Initials: "D", Color: components.OwnerSteel},
 	})
 	out := renderString(t, components.UsersTable(view))
 
@@ -134,7 +134,7 @@ func TestUsersTable_DeactivatedRow_ReactivateFormAndBadge(t *testing.T) {
 	const id = "33333333-3333-7333-8333-333333333333"
 	view := testUsersView(components.UserRowView{
 		ID: id, DisplayName: "Ivy", Email: "ivy@example.com",
-		Role: "member", Active: false, Owner: components.OwnerView{Name: "Ivy", Initials: "I", Color: components.OwnerTeal},
+		Role: "adult", Active: false, Owner: components.OwnerView{Name: "Ivy", Initials: "I", Color: components.OwnerTeal},
 	})
 	out := renderString(t, components.UsersTable(view))
 
@@ -162,7 +162,7 @@ func TestUsersTable_DeactivatedRow_ReactivateFormAndBadge(t *testing.T) {
 func TestUsersTable_RoleSelect_PreSelectsCurrentRole(t *testing.T) {
 	tests := []struct {
 		role string
-	}{{"admin"}, {"member"}}
+	}{{"owner"}, {"adult"}}
 	for _, tt := range tests {
 		t.Run(tt.role, func(t *testing.T) {
 			view := testUsersView(components.UserRowView{

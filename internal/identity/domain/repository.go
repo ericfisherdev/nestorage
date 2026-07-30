@@ -7,10 +7,10 @@ import "context"
 //
 // Persistence contracts (the caller sets identity and valid enum values; the
 // store sets timestamps):
-//   - Create expects u.ID, u.DisplayName, u.Email, u.PasswordHash, and valid
-//     u.Role/u.Color set; it populates CreatedAt/UpdatedAt. The caller is
-//     responsible for supplying valid enum values (the store does not
-//     re-validate on write).
+//   - Create expects u.ID, u.HouseholdID, u.DisplayName, u.Email,
+//     u.PasswordHash, and valid u.Role/u.Color set; it populates
+//     CreatedAt/UpdatedAt. The caller is responsible for supplying valid enum
+//     values (the store does not re-validate on write).
 //
 // Error contracts:
 //   - Create returns ErrDuplicateEmail when the email is already taken.
@@ -23,10 +23,10 @@ import "context"
 //     never blank a credential. Returns ErrUserNotFound or ErrDuplicateEmail.
 //   - SetActive returns ErrUserNotFound when id is unknown. One method covers
 //     both deactivating and reactivating a user. Deactivating the household's
-//     only active admin returns ErrLastActiveAdmin instead, and leaves the
+//     only active owner returns ErrLastActiveAdmin instead, and leaves the
 //     row untouched.
 //   - SetRole returns ErrUserNotFound when id is unknown. Demoting the
-//     household's only active admin away from RoleAdmin returns
+//     household's only active owner away from RoleOwner returns
 //     ErrLastActiveAdmin instead, and leaves the row untouched.
 //   - SetPasswordHash returns ErrUserNotFound when id is unknown.
 //   - List returns an empty slice (not an error) when no users exist.
@@ -43,7 +43,7 @@ type UserRepository interface {
 	// last-active-admin invariant, so only deactivation can return
 	// ErrLastActiveAdmin.
 	SetActive(ctx context.Context, id UserID, active bool) error
-	// SetRole changes id's role. Promoting to RoleAdmin can never violate the
+	// SetRole changes id's role. Promoting to RoleOwner can never violate the
 	// last-active-admin invariant, so only a demotion away from it can
 	// return ErrLastActiveAdmin.
 	SetRole(ctx context.Context, id UserID, role Role) error
@@ -58,4 +58,16 @@ type UserRepository interface {
 	// NSTR-19's first-run guard to decide whether the initial-admin setup
 	// flow should be shown, without loading every row on every request.
 	HasAnyUser(ctx context.Context) (bool, error)
+}
+
+// HouseholdRepository is the outbound port backing NSTR-116's household
+// attachment rule: adopt the single existing household when exactly one
+// exists, create one when none exists, fail loudly when several exist rather
+// than guessing. Implementations live in the adapter package.
+type HouseholdRepository interface {
+	// List returns every household. Returns an empty slice, not an error,
+	// when none exist.
+	List(ctx context.Context) ([]Household, error)
+	// Create expects h.ID and h.Name set; it populates CreatedAt/UpdatedAt.
+	Create(ctx context.Context, h *Household) error
 }

@@ -35,6 +35,7 @@ type itemFixture struct {
 	users     *identityadapter.UserRepository
 	events    *adapter.ItemEventRepository
 	requests  *adapter.ReturnRequestRepository
+	household identity.HouseholdID
 }
 
 func newItemFixture(t *testing.T) *itemFixture {
@@ -48,6 +49,7 @@ func newItemFixture(t *testing.T) *itemFixture {
 		users:     identityadapter.NewUserRepository(pool),
 		events:    adapter.NewItemEventRepository(pool),
 		requests:  adapter.NewReturnRequestRepository(pool),
+		household: seedHousehold(t, pool),
 	}
 }
 
@@ -57,6 +59,7 @@ func (f *itemFixture) seedUser(t *testing.T, role identity.Role) identity.UserID
 	t.Helper()
 	u := &identity.User{
 		ID:           identity.NewUserID(),
+		HouseholdID:  f.household,
 		DisplayName:  "Test User",
 		Email:        "item-user-" + identity.NewUserID().String() + "@example.com",
 		PasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
@@ -116,7 +119,7 @@ func newItem(name string, binID domain.BinID, createdBy identity.UserID) *domain
 
 func TestItemRepository_CreateAndGet(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	desc := "Two-burner camping stove"
@@ -134,7 +137,7 @@ func TestItemRepository_CreateAndGet(t *testing.T) {
 		t.Errorf("Create: PlacementChangedAt = %v, want it to equal CreatedAt (%v)", it.PlacementChangedAt, it.CreatedAt)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -155,8 +158,8 @@ func TestItemRepository_CreateAndGet(t *testing.T) {
 
 func TestItemRepository_Create_HeldByRoundTrips(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
 	it := &domain.Item{ID: domain.NewItemID(), Name: "Sleeping bag", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 
 	if err := f.repo.Create(testCtx(t), it); err != nil {
@@ -165,8 +168,8 @@ func TestItemRepository_Create_HeldByRoundTrips(t *testing.T) {
 
 	// A held item is ungated: even an unrelated non-creator, non-holder
 	// member can see it, since it has no bin to gate on.
-	other := f.seedUser(t, identity.RoleMember)
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	other := f.seedUser(t, identity.RoleAdult)
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 	got, err := f.repo.Get(testCtx(t), otherViewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get(unrelated viewer, held item): %v", err)
@@ -181,7 +184,7 @@ func TestItemRepository_Create_HeldByRoundTrips(t *testing.T) {
 
 func TestItemRepository_Create_QuantityRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
@@ -196,7 +199,7 @@ func TestItemRepository_Create_QuantityRejected(t *testing.T) {
 
 func TestItemRepository_Create_PlacementRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
@@ -220,7 +223,7 @@ func TestItemRepository_Create_PlacementRejected(t *testing.T) {
 
 func TestItemRepository_Create_UnknownBinRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	it := newItem("Ghost bin", domain.NewBinID(), creator)
 
 	err := f.repo.Create(testCtx(t), it)
@@ -231,7 +234,7 @@ func TestItemRepository_Create_UnknownBinRejected(t *testing.T) {
 
 func TestItemRepository_Create_UnknownHeldByRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	ghost := identity.NewUserID()
 	it := &domain.Item{ID: domain.NewItemID(), Name: "Ghost holder", Quantity: 1, HeldBy: &ghost, CreatedBy: creator}
 
@@ -243,7 +246,7 @@ func TestItemRepository_Create_UnknownHeldByRejected(t *testing.T) {
 
 func TestItemRepository_Create_UnknownCreatedByRejected(t *testing.T) {
 	f := newItemFixture(t)
-	admin := f.seedUser(t, identity.RoleAdmin)
+	admin := f.seedUser(t, identity.RoleOwner)
 	loc := f.seedLocation(t, admin)
 	bin := f.seedBin(t, admin, loc, domain.VisibilityPublic)
 	it := newItem("Ghost creator", bin, identity.NewUserID())
@@ -256,8 +259,8 @@ func TestItemRepository_Create_UnknownCreatedByRejected(t *testing.T) {
 
 func TestItemRepository_Get_NotFound(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	creator := f.seedUser(t, identity.RoleAdult)
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 
 	_, err := f.repo.Get(testCtx(t), viewer, domain.NewItemID())
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -267,7 +270,7 @@ func TestItemRepository_Get_NotFound(t *testing.T) {
 
 func TestItemRepository_Update(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Old name", bin, creator)
@@ -282,7 +285,7 @@ func TestItemRepository_Update(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after Update: %v", err)
@@ -300,7 +303,7 @@ func TestItemRepository_Update(t *testing.T) {
 
 func TestItemRepository_Update_QuantityRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -331,8 +334,8 @@ func TestItemRepository_Update_NotFound(t *testing.T) {
 // assertion that Update leaves it untouched).
 func TestItemRepository_Move_BinToHolderToBin(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
@@ -353,7 +356,7 @@ func TestItemRepository_Move_BinToHolderToBin(t *testing.T) {
 		t.Errorf("Move(to holder) rows affected = %d, want 1", affected)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after Move(to holder): %v", err)
@@ -395,7 +398,7 @@ func TestItemRepository_Move_BinToHolderToBin(t *testing.T) {
 
 func TestItemRepository_Move_NotFound(t *testing.T) {
 	f := newItemFixture(t)
-	holder := f.seedUser(t, identity.RoleMember)
+	holder := f.seedUser(t, identity.RoleAdult)
 
 	affected, err := f.repo.Move(testCtx(t), domain.NewItemID(), domain.PlacementHeldBy(holder))
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -408,7 +411,7 @@ func TestItemRepository_Move_NotFound(t *testing.T) {
 
 func TestItemRepository_Move_InvalidPlacementRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -427,7 +430,7 @@ func TestItemRepository_Move_InvalidPlacementRejected(t *testing.T) {
 
 func TestItemRepository_Move_UnknownBinRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -443,7 +446,7 @@ func TestItemRepository_Move_UnknownBinRejected(t *testing.T) {
 
 func TestItemRepository_Move_UnknownHolderRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -459,7 +462,7 @@ func TestItemRepository_Move_UnknownHolderRejected(t *testing.T) {
 
 func TestItemRepository_Delete(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -471,7 +474,7 @@ func TestItemRepository_Delete(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	if _, err := f.repo.Get(testCtx(t), viewer, it.ID); !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("Get after Delete = %v, want ErrItemNotFound", err)
 	}
@@ -491,7 +494,7 @@ func TestItemRepository_Delete_NotFound(t *testing.T) {
 // TestLocationRepository_Delete_WithBinRejected in bin_postgres_gated_test.go.
 func TestBinRepository_Delete_WithItemRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -499,7 +502,7 @@ func TestBinRepository_Delete_WithItemRejected(t *testing.T) {
 		t.Fatalf("Create(item): %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	err := f.bins.Delete(testCtx(t), viewer, bin)
 	if !errors.Is(err, domain.ErrBinNotEmpty) {
 		t.Fatalf("Delete(bin with an item) = %v, want ErrBinNotEmpty", err)
@@ -520,9 +523,9 @@ func TestBinRepository_Delete_WithItemRejected(t *testing.T) {
 // visible, regardless of principal, because it has nothing to gate on.
 func TestItemRepository_VisibilityMatrix(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
-	admin := f.seedUser(t, identity.RoleAdmin)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
+	admin := f.seedUser(t, identity.RoleOwner)
 	loc := f.seedLocation(t, creator)
 
 	publicBin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
@@ -541,9 +544,9 @@ func TestItemRepository_VisibilityMatrix(t *testing.T) {
 		name string
 		p    identity.Principal
 	}{
-		{"admin", identity.NewUserPrincipal(admin, identity.RoleAdmin, "Admin")},
-		{"creator", identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")},
-		{"non-creator member", identity.NewUserPrincipal(other, identity.RoleMember, "Other")},
+		{"admin", identity.NewUserPrincipal(admin, identity.RoleOwner, "Admin")},
+		{"creator", identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")},
+		{"non-creator member", identity.NewUserPrincipal(other, identity.RoleAdult, "Other")},
 		{"integration", identity.NewIntegrationPrincipal("Nestova")},
 		{"anonymous", identity.Principal{}},
 	}
@@ -588,8 +591,8 @@ func assertItemVisibility(t *testing.T, err error, wantVisible bool, principalNa
 // TestBinRepository_PrivateBin_ScopedToCreatorAndAdmin's ListVisible half.
 func TestItemRepository_ListByBin_ScopedToVisibility(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 
@@ -598,8 +601,8 @@ func TestItemRepository_ListByBin_ScopedToVisibility(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 
 	got, err := f.repo.ListByBin(testCtx(t), otherViewer, privateBin)
 	if err != nil {
@@ -625,8 +628,8 @@ func TestItemRepository_ListByBin_ScopedToVisibility(t *testing.T) {
 // itemVisibilityWhere documents).
 func TestItemRepository_ListVisible(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 
 	publicBin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
@@ -641,8 +644,8 @@ func TestItemRepository_ListVisible(t *testing.T) {
 		}
 	}
 
-	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 
 	t.Run("unfiltered excludes another member's private bin item", func(t *testing.T) {
 		got, err := f.repo.ListVisible(testCtx(t), otherViewer, domain.ItemFilter{})
@@ -712,7 +715,7 @@ func itemNames(items []domain.Item) []string {
 
 func TestItemRepository_GetForUpdate(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -744,7 +747,7 @@ func TestItemRepository_GetForUpdate_NotFound(t *testing.T) {
 // rather than a plain Get.
 func TestItemRepository_GetForUpdate_LocksWithinTransaction(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	it := newItem("Stove", bin, creator)
@@ -805,7 +808,7 @@ func TestItemRepository_GetForUpdate_LocksWithinTransaction(t *testing.T) {
 // count since it does not belong to any of them.
 func TestItemRepository_CountsByBin(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
@@ -823,7 +826,7 @@ func TestItemRepository_CountsByBin(t *testing.T) {
 		t.Fatalf("Create(held): %v", err)
 	}
 
-	viewer := identity.NewUserPrincipal(creator, identity.RoleMember, "Creator")
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
 	counts, err := f.repo.CountsByBin(testCtx(t), viewer)
 	if err != nil {
 		t.Fatalf("CountsByBin: %v", err)
@@ -842,8 +845,8 @@ func TestItemRepository_CountsByBin(t *testing.T) {
 // member's private bin.
 func TestItemRepository_CountsByBin_ExcludesPrivateBinForNonOwner(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	other := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 
@@ -851,7 +854,7 @@ func TestItemRepository_CountsByBin_ExcludesPrivateBinForNonOwner(t *testing.T) 
 		t.Fatalf("Create: %v", err)
 	}
 
-	otherViewer := identity.NewUserPrincipal(other, identity.RoleMember, "Other")
+	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
 	counts, err := f.repo.CountsByBin(testCtx(t), otherViewer)
 	if err != nil {
 		t.Fatalf("CountsByBin: %v", err)

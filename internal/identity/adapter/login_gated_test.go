@@ -22,7 +22,7 @@ import (
 )
 
 // loginGatedFixture wires the real UserRepository, Authenticator, and a
-// pgxstore-backed session manager over one derived database — the same
+// session-manager over one derived database — the same
 // composition cmd/server/main.go builds, minus the rest of the app's
 // routes. Hashing uses cryptotest.Hasher()'s cheap parameters so the suite
 // does not pay a 64 MiB argon2 derivation per login.
@@ -43,10 +43,11 @@ func newLoginGatedFixture(t *testing.T, email, password string) *loginGatedFixtu
 	}
 	u := &domain.User{
 		ID:           domain.NewUserID(),
+		HouseholdID:  seedHousehold(t, pool),
 		DisplayName:  "Alice",
 		Email:        email,
 		PasswordHash: hash,
-		Role:         domain.RoleAdmin,
+		Role:         domain.RoleOwner,
 		Color:        domain.ColorIndigo,
 	}
 	if err := repo.Create(testCtx(t), u); err != nil {
@@ -75,13 +76,13 @@ func newLoginGatedFixture(t *testing.T, email, password string) *loginGatedFixtu
 	return &loginGatedFixture{pool: pool, server: server, client: client}
 }
 
-// sessionRowCount queries the sessions table pgxstore owns directly, so
+// sessionRowCount queries the identity.sessions table the store owns directly, so
 // these tests assert on the real server-side row — not just on cookie
 // behavior, which the hermetic (in-memory store) tests already cover.
 func (f *loginGatedFixture) sessionRowCount(ctx context.Context, t *testing.T) int {
 	t.Helper()
 	var n int
-	if err := f.pool.QueryRow(ctx, "SELECT count(*) FROM sessions").Scan(&n); err != nil {
+	if err := f.pool.QueryRow(ctx, "SELECT count(*) FROM identity.sessions").Scan(&n); err != nil {
 		t.Fatalf("count sessions: %v", err)
 	}
 	return n

@@ -357,7 +357,7 @@ func (r *fakeRepo) ListPrimaryForItems(_ context.Context, itemIDs []storagedomai
 func testLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func newViewer() identity.Principal {
-	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleMember, "Tester")
+	return identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Tester")
 }
 
 // --- tests -----------------------------------------------------------------

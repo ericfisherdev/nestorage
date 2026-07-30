@@ -9,7 +9,7 @@ import (
 )
 
 func TestRoleParse(t *testing.T) {
-	for _, s := range []string{"admin", "member"} {
+	for _, s := range []string{"owner", "adult", "child"} {
 		if r, err := domain.ParseRole(s); err != nil || r.String() != s {
 			t.Errorf("ParseRole(%q) = (%q, %v), want valid", s, r, err)
 		}
@@ -22,22 +22,25 @@ func TestRoleParse(t *testing.T) {
 }
 
 func TestRoleIsAdmin(t *testing.T) {
-	if !domain.RoleAdmin.IsAdmin() {
-		t.Error("RoleAdmin.IsAdmin() = false, want true")
+	if !domain.RoleOwner.IsAdmin() {
+		t.Error("RoleOwner.IsAdmin() = false, want true")
 	}
-	if domain.RoleMember.IsAdmin() {
-		t.Error("RoleMember.IsAdmin() = true, want false")
+	if domain.RoleAdult.IsAdmin() {
+		t.Error("RoleAdult.IsAdmin() = true, want false")
+	}
+	if domain.RoleChild.IsAdmin() {
+		t.Error("RoleChild.IsAdmin() = true, want false")
 	}
 }
 
 func TestUserIsAdmin(t *testing.T) {
-	admin := domain.User{Role: domain.RoleAdmin}
+	admin := domain.User{Role: domain.RoleOwner}
 	if !admin.IsAdmin() {
-		t.Error("User{Role: RoleAdmin}.IsAdmin() = false, want true")
+		t.Error("User{Role: RoleOwner}.IsAdmin() = false, want true")
 	}
-	member := domain.User{Role: domain.RoleMember}
+	member := domain.User{Role: domain.RoleAdult}
 	if member.IsAdmin() {
-		t.Error("User{Role: RoleMember}.IsAdmin() = true, want false")
+		t.Error("User{Role: RoleAdult}.IsAdmin() = true, want false")
 	}
 }
 

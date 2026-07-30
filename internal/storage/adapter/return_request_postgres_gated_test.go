@@ -40,9 +40,9 @@ func seedCheckedOutItem(t *testing.T, f *itemFixture, creator, holder identity.U
 
 func TestReturnRequestRepository_Create(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
-	requester := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
+	requester := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 
 	message := "please, I need this back"
@@ -71,9 +71,9 @@ func TestReturnRequestRepository_Create(t *testing.T) {
 // the SAME requester on the SAME item is rejected.
 func TestReturnRequestRepository_Create_DuplicateOpenRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
-	requester := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
+	requester := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 
 	first := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
@@ -93,9 +93,9 @@ func TestReturnRequestRepository_Create_DuplicateOpenRejected(t *testing.T) {
 // open, the same requester may raise a new one on the same item.
 func TestReturnRequestRepository_Create_AllowsReRequestAfterResolution(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
-	requester := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
+	requester := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 
 	first := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
@@ -114,8 +114,8 @@ func TestReturnRequestRepository_Create_AllowsReRequestAfterResolution(t *testin
 
 func TestReturnRequestRepository_Create_UnknownItemRejected(t *testing.T) {
 	f := newItemFixture(t)
-	holder := f.seedUser(t, identity.RoleMember)
-	requester := f.seedUser(t, identity.RoleMember)
+	holder := f.seedUser(t, identity.RoleAdult)
+	requester := f.seedUser(t, identity.RoleAdult)
 
 	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: domain.NewItemID(), RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
 	err := f.requests.Create(testCtx(t), req)
@@ -126,16 +126,16 @@ func TestReturnRequestRepository_Create_UnknownItemRejected(t *testing.T) {
 
 func TestReturnRequestRepository_ListByItem_NewestFirst(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 
-	first := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleMember), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
+	first := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleAdult), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
 	if err := f.requests.Create(testCtx(t), first); err != nil {
 		t.Fatalf("Create(first): %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	second := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleMember), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
+	second := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleAdult), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
 	if err := f.requests.Create(testCtx(t), second); err != nil {
 		t.Fatalf("Create(second): %v", err)
 	}
@@ -162,9 +162,9 @@ func TestReturnRequestRepository_ListByItem_Empty(t *testing.T) {
 
 func TestReturnRequestRepository_Cancel(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
-	requester := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
+	requester := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 
 	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
@@ -186,7 +186,7 @@ func TestReturnRequestRepository_Cancel(t *testing.T) {
 
 func TestReturnRequestRepository_Cancel_UnknownNotFound(t *testing.T) {
 	f := newItemFixture(t)
-	requester := f.seedUser(t, identity.RoleMember)
+	requester := f.seedUser(t, identity.RoleAdult)
 
 	_, err := f.requests.Cancel(testCtx(t), domain.NewReturnRequestID(), requester)
 	if !errors.Is(err, domain.ErrReturnRequestNotFound) {
@@ -199,10 +199,10 @@ func TestReturnRequestRepository_Cancel_UnknownNotFound(t *testing.T) {
 // indistinguishable from an unknown one.
 func TestReturnRequestRepository_Cancel_WrongRequesterMasked(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
-	requester := f.seedUser(t, identity.RoleMember)
-	stranger := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
+	requester := f.seedUser(t, identity.RoleAdult)
+	stranger := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 
 	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
@@ -226,9 +226,9 @@ func TestReturnRequestRepository_Cancel_WrongRequesterMasked(t *testing.T) {
 
 func TestReturnRequestRepository_Cancel_AlreadyResolvedRejected(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
-	requester := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
+	requester := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 
 	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
@@ -251,15 +251,15 @@ func TestReturnRequestRepository_Cancel_AlreadyResolvedRejected(t *testing.T) {
 // not, and a fourth, open request on a DIFFERENT item is untouched.
 func TestReturnRequestRepository_FulfillOpenForItem(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 	otherIt := seedCheckedOutItem(t, f, creator, holder)
 
-	openA := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleMember), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
-	openB := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleMember), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
-	cancelled := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleMember), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
-	otherItemOpen := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: otherIt.ID, RequesterID: f.seedUser(t, identity.RoleMember), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
+	openA := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleAdult), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
+	openB := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleAdult), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
+	cancelled := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: f.seedUser(t, identity.RoleAdult), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
+	otherItemOpen := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: otherIt.ID, RequesterID: f.seedUser(t, identity.RoleAdult), HolderID: holder, Status: domain.ReturnRequestStatusOpen}
 	for _, r := range []*domain.ReturnRequest{openA, openB, cancelled, otherItemOpen} {
 		if err := f.requests.Create(testCtx(t), r); err != nil {
 			t.Fatalf("seed request: %v", err)
@@ -323,9 +323,9 @@ func TestReturnRequestRepository_FulfillOpenForItem_Empty(t *testing.T) {
 // it, with no separate cleanup step.
 func TestReturnRequestRepository_CascadeDeleteWithItem(t *testing.T) {
 	f := newItemFixture(t)
-	creator := f.seedUser(t, identity.RoleMember)
-	holder := f.seedUser(t, identity.RoleMember)
-	requester := f.seedUser(t, identity.RoleMember)
+	creator := f.seedUser(t, identity.RoleAdult)
+	holder := f.seedUser(t, identity.RoleAdult)
+	requester := f.seedUser(t, identity.RoleAdult)
 	it := seedCheckedOutItem(t, f, creator, holder)
 
 	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}

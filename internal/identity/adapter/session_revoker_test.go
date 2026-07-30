@@ -20,7 +20,7 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 )
 
-// sessionRevokerFixture wires a real pgxstore-backed session manager over
+// sessionRevokerFixture wires a real session-manager over
 // one derived database, plus a tiny HTTP server that lets a test establish
 // a real, committed session row for an arbitrary user id. This cannot be
 // replaced with the in-memory scs.New() store the rest of this package's
@@ -63,13 +63,13 @@ func (f *sessionRevokerFixture) seedSession(t *testing.T, userID domain.UserID) 
 	_ = resp.Body.Close()
 }
 
-// sessionRowCount queries the sessions table pgxstore owns directly, so
+// sessionRowCount queries the identity.sessions table the store owns directly, so
 // these tests assert on the real server-side rows, mirroring
 // login_gated_test.go's own helper of the same name.
 func (f *sessionRevokerFixture) sessionRowCount(ctx context.Context, t *testing.T) int {
 	t.Helper()
 	var n int
-	if err := f.pool.QueryRow(ctx, "SELECT count(*) FROM sessions").Scan(&n); err != nil {
+	if err := f.pool.QueryRow(ctx, "SELECT count(*) FROM identity.sessions").Scan(&n); err != nil {
 		t.Fatalf("count sessions: %v", err)
 	}
 	return n

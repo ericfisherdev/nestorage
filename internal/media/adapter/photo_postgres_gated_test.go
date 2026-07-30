@@ -19,30 +19,45 @@ import (
 )
 
 // photoFixture wires a PhotoRepository alongside the identity/storage
-// repositories a photo's foreign keys require (uploaded_by -> app_user,
+// repositories a photo's foreign keys require (uploaded_by -> identity.member,
 // item_photo.item_id -> item), over ONE derived database — its own
 // "media" suffix, since dbtest.Harness.NewIsolatedPool must be called
 // exactly once per test (see storage's identical fixture doc).
 type photoFixture struct {
-	pool  *pgxpool.Pool
-	repo  *adapter.PhotoRepository
-	items *storageadapter.ItemRepository
-	bins  *storageadapter.BinRepository
-	locs  *storageadapter.LocationRepository
-	users *identityadapter.UserRepository
+	pool      *pgxpool.Pool
+	repo      *adapter.PhotoRepository
+	items     *storageadapter.ItemRepository
+	bins      *storageadapter.BinRepository
+	locs      *storageadapter.LocationRepository
+	users     *identityadapter.UserRepository
+	household identity.HouseholdID
 }
 
 func newPhotoFixture(t *testing.T) *photoFixture {
 	t.Helper()
 	pool := dbtest.Harness.NewIsolatedPool(t, "media")
 	return &photoFixture{
-		pool:  pool,
-		repo:  adapter.NewPhotoRepository(pool),
-		items: storageadapter.NewItemRepository(pool),
-		bins:  storageadapter.NewBinRepository(pool),
-		locs:  storageadapter.NewLocationRepository(pool),
-		users: identityadapter.NewUserRepository(pool),
+		pool:      pool,
+		repo:      adapter.NewPhotoRepository(pool),
+		items:     storageadapter.NewItemRepository(pool),
+		bins:      storageadapter.NewBinRepository(pool),
+		locs:      storageadapter.NewLocationRepository(pool),
+		users:     identityadapter.NewUserRepository(pool),
+		household: seedHousehold(t, pool),
 	}
+}
+
+// seedHousehold inserts a minimal identity.household row directly — every
+// gated fixture in this package that seeds a user needs one, since
+// identity.member.household_id is NOT NULL.
+func seedHousehold(t *testing.T, pool *pgxpool.Pool) identity.HouseholdID {
+	t.Helper()
+	id := identity.NewHouseholdID()
+	const q = `INSERT INTO identity.household (id, name) VALUES ($1, 'Test Household')`
+	if _, err := pool.Exec(testCtx(t), q, id.String()); err != nil {
+		t.Fatalf("seed household: %v", err)
+	}
+	return id
 }
 
 func testCtx(t *testing.T) context.Context {
@@ -56,10 +71,11 @@ func (f *photoFixture) seedUser(t *testing.T) identity.UserID {
 	t.Helper()
 	u := &identity.User{
 		ID:           identity.NewUserID(),
+		HouseholdID:  f.household,
 		DisplayName:  "Test User",
 		Email:        "photo-user-" + identity.NewUserID().String() + "@example.com",
 		PasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
-		Role:         identity.RoleMember,
+		Role:         identity.RoleAdult,
 		Color:        identity.ColorIndigo,
 	}
 	if err := f.users.Create(testCtx(t), u); err != nil {

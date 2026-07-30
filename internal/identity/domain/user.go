@@ -9,7 +9,11 @@ import "time"
 // plaintext password directly; deriving and verifying hashes is NSTR-20's
 // work.
 type User struct {
-	ID           UserID
+	ID UserID
+	// HouseholdID is the identity.household this member belongs to (NSTR-116).
+	// Set at creation (first-run setup or AdminService.Create) and immutable
+	// thereafter, mirroring ID.
+	HouseholdID  HouseholdID
 	DisplayName  string
 	Email        string
 	PasswordHash string
