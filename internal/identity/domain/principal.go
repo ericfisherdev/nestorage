@@ -44,10 +44,11 @@ func ParseKind(s string) (Kind, error) {
 // account api key (NSTR-23) — resolved it. UserID is the zero UserID for
 // KindIntegration: there is no user behind the account's api key.
 type Principal struct {
-	Kind   Kind
-	UserID UserID
-	Role   Role
-	Label  string
+	Kind        Kind
+	UserID      UserID
+	HouseholdID HouseholdID
+	Role        Role
+	Label       string
 }
 
 // NewUserPrincipal returns the Principal for a real person authenticated via

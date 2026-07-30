@@ -237,7 +237,7 @@ func TestLocationService_Delete_Success(t *testing.T) {
 func TestLocationService_Create(t *testing.T) {
 	locs := newFakeLocationRepo()
 	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
-	creator := identity.NewUserID()
+	creator := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleOwner, "Creator")
 
 	l, err := svc.Create(context.Background(), "  Garage  ", "Main garage", nil, creator)
 	if err != nil {
@@ -254,7 +254,7 @@ func TestLocationService_Create(t *testing.T) {
 func TestLocationService_Create_ValidationRejected(t *testing.T) {
 	svc := app.NewLocationService(newFakeLocationRepo(), &fakeBinLister{}, testLogger())
 
-	_, err := svc.Create(context.Background(), "   ", "", nil, identity.NewUserID())
+	_, err := svc.Create(context.Background(), "   ", "", nil, identity.NewUserPrincipal(identity.NewUserID(), identity.RoleOwner, "Creator"))
 	if !errors.Is(err, domain.ErrInvalidLocationName) {
 		t.Errorf("Create(blank name) error = %v, want ErrInvalidLocationName", err)
 	}
@@ -265,7 +265,7 @@ func TestLocationService_Create_RepositoryErrorWrapped(t *testing.T) {
 	locs.createErr = domain.ErrLocationNotFound
 	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
 
-	_, err := svc.Create(context.Background(), "Garage", "", nil, identity.NewUserID())
+	_, err := svc.Create(context.Background(), "Garage", "", nil, identity.NewUserPrincipal(identity.NewUserID(), identity.RoleOwner, "Creator"))
 	if !errors.Is(err, domain.ErrLocationNotFound) {
 		t.Errorf("Create() error = %v, want wrapped ErrLocationNotFound", err)
 	}

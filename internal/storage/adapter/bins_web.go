@@ -264,7 +264,8 @@ func (h *BinsWebHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := h.bins.Create(r.Context(), app.CreateBinInput{
-		Code: code, Name: name, Description: description, LocationID: locationID,
+		HouseholdID: viewer.HouseholdID,
+		Code:        code, Name: name, Description: description, LocationID: locationID,
 		OwnerID: ownerID, Visibility: visibility, CreatedBy: viewer.UserID,
 	})
 	if err != nil {

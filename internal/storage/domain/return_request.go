@@ -82,6 +82,7 @@ func ParseReturnRequestStatus(v string) (ReturnRequestStatus, error) {
 // logic beyond Fulfill/Cancel lives on it directly.
 type ReturnRequest struct {
 	ID          ReturnRequestID
+	HouseholdID identity.HouseholdID
 	ItemID      ItemID
 	RequesterID identity.UserID
 	HolderID    identity.UserID

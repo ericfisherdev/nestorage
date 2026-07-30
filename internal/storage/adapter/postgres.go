@@ -20,7 +20,7 @@ const foreignKeyViolation = "23503"
 
 // locationColumns is shared by every read query, keeping the column list and
 // scanLocation in lockstep.
-const locationColumns = `SELECT id, name, description, parent_id, created_by, created_at, updated_at FROM location`
+const locationColumns = `SELECT id, household_id, name, description, parent_id, created_by, created_at, updated_at FROM location`
 
 // LocationRepository is the pgx-backed domain.LocationRepository. UUIDs are
 // passed and scanned as text, matching the identity adapter, so no pgx UUID
@@ -51,11 +51,11 @@ func (r *LocationRepository) Create(ctx context.Context, l *domain.Location) err
 		return errors.New("storage/adapter: create location: nil location")
 	}
 	const q = `
-		INSERT INTO location (id, name, description, parent_id, created_by)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO location (id, household_id, name, description, parent_id, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING created_at, updated_at`
 	err := r.dbtx.QueryRow(ctx, q,
-		l.ID.String(), l.Name, l.Description, parentIDParam(l.ParentID), l.CreatedBy.String(),
+		l.ID.String(), l.HouseholdID.String(), l.Name, l.Description, parentIDParam(l.ParentID), l.CreatedBy.String(),
 	).Scan(&l.CreatedAt, &l.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create location: %w", err)
@@ -170,22 +170,26 @@ type scanner interface {
 
 func scanLocation(r scanner) (*domain.Location, error) {
 	var (
-		l                domain.Location
-		idStr, createdBy string
-		parentID         *string
+		l                             domain.Location
+		idStr, householdID, createdBy string
+		parentID                      *string
 	)
-	if err := r.Scan(&idStr, &l.Name, &l.Description, &parentID, &createdBy, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	if err := r.Scan(&idStr, &householdID, &l.Name, &l.Description, &parentID, &createdBy, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		return nil, err
 	}
 	id, err := domain.ParseLocationID(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("scan location: %w", err)
 	}
+	hID, err := identity.ParseHouseholdID(householdID)
+	if err != nil {
+		return nil, fmt.Errorf("scan location: household id: %w", err)
+	}
 	createdByID, err := identity.ParseUserID(createdBy)
 	if err != nil {
 		return nil, fmt.Errorf("scan location: %w", err)
 	}
-	l.ID, l.CreatedBy = id, createdByID
+	l.ID, l.HouseholdID, l.CreatedBy = id, hID, createdByID
 	if parentID != nil {
 		pid, err := domain.ParseLocationID(*parentID)
 		if err != nil {

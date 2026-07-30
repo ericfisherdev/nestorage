@@ -435,7 +435,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	principals := identityadapter.NewChain(
 		identityadapter.NewSessionResolver(sm, identityRepo, logger),
 		identityadapter.NewDeviceTokenResolver(deviceTokenService),
-		identityadapter.NewAPIKeyResolver(apiKeyService),
+		identityadapter.NewAPIKeyResolver(apiKeyService, householdRepo),
 	)
 	resolve := identityadapter.Resolve(principals, denier, logger)
 

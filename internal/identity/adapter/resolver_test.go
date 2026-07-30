@@ -69,6 +69,21 @@ func (f *fakeAPIKeyAuthenticator) Authenticate(_ context.Context, _ string) (*do
 	return f.key, nil
 }
 
+// fakeHouseholdLister is a configurable householdLister fake for
+// apiKeyResolver's tests: it stands in for domain.HouseholdRepository
+// without a database.
+type fakeHouseholdLister struct {
+	households []domain.Household
+	err        error
+}
+
+func (f *fakeHouseholdLister) List(_ context.Context) ([]domain.Household, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.households, nil
+}
+
 func TestNewChain_NilDependenciesPanic(t *testing.T) {
 	stub := &stubResolver{}
 	tests := []struct {
@@ -368,17 +383,26 @@ func TestDeviceTokenResolver_InvalidRevokedOrExpiredToken_WrapsErrInvalidCredent
 
 // --- apiKeyResolver ---
 
-func TestNewAPIKeyResolver_NilDependencyPanics(t *testing.T) {
+func TestNewAPIKeyResolver_NilAuthenticatorPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {
-			t.Error("NewAPIKeyResolver(nil) did not panic")
+			t.Error("NewAPIKeyResolver(nil, ...) did not panic")
 		}
 	}()
-	adapter.NewAPIKeyResolver(nil)
+	adapter.NewAPIKeyResolver(nil, &fakeHouseholdLister{})
+}
+
+func TestNewAPIKeyResolver_NilHouseholdListerPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("NewAPIKeyResolver(..., nil) did not panic")
+		}
+	}()
+	adapter.NewAPIKeyResolver(&fakeAPIKeyAuthenticator{}, nil)
 }
 
 func TestAPIKeyResolver_NoBearerCredential_IsNotFound(t *testing.T) {
-	resolver := adapter.NewAPIKeyResolver(&fakeAPIKeyAuthenticator{})
+	resolver := adapter.NewAPIKeyResolver(&fakeAPIKeyAuthenticator{}, &fakeHouseholdLister{})
 	r := httptest.NewRequest(http.MethodGet, "/bins", nil)
 
 	p, ok, err := resolver.Resolve(r.Context(), r)
@@ -388,7 +412,7 @@ func TestAPIKeyResolver_NoBearerCredential_IsNotFound(t *testing.T) {
 }
 
 func TestAPIKeyResolver_WrongPrefix_IsNotFound(t *testing.T) {
-	resolver := adapter.NewAPIKeyResolver(&fakeAPIKeyAuthenticator{})
+	resolver := adapter.NewAPIKeyResolver(&fakeAPIKeyAuthenticator{}, &fakeHouseholdLister{})
 	r := newBearerRequest(t, domain.DeviceTokenPrefix+"aaaa")
 
 	p, ok, err := resolver.Resolve(r.Context(), r)
@@ -398,8 +422,9 @@ func TestAPIKeyResolver_WrongPrefix_IsNotFound(t *testing.T) {
 }
 
 func TestAPIKeyResolver_ValidKey_ResolvesIntegrationPrincipal(t *testing.T) {
+	household := domain.Household{ID: domain.NewHouseholdID(), Name: "Household"}
 	authn := &fakeAPIKeyAuthenticator{key: &domain.APIKey{Label: "Nestova"}}
-	resolver := adapter.NewAPIKeyResolver(authn)
+	resolver := adapter.NewAPIKeyResolver(authn, &fakeHouseholdLister{households: []domain.Household{household}})
 	r := newBearerRequest(t, domain.APIKeyPrefix+"aaaa")
 
 	p, ok, err := resolver.Resolve(r.Context(), r)
@@ -407,6 +432,7 @@ func TestAPIKeyResolver_ValidKey_ResolvesIntegrationPrincipal(t *testing.T) {
 		t.Fatalf("Resolve() = (%+v, %v, %v), want ok", p, ok, err)
 	}
 	want := domain.NewIntegrationPrincipal("Nestova")
+	want.HouseholdID = household.ID
 	if p != want {
 		t.Errorf("Resolve() principal = %+v, want %+v", p, want)
 	}
@@ -414,12 +440,23 @@ func TestAPIKeyResolver_ValidKey_ResolvesIntegrationPrincipal(t *testing.T) {
 
 func TestAPIKeyResolver_InvalidRevokedOrExpiredKey_WrapsErrInvalidCredential(t *testing.T) {
 	authn := &fakeAPIKeyAuthenticator{err: domain.ErrAPIKeyExpired}
-	resolver := adapter.NewAPIKeyResolver(authn)
+	resolver := adapter.NewAPIKeyResolver(authn, &fakeHouseholdLister{})
 	r := newBearerRequest(t, domain.APIKeyPrefix+"aaaa")
 
 	_, ok, err := resolver.Resolve(r.Context(), r)
 	if ok || !errors.Is(err, adapter.ErrInvalidCredential) {
 		t.Fatalf("Resolve() = (_, %v, %v), want (false, ErrInvalidCredential) — the specific reason must not leak past this wrap", ok, err)
+	}
+}
+
+func TestAPIKeyResolver_HouseholdResolutionFails_WrapsErrInvalidCredential(t *testing.T) {
+	authn := &fakeAPIKeyAuthenticator{key: &domain.APIKey{Label: "Nestova"}}
+	resolver := adapter.NewAPIKeyResolver(authn, &fakeHouseholdLister{err: errors.New("boom")})
+	r := newBearerRequest(t, domain.APIKeyPrefix+"aaaa")
+
+	_, ok, err := resolver.Resolve(r.Context(), r)
+	if ok || !errors.Is(err, adapter.ErrInvalidCredential) {
+		t.Fatalf("Resolve() = (_, %v, %v), want (false, ErrInvalidCredential)", ok, err)
 	}
 }
 

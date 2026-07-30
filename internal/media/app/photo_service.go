@@ -158,6 +158,7 @@ func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, it
 
 	photo := &domain.Photo{
 		ID:             domain.NewPhotoID(),
+		HouseholdID:    viewer.HouseholdID,
 		StorageRef:     ref,
 		ThumbnailRef:   thumbRef,
 		ContentHash:    meta.ContentHash,

@@ -196,6 +196,7 @@ func (h *BinsAPIHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := h.bins.Create(r.Context(), app.CreateBinInput{
+		HouseholdID: viewer.HouseholdID,
 		Code:        domain.NormalizeBinCode(req.Code),
 		Name:        req.Name,
 		Description: req.Description,

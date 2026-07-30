@@ -133,7 +133,7 @@ func (h *LocationsAPIHandlers) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	l, err := h.locations.Create(r.Context(), req.Name, req.Description, parentID, viewer.UserID)
+	l, err := h.locations.Create(r.Context(), req.Name, req.Description, parentID, viewer)
 	if err != nil {
 		writeDomainError(w, r, h.logger, err, "locations api: create")
 		return

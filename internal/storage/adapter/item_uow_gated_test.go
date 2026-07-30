@@ -30,13 +30,14 @@ func TestDeletedItemEventSurvivesItemDelete(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	svc := newItemService(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	if err := svc.Delete(testCtx(t), it.ID, actor); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -70,6 +71,7 @@ func TestCreateAndEventCommitTogether(t *testing.T) {
 
 	svc := newItemService(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	it, err := svc.Create(testCtx(t), "Stove", nil, 1, bin, actor)
 	if err != nil {
@@ -99,13 +101,14 @@ func TestEditAndEventCommitTogether(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	svc := newItemService(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	if err := svc.Edit(testCtx(t), it.ID, "Camping stove", nil, 2, actor); err != nil {
 		t.Fatalf("Edit: %v", err)
@@ -149,6 +152,7 @@ func TestEditAndEventRollBackTogether(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	svc := newItemService(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 	unknownID := domain.NewItemID()
 
 	err := svc.Edit(testCtx(t), unknownID, "Stove", nil, 1, actor)

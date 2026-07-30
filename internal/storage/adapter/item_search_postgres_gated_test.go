@@ -18,7 +18,7 @@ func TestItemRepository_FindVisibleDetail_InBin(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Camping stove", bin, creator)
+	it := newItem(f.household, "Camping stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestItemRepository_FindVisibleDetail_CheckedOut(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	holder := f.seedUser(t, identity.RoleAdult)
-	it := &domain.Item{ID: domain.NewItemID(), Name: "Sleeping bag", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
+	it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Sleeping bag", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestItemRepository_FindVisibleDetail_VisibilityMatrix(t *testing.T) {
 	admin := f.seedUser(t, identity.RoleOwner)
 	loc := f.seedLocation(t, creator)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
-	it := newItem("Private item", privateBin, creator)
+	it := newItem(f.household, "Private item", privateBin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -129,11 +129,11 @@ func TestItemRepository_SearchVisible_MatchesByItemName(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	target := newItem("Camping Stove Deluxe", bin, creator)
+	target := newItem(f.household, "Camping Stove Deluxe", bin, creator)
 	if err := f.repo.Create(testCtx(t), target); err != nil {
 		t.Fatalf("Create(target): %v", err)
 	}
-	if err := f.repo.Create(testCtx(t), newItem("Lantern", bin, creator)); err != nil {
+	if err := f.repo.Create(testCtx(t), newItem(f.household, "Lantern", bin, creator)); err != nil {
 		t.Fatalf("Create(decoy): %v", err)
 	}
 
@@ -159,13 +159,13 @@ func TestItemRepository_SearchVisible_MatchesByBinName(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	binID := domain.NewBinID()
 	bin := &domain.Bin{
-		ID: binID, Code: "UNIQ" + binID.String(), Name: "Holiday Decorations Bin",
+		ID: binID, HouseholdID: f.household, Code: "UNIQ" + binID.String(), Name: "Holiday Decorations Bin",
 		LocationID: loc, CreatedBy: creator, Visibility: domain.VisibilityPublic,
 	}
 	if err := f.bins.Create(testCtx(t), bin); err != nil {
 		t.Fatalf("seed bin: %v", err)
 	}
-	it := newItem("Ornaments", binID, creator)
+	it := newItem(f.household, "Ornaments", binID, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -186,12 +186,12 @@ func TestItemRepository_SearchVisible_MatchesByLocationName(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	locID := domain.NewLocationID()
-	loc := &domain.Location{ID: locID, Name: "Attic Storage Nook", CreatedBy: creator}
+	loc := &domain.Location{ID: locID, HouseholdID: f.household, Name: "Attic Storage Nook", CreatedBy: creator}
 	if err := f.locations.Create(testCtx(t), loc); err != nil {
 		t.Fatalf("seed location: %v", err)
 	}
 	bin := f.seedBin(t, creator, locID, domain.VisibilityPublic)
-	it := newItem("Box of photos", bin, creator)
+	it := newItem(f.household, "Box of photos", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestItemRepository_SearchVisible_MatchesByLocationName(t *testing.T) {
 func TestItemRepository_SearchVisible_HeldItemMatchesOwnNameOnly(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
-	it := &domain.Item{ID: domain.NewItemID(), Name: "Unique Held Flashlight", Quantity: 1, HeldBy: &creator, CreatedBy: creator}
+	it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Unique Held Flashlight", Quantity: 1, HeldBy: &creator, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestItemRepository_SearchVisible_ExcludesPrivateBinForNonOwner(t *testing.T
 	other := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
-	it := newItem("Unique Private Widget", privateBin, creator)
+	it := newItem(f.household, "Unique Private Widget", privateBin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -281,11 +281,11 @@ func TestItemRepository_SearchVisible_EscapesWildcardCharacters(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	target := newItem("100%_Cotton_Towel", bin, creator)
+	target := newItem(f.household, "100%_Cotton_Towel", bin, creator)
 	if err := f.repo.Create(testCtx(t), target); err != nil {
 		t.Fatalf("Create(target): %v", err)
 	}
-	decoy := newItem("100X0Cotton0Towel", bin, creator)
+	decoy := newItem(f.household, "100X0Cotton0Towel", bin, creator)
 	if err := f.repo.Create(testCtx(t), decoy); err != nil {
 		t.Fatalf("Create(decoy): %v", err)
 	}
@@ -341,16 +341,16 @@ func TestItemRepository_SearchVisible_UsesTrigramIndex(t *testing.T) {
 	// through the repository would make this test impractically slow.
 	const fillerCount = 100000
 	_, err := f.pool.Exec(testCtx(t), `
-		INSERT INTO item (id, name, quantity, current_bin_id, created_by)
-		SELECT gen_random_uuid(), 'Filler item ' || gs, 1, $1, $2
-		FROM generate_series(1, $3) AS gs`,
-		bin.String(), creator.String(), fillerCount,
+		INSERT INTO item (id, household_id, name, quantity, current_bin_id, created_by)
+		SELECT gen_random_uuid(), $1, 'Filler item ' || gs, 1, $2, $3
+		FROM generate_series(1, $4) AS gs`,
+		f.household.String(), bin.String(), creator.String(), fillerCount,
 	)
 	if err != nil {
 		t.Fatalf("bulk-seed filler items: %v", err)
 	}
 
-	target := newItem("Extremely Unique Target Widget", bin, creator)
+	target := newItem(f.household, "Extremely Unique Target Widget", bin, creator)
 	if err := f.repo.Create(testCtx(t), target); err != nil {
 		t.Fatalf("Create(target): %v", err)
 	}

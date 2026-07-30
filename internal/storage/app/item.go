@@ -118,6 +118,7 @@ func NewItemService(items itemRepository, uow itemTransactor, logger *slog.Logge
 func (s *ItemService) Create(ctx context.Context, name string, description *string, quantity int, binID domain.BinID, actor identity.Principal) (*domain.Item, error) {
 	it := &domain.Item{
 		ID:           domain.NewItemID(),
+		HouseholdID:  actor.HouseholdID,
 		Name:         name,
 		Description:  description,
 		Quantity:     quantity,

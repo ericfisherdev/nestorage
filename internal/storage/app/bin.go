@@ -133,6 +133,7 @@ func (s *BinService) GetByCode(ctx context.Context, viewer identity.Principal, c
 // port (bins_web.go) takes this exact type too, so a rejected form's pending
 // values and a successful create's arguments never drift into two shapes.
 type CreateBinInput struct {
+	HouseholdID identity.HouseholdID
 	Code        string
 	Name        string
 	Description string
@@ -152,6 +153,7 @@ type CreateBinInput struct {
 func (s *BinService) Create(ctx context.Context, input CreateBinInput) (*domain.Bin, error) {
 	b := &domain.Bin{
 		ID:          domain.NewBinID(),
+		HouseholdID: input.HouseholdID,
 		Code:        domain.NormalizeBinCode(input.Code),
 		Name:        input.Name,
 		Description: input.Description,

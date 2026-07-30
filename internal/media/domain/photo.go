@@ -79,8 +79,9 @@ func (r StorageRef) String() string { return string(r) }
 // (NSTR-35's mixed-state requirement); UploadedBy is the user who uploaded
 // it, for item history attribution.
 type Photo struct {
-	ID         PhotoID
-	StorageRef StorageRef
+	ID          PhotoID
+	HouseholdID identity.HouseholdID
+	StorageRef  StorageRef
 	// ThumbnailRef is the thumbnail variant's StorageRef (NSTR-84), or nil
 	// when no thumbnail exists — either generation/storage failed at upload
 	// time (PhotoService.Upload treats that as non-fatal, see its own doc)
