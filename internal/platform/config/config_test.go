@@ -32,6 +32,7 @@ var allKeys = []string{
 	"SES_REGION", "SES_ACCESS_KEY_ID", "SES_SECRET_ACCESS_KEY",
 	"API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST",
 	"AUTH_RATE_LIMIT_RPM", "AUTH_RATE_LIMIT_BURST",
+	"DB_SCHEMA_IDENTITY", "DB_SCHEMA_NESTOVA", "DB_SCHEMA_NESTORAGE",
 }
 
 // setEnv isolates a test case from both the developer's ambient environment
@@ -182,6 +183,39 @@ func TestLoad_DotenvReadInDevOnly(t *testing.T) {
 			t.Errorf("DB.DSN = %q, want the real environment value %q (.env must be ignored outside dev)", cfg.DB.DSN, explicit)
 		}
 	})
+}
+
+// TestLoad_SchemaDefaultsWireThrough asserts the canonical install (no
+// DB_SCHEMA_* set) resolves to the three default schema names.
+func TestLoad_SchemaDefaultsWireThrough(t *testing.T) {
+	setEnv(t, map[string]string{
+		"APP_ENV":      corecfg.EnvDev,
+		"DATABASE_URL": "postgres://u:p@example.com:5432/nestorage?sslmode=disable",
+	})
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	want := corecfg.SchemaConfig{Identity: "identity", Nestova: "nestova", Nestorage: "nestorage"}
+	if cfg.Schemas != want {
+		t.Errorf("Schemas = %+v, want %+v", cfg.Schemas, want)
+	}
+}
+
+// TestLoad_InvalidSchemaNameFails asserts an invalid DB_SCHEMA_* value fails
+// Load, naming the variable in the aggregated error.
+func TestLoad_InvalidSchemaNameFails(t *testing.T) {
+	setEnv(t, map[string]string{
+		"APP_ENV":            corecfg.EnvDev,
+		"DATABASE_URL":       "postgres://u:p@example.com:5432/nestorage?sslmode=disable",
+		"DB_SCHEMA_IDENTITY": "Not-Valid",
+	})
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "DB_SCHEMA_IDENTITY") {
+		t.Fatalf("Load() error = %v, want an error naming DB_SCHEMA_IDENTITY", err)
+	}
 }
 
 // writeDotenv writes a .env file into the current directory (set up by

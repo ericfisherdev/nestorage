@@ -1,0 +1,125 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+
+	corecfg "github.com/ericfisherdev/nestcore/config"
+	ncmigrate "github.com/ericfisherdev/nestcore/db/migrate"
+	identitymigrate "github.com/ericfisherdev/nestcore/identity/migrate"
+
+	ownmigrate "github.com/ericfisherdev/nestorage/internal/platform/db/migrate"
+)
+
+// ensureSharedIdentitySchema implements NSTR-123's startup compatibility
+// check against nestcore's shared identity schema (epic NSTR-112), called
+// from serve() before the main connection pool is built. It never migrates
+// DOWN, and it never applies identity migrations without first confirming
+// the shape it is looking at — the four outcomes it distinguishes:
+//
+//   - identity absent, and Nestorage has never migrated its own schema
+//     either (a fresh install): bootstrap identity by running its
+//     migrations. Two apps racing this on the same fresh database are safe —
+//     identitymigrate.New's Runner holds a Postgres session-level advisory
+//     lock for the duration of Up.
+//   - identity absent, but Nestorage HAS migrated its own schema before (this
+//     is not a fresh install): the operator pointed DATABASE_URL at a
+//     database that was supposed to already be the shared one, and it is
+//     not — readiness fails with an actionable error naming the schema and
+//     host, never the DSN itself (which may carry credentials).
+//   - identity present, at a version older than this binary's embedded
+//     migrations: apply the pending ones, the normal upgrade path.
+//   - identity present, at a version NEWER than this binary's embedded
+//     migrations (this binary was built against an older nestcore): refuse
+//     to start rather than silently running against a schema shape it does
+//     not fully understand.
+//
+// Whether Nestorage has "migrated its own schema before" is read from its
+// OWN goose version table (via ownmigrate's Runner), not from a
+// schemas.Nestorage schema existing — Nestorage's own tables are not yet
+// namespaced into a dedicated schema (a separate, not-yet-scheduled
+// migration), so schema existence would never distinguish anything. Applied
+// version already means exactly "has this app booted and migrated against
+// this database before", independent of which schema its tables live in.
+func ensureSharedIdentitySchema(ctx context.Context, dsn string, schemas corecfg.SchemaConfig) error {
+	identityExists, err := ncmigrate.SchemaExists(ctx, dsn, schemas.Identity)
+	if err != nil {
+		return fmt.Errorf("probe identity schema: %w", err)
+	}
+
+	identityRunner, err := identitymigrate.New()
+	if err != nil {
+		return err
+	}
+
+	if !identityExists {
+		return bootstrapOrRefuseMissingIdentity(ctx, dsn, schemas, identityRunner)
+	}
+	return upgradeOrRefuseNewerIdentity(ctx, dsn, identityRunner)
+}
+
+// bootstrapOrRefuseMissingIdentity handles the two "identity schema absent"
+// outcomes: bootstrap on a genuinely fresh install, or fail readiness when
+// Nestorage has run against this database before and the shared schema it
+// depends on is unexpectedly gone.
+func bootstrapOrRefuseMissingIdentity(ctx context.Context, dsn string, schemas corecfg.SchemaConfig, identityRunner *ncmigrate.Runner) error {
+	ownRunner, err := ownmigrate.New()
+	if err != nil {
+		return err
+	}
+	ownVersion, err := ownRunner.AppliedVersion(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("check nestorage's own schema version: %w", err)
+	}
+	if ownVersion > 0 {
+		return fmt.Errorf("identity schema %q not found on %s; expected an existing shared database (this app has already migrated against it before)",
+			schemas.Identity, dsnHost(dsn))
+	}
+
+	if err := identityRunner.Up(ctx, dsn); err != nil {
+		return fmt.Errorf("bootstrap identity schema: %w", err)
+	}
+	return nil
+}
+
+// upgradeOrRefuseNewerIdentity handles the two "identity schema present"
+// outcomes: apply pending migrations when this binary is at or ahead of the
+// applied version, or refuse to start when the schema is newer than
+// anything this binary's embedded migrations know about.
+func upgradeOrRefuseNewerIdentity(ctx context.Context, dsn string, identityRunner *ncmigrate.Runner) error {
+	statuses, err := identityRunner.Status(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("read identity schema status: %w", err)
+	}
+	var maxKnown int64
+	for _, s := range statuses {
+		if s.Version > maxKnown {
+			maxKnown = s.Version
+		}
+	}
+
+	applied, err := identityRunner.AppliedVersion(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("read identity schema version: %w", err)
+	}
+	if applied > maxKnown {
+		return fmt.Errorf("identity schema is at version %d, newer than this binary's %d; update nestorage", applied, maxKnown)
+	}
+
+	if err := identityRunner.Up(ctx, dsn); err != nil {
+		return fmt.Errorf("apply pending identity migrations: %w", err)
+	}
+	return nil
+}
+
+// dsnHost returns dsn's host (and port, if present) for use in an error
+// message, never the DSN itself — which may carry a username and password.
+// Falls back to a generic phrase when dsn cannot be parsed as a URL or
+// carries no host, rather than risk echoing something credential-shaped.
+func dsnHost(dsn string) string {
+	if u, err := url.Parse(dsn); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return "the configured database"
+}
