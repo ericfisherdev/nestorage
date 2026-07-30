@@ -149,6 +149,7 @@ func ParseEditedField(s string) (EditedField, error) {
 // is nil.
 type ItemEvent struct {
 	ID          ItemEventID
+	HouseholdID identity.HouseholdID
 	ItemID      ItemID
 	ItemName    string
 	Kind        EventKind
@@ -185,12 +186,13 @@ type ItemEvent struct {
 // validate" shape domain.Item's callers already follow.
 func NewItemEvent(id ItemEventID, itemID ItemID, itemName string, kind EventKind, actor identity.Principal) ItemEvent {
 	e := ItemEvent{
-		ID:         id,
-		ItemID:     itemID,
-		ItemName:   itemName,
-		Kind:       kind,
-		ActorKind:  actor.Kind,
-		ActorLabel: actor.Actor(),
+		ID:          id,
+		HouseholdID: actor.HouseholdID,
+		ItemID:      itemID,
+		ItemName:    itemName,
+		Kind:        kind,
+		ActorKind:   actor.Kind,
+		ActorLabel:  actor.Actor(),
 	}
 	if actor.Kind == identity.KindUser {
 		e.ActorUserID = actor.UserID

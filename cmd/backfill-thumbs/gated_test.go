@@ -55,20 +55,20 @@ func TestRun_BackfillsAgainstRealDatabase(t *testing.T) {
 	photos := mediaadapter.NewPhotoRepository(pool)
 
 	uploader := seedBackfillUploader(ctx, t, pool)
-	loc := &storagedomain.Location{ID: storagedomain.NewLocationID(), Name: "Garage", CreatedBy: uploader.ID}
+	loc := &storagedomain.Location{ID: storagedomain.NewLocationID(), HouseholdID: uploader.HouseholdID, Name: "Garage", CreatedBy: uploader.ID}
 	if err := locs.Create(ctx, loc); err != nil {
 		t.Fatalf("seed location: %v", err)
 	}
 	binID := storagedomain.NewBinID()
 	bin := &storagedomain.Bin{
-		ID: binID, Code: "BFT" + binID.String(), Name: "Backfill bin",
+		ID: binID, HouseholdID: uploader.HouseholdID, Code: "BFT" + binID.String(), Name: "Backfill bin",
 		LocationID: loc.ID, CreatedBy: uploader.ID, Visibility: storagedomain.VisibilityPublic,
 	}
 	if err := bins.Create(ctx, bin); err != nil {
 		t.Fatalf("seed bin: %v", err)
 	}
 	item := &storagedomain.Item{
-		ID: storagedomain.NewItemID(), Name: "Backfilled item", Quantity: 1,
+		ID: storagedomain.NewItemID(), HouseholdID: uploader.HouseholdID, Name: "Backfilled item", Quantity: 1,
 		CurrentBinID: &bin.ID, CreatedBy: uploader.ID,
 	}
 	if err := items.Create(ctx, item); err != nil {
@@ -90,7 +90,7 @@ func TestRun_BackfillsAgainstRealDatabase(t *testing.T) {
 	}
 
 	photo := &mediadomain.Photo{
-		ID: mediadomain.NewPhotoID(), StorageRef: ref, ContentHash: seedHash,
+		ID: mediadomain.NewPhotoID(), HouseholdID: uploader.HouseholdID, StorageRef: ref, ContentHash: seedHash,
 		SizeBytes: int64(len(data)), ContentType: mediadomain.ContentTypeJPEG,
 		StorageBackend: mediadomain.StorageBackendLocal, UploadedBy: uploader.ID,
 	}

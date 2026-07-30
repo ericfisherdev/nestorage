@@ -43,7 +43,7 @@ func TestOperationService_AddToBin_MovesHeldItemIntoBin(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	holder := f.seedUser(t, identity.RoleAdult)
-	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
+	it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -51,6 +51,7 @@ func TestOperationService_AddToBin_MovesHeldItemIntoBin(t *testing.T) {
 
 	svc := newOperationService(f)
 	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
+	actor.HouseholdID = f.household
 
 	time.Sleep(2 * time.Millisecond)
 	op, err := svc.AddToBin(testCtx(t), actor, it.ID, bin)
@@ -86,7 +87,7 @@ func TestOperationService_AddToBin_AlreadyInBinRejected_NoPartialWrite(t *testin
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", binA, creator)
+	it := newItem(f.household, "Stove", binA, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -94,6 +95,7 @@ func TestOperationService_AddToBin_AlreadyInBinRejected_NoPartialWrite(t *testin
 
 	svc := newOperationService(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	_, err := svc.AddToBin(testCtx(t), actor, it.ID, binB)
 	if !errors.Is(err, domain.ErrItemAlreadyInBin) {
@@ -117,7 +119,7 @@ func TestOperationService_RemoveFromBin_ChecksOutBinnedItem(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -126,6 +128,7 @@ func TestOperationService_RemoveFromBin_ChecksOutBinnedItem(t *testing.T) {
 	svc := newOperationService(f)
 	holder := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
+	actor.HouseholdID = f.household
 
 	time.Sleep(2 * time.Millisecond)
 	op, err := svc.RemoveFromBin(testCtx(t), actor, it.ID, nil)
@@ -148,13 +151,14 @@ func TestOperationService_RemoveFromBin_IntegrationPrincipalRejected(t *testing.
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	svc := newOperationService(f)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 
 	_, err := svc.RemoveFromBin(testCtx(t), actor, it.ID, nil)
 	if !errors.Is(err, domain.ErrHolderRequired) {
@@ -177,7 +181,7 @@ func TestOperationService_ReturnToBin_ReturnsHeldItem(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	holder := f.seedUser(t, identity.RoleAdult)
-	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
+	it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -185,6 +189,7 @@ func TestOperationService_ReturnToBin_ReturnsHeldItem(t *testing.T) {
 
 	svc := newOperationService(f)
 	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
+	actor.HouseholdID = f.household
 
 	time.Sleep(2 * time.Millisecond)
 	op, err := svc.ReturnToBin(testCtx(t), actor, it.ID, bin, nil)
@@ -208,13 +213,14 @@ func TestOperationService_ReturnToBin_NotCheckedOutRejected(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", binA, creator)
+	it := newItem(f.household, "Stove", binA, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	svc := newOperationService(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	_, err := svc.ReturnToBin(testCtx(t), actor, it.ID, binB, nil)
 	if !errors.Is(err, domain.ErrItemNotCheckedOut) {
@@ -236,7 +242,7 @@ func TestOperationService_Edit_DoesNotAdvancePlacementChangedAt(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -273,7 +279,7 @@ func TestOperationService_RemoveFromBin_ConcurrentAttemptsOnlyOneWins(t *testing
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -282,7 +288,9 @@ func TestOperationService_RemoveFromBin_ConcurrentAttemptsOnlyOneWins(t *testing
 	holderA := f.seedUser(t, identity.RoleAdult)
 	holderB := f.seedUser(t, identity.RoleAdult)
 	actorA := identity.NewUserPrincipal(holderA, identity.RoleAdult, "A")
+	actorA.HouseholdID = f.household
 	actorB := identity.NewUserPrincipal(holderB, identity.RoleAdult, "B")
+	actorB.HouseholdID = f.household
 
 	var wg sync.WaitGroup
 	results := make([]error, 2)
@@ -344,13 +352,14 @@ func TestOperationAndEventCommitTogether(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	holder := f.seedUser(t, identity.RoleAdult)
-	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
+	it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	svc := newOperationService(f)
 	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
+	actor.HouseholdID = f.household
 
 	if _, err := svc.AddToBin(testCtx(t), actor, it.ID, bin); err != nil {
 		t.Fatalf("AddToBin: %v", err)
@@ -388,13 +397,14 @@ func TestOperationAndEventRollBackTogether(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", binA, creator)
+	it := newItem(f.household, "Stove", binA, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	svc := newOperationService(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	_, err := svc.AddToBin(testCtx(t), actor, it.ID, binB)
 	if !errors.Is(err, domain.ErrItemAlreadyInBin) {
@@ -431,19 +441,20 @@ func TestOperationService_ReturnToBin_FulfillsOpenReturnRequest(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	holder := f.seedUser(t, identity.RoleAdult)
-	it := &domain.Item{ID: domain.NewItemID(), Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
+	it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Stove", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	requester := f.seedUser(t, identity.RoleAdult)
-	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
+	req := &domain.ReturnRequest{ID: domain.NewReturnRequestID(), HouseholdID: f.household, ItemID: it.ID, RequesterID: requester, HolderID: holder, Status: domain.ReturnRequestStatusOpen}
 	if err := f.requests.Create(testCtx(t), req); err != nil {
 		t.Fatalf("seed return request: %v", err)
 	}
 
 	svc := newOperationService(f)
 	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Holder")
+	actor.HouseholdID = f.household
 
 	op, err := svc.ReturnToBin(testCtx(t), actor, it.ID, bin, nil)
 	if err != nil {

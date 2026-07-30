@@ -99,21 +99,22 @@ func (s *LocationService) Get(ctx context.Context, viewer identity.Principal, id
 	return l, nil
 }
 
-// Create validates and persists a new location. Returns a wrapped
-// domain.ErrInvalidLocationName for a blank/over-long name from
-// domain.ValidateLocationName, or a wrapped error from the repository's
-// foreign-key checks (an unknown createdBy or parentID).
-func (s *LocationService) Create(ctx context.Context, name, description string, parentID *domain.LocationID, createdBy identity.UserID) (*domain.Location, error) {
+// Create validates and persists a new location, attributed to viewer.
+// Returns a wrapped domain.ErrInvalidLocationName for a blank/over-long name
+// from domain.ValidateLocationName, or a wrapped error from the repository's
+// foreign-key checks (an unknown created_by or parentID).
+func (s *LocationService) Create(ctx context.Context, name, description string, parentID *domain.LocationID, viewer identity.Principal) (*domain.Location, error) {
 	validName, err := domain.ValidateLocationName(name)
 	if err != nil {
 		return nil, err
 	}
 	l := &domain.Location{
 		ID:          domain.NewLocationID(),
+		HouseholdID: viewer.HouseholdID,
 		Name:        validName,
 		Description: description,
 		ParentID:    parentID,
-		CreatedBy:   createdBy,
+		CreatedBy:   viewer.UserID,
 	}
 	if err := s.locations.Create(ctx, l); err != nil {
 		return nil, fmt.Errorf("app: create location: %w", err)

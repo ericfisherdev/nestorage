@@ -83,18 +83,19 @@ func (f *locationFixture) seedOwner(t *testing.T) identity.UserID {
 	return u.ID
 }
 
-func newLocation(createdBy identity.UserID, name string) *domain.Location {
+func newLocation(household identity.HouseholdID, createdBy identity.UserID, name string) *domain.Location {
 	return &domain.Location{
-		ID:        domain.NewLocationID(),
-		Name:      name,
-		CreatedBy: createdBy,
+		ID:          domain.NewLocationID(),
+		HouseholdID: household,
+		Name:        name,
+		CreatedBy:   createdBy,
 	}
 }
 
 func TestLocationRepository_CreateAndFindByID(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
-	loc := newLocation(owner, "Garage")
+	loc := newLocation(f.household, owner, "Garage")
 	loc.Description = "Attached two-car garage"
 
 	if err := f.repo.Create(testCtx(t), loc); err != nil {
@@ -119,12 +120,12 @@ func TestLocationRepository_CreateAndFindByID(t *testing.T) {
 func TestLocationRepository_CreateWithParent(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
-	parent := newLocation(owner, "Garage")
+	parent := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), parent); err != nil {
 		t.Fatalf("Create(parent): %v", err)
 	}
 
-	child := newLocation(owner, "Garage / Shelf B")
+	child := newLocation(f.household, owner, "Garage / Shelf B")
 	child.ParentID = &parent.ID
 	if err := f.repo.Create(testCtx(t), child); err != nil {
 		t.Fatalf("Create(child): %v", err)
@@ -153,7 +154,7 @@ func TestLocationRepository_FindByID_NotFound(t *testing.T) {
 func TestLocationRepository_FindVisibleByID(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
-	loc := newLocation(owner, "Garage")
+	loc := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), loc); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -181,10 +182,10 @@ func TestLocationRepository_FindVisibleByID_NotFound(t *testing.T) {
 func TestLocationRepository_List_Ordered(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
-	if err := f.repo.Create(testCtx(t), newLocation(owner, "Hall closet")); err != nil {
+	if err := f.repo.Create(testCtx(t), newLocation(f.household, owner, "Hall closet")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := f.repo.Create(testCtx(t), newLocation(owner, "Garage")); err != nil {
+	if err := f.repo.Create(testCtx(t), newLocation(f.household, owner, "Garage")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -214,7 +215,7 @@ func TestLocationRepository_List_Empty(t *testing.T) {
 func TestLocationRepository_Rename(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
-	loc := newLocation(owner, "Garage")
+	loc := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), loc); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -243,7 +244,7 @@ func TestLocationRepository_Rename_NotFound(t *testing.T) {
 func TestLocationRepository_Delete(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
-	loc := newLocation(owner, "Garage")
+	loc := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), loc); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -272,11 +273,11 @@ func TestLocationRepository_Delete_NotFound(t *testing.T) {
 func TestLocationRepository_Delete_WithChildRejected(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
-	parent := newLocation(owner, "Garage")
+	parent := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), parent); err != nil {
 		t.Fatalf("Create(parent): %v", err)
 	}
-	child := newLocation(owner, "Garage / Shelf B")
+	child := newLocation(f.household, owner, "Garage / Shelf B")
 	child.ParentID = &parent.ID
 	if err := f.repo.Create(testCtx(t), child); err != nil {
 		t.Fatalf("Create(child): %v", err)

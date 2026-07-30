@@ -52,5 +52,7 @@ func (sr *sessionResolver) Resolve(ctx context.Context, _ *http.Request) (domain
 	if !ok {
 		return domain.Principal{}, false, nil
 	}
-	return domain.NewUserPrincipal(u.ID, u.Role, u.DisplayName), true, nil
+	p := domain.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
+	p.HouseholdID = u.HouseholdID
+	return p, true, nil
 }

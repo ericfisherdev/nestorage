@@ -49,5 +49,7 @@ func (dr *deviceTokenResolver) Resolve(ctx context.Context, r *http.Request) (do
 	if err != nil {
 		return domain.Principal{}, false, fmt.Errorf("%w: %v", ErrInvalidCredential, err)
 	}
-	return domain.NewUserPrincipal(user.ID, user.Role, user.DisplayName), true, nil
+	p := domain.NewUserPrincipal(user.ID, user.Role, user.DisplayName)
+	p.HouseholdID = user.HouseholdID
+	return p, true, nil
 }

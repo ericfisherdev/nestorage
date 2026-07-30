@@ -72,6 +72,7 @@ func TestItemEventRepository_Append_UserActorRoundTrips(t *testing.T) {
 	f := newItemEventFixture(t)
 	u := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
+	actor.HouseholdID = f.household
 	binID := domain.NewBinID()
 
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventAdded, actor)
@@ -134,6 +135,7 @@ func TestItemEventRepository_Append_MovedEventRoundTripsLocations(t *testing.T) 
 	f := newItemEventFixture(t)
 	u := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
+	actor.HouseholdID = f.household
 	binID, fromLoc, toLoc := domain.NewBinID(), domain.NewLocationID(), domain.NewLocationID()
 
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventMoved, actor)
@@ -168,6 +170,7 @@ func TestItemEventRepository_Append_EditedEventRoundTripsChangedFields(t *testin
 	f := newItemEventFixture(t)
 	u := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
+	actor.HouseholdID = f.household
 
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventEdited, actor)
 	e.ChangedFields = []domain.EditedField{domain.FieldName, domain.FieldQuantity}
@@ -271,6 +274,7 @@ func TestItemEventRepository_Append_UserActorWithoutUserIDRejected(t *testing.T)
 func TestItemEventRepository_Append_UnknownActorUserRejected(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Ghost")
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 
 	err := f.repo.Append(testCtx(t), &e)
@@ -295,6 +299,7 @@ func TestItemEventRepository_Append_DeactivatedUserStillResolves(t *testing.T) {
 	f := newItemEventFixture(t)
 	u := f.seedUser(t, identity.RoleAdult)
 	actor := identity.NewUserPrincipal(u.ID, u.Role, u.DisplayName)
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 	if err := f.repo.Append(testCtx(t), &e); err != nil {
 		t.Fatalf("Append: %v", err)

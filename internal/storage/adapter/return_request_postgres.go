@@ -28,7 +28,7 @@ const (
 // exact order scanReturnRequest expects — shared by ListByItem's SELECT and
 // Cancel/FulfillOpenForItem's RETURNING clauses so all three stay in
 // lockstep with the scan function.
-const returnRequestReturningColumns = `id, item_id, requester_id, holder_id, message, status, created_at, resolved_at`
+const returnRequestReturningColumns = `id, household_id, item_id, requester_id, holder_id, message, status, created_at, resolved_at`
 
 // returnRequestColumns is ListByItem's own SELECT, built from
 // returnRequestReturningColumns.
@@ -70,11 +70,11 @@ func (r *ReturnRequestRepository) Create(ctx context.Context, req *domain.Return
 		return errors.New("storage/adapter: create return request: nil request")
 	}
 	const q = `
-		INSERT INTO return_request (id, item_id, requester_id, holder_id, message)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO return_request (id, household_id, item_id, requester_id, holder_id, message)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING created_at`
 	err := r.dbtx.QueryRow(ctx, q,
-		req.ID.String(), req.ItemID.String(), req.RequesterID.String(), req.HolderID.String(), req.Message,
+		req.ID.String(), req.HouseholdID.String(), req.ItemID.String(), req.RequesterID.String(), req.HolderID.String(), req.Message,
 	).Scan(&req.CreatedAt)
 	if err != nil {
 		switch {
@@ -193,17 +193,21 @@ func (r *ReturnRequestRepository) FulfillOpenForItem(ctx context.Context, itemID
 
 func scanReturnRequest(r scanner) (*domain.ReturnRequest, error) {
 	var (
-		rr                                                       domain.ReturnRequest
-		idStr, itemIDStr, requesterIDStr, holderIDStr, statusStr string
-		message                                                  *string
+		rr                                                                     domain.ReturnRequest
+		idStr, householdStr, itemIDStr, requesterIDStr, holderIDStr, statusStr string
+		message                                                                *string
 	)
-	if err := r.Scan(&idStr, &itemIDStr, &requesterIDStr, &holderIDStr, &message, &statusStr, &rr.CreatedAt, &rr.ResolvedAt); err != nil {
+	if err := r.Scan(&idStr, &householdStr, &itemIDStr, &requesterIDStr, &holderIDStr, &message, &statusStr, &rr.CreatedAt, &rr.ResolvedAt); err != nil {
 		return nil, err
 	}
 
 	id, err := domain.ParseReturnRequestID(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("id: %w", err)
+	}
+	householdID, err := identity.ParseHouseholdID(householdStr)
+	if err != nil {
+		return nil, fmt.Errorf("household id: %w", err)
 	}
 	itemID, err := domain.ParseItemID(itemIDStr)
 	if err != nil {
@@ -222,7 +226,7 @@ func scanReturnRequest(r scanner) (*domain.ReturnRequest, error) {
 		return nil, fmt.Errorf("status: %w", err)
 	}
 
-	rr.ID, rr.ItemID, rr.RequesterID, rr.HolderID, rr.Status = id, itemID, requesterID, holderID, status
+	rr.ID, rr.HouseholdID, rr.ItemID, rr.RequesterID, rr.HolderID, rr.Status = id, householdID, itemID, requesterID, holderID, status
 	rr.Message = message
 	return &rr, nil
 }

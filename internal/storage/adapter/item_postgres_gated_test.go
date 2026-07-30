@@ -76,7 +76,7 @@ func (f *itemFixture) seedUser(t *testing.T, role identity.Role) identity.UserID
 // location_id FK.
 func (f *itemFixture) seedLocation(t *testing.T, createdBy identity.UserID) domain.LocationID {
 	t.Helper()
-	loc := &domain.Location{ID: domain.NewLocationID(), Name: "Garage", CreatedBy: createdBy}
+	loc := &domain.Location{ID: domain.NewLocationID(), HouseholdID: f.household, Name: "Garage", CreatedBy: createdBy}
 	if err := f.locations.Create(testCtx(t), loc); err != nil {
 		t.Fatalf("seed location: %v", err)
 	}
@@ -94,12 +94,13 @@ func (f *itemFixture) seedBin(t *testing.T, createdBy identity.UserID, location 
 		// call: two UUIDv7s minted within the same millisecond share their
 		// timestamp-derived prefix, which collided when this used a
 		// separately generated id's leading characters.
-		ID:         id,
-		Code:       "ITM" + id.String(),
-		Name:       "Item bin",
-		LocationID: location,
-		CreatedBy:  createdBy,
-		Visibility: visibility,
+		ID:          id,
+		HouseholdID: f.household,
+		Code:        "ITM" + id.String(),
+		Name:        "Item bin",
+		LocationID:  location,
+		CreatedBy:   createdBy,
+		Visibility:  visibility,
 	}
 	if err := f.bins.Create(testCtx(t), b); err != nil {
 		t.Fatalf("seed bin: %v", err)
@@ -107,9 +108,10 @@ func (f *itemFixture) seedBin(t *testing.T, createdBy identity.UserID, location 
 	return b.ID
 }
 
-func newItem(name string, binID domain.BinID, createdBy identity.UserID) *domain.Item {
+func newItem(household identity.HouseholdID, name string, binID domain.BinID, createdBy identity.UserID) *domain.Item {
 	return &domain.Item{
 		ID:           domain.NewItemID(),
+		HouseholdID:  household,
 		Name:         name,
 		Quantity:     1,
 		CurrentBinID: &binID,
@@ -123,7 +125,7 @@ func TestItemRepository_CreateAndGet(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	desc := "Two-burner camping stove"
-	it := newItem("Camping stove", bin, creator)
+	it := newItem(f.household, "Camping stove", bin, creator)
 	it.Description = &desc
 	it.Quantity = 3
 
@@ -160,7 +162,7 @@ func TestItemRepository_Create_HeldByRoundTrips(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	holder := f.seedUser(t, identity.RoleAdult)
-	it := &domain.Item{ID: domain.NewItemID(), Name: "Sleeping bag", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
+	it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Sleeping bag", Quantity: 1, HeldBy: &holder, CreatedBy: creator}
 
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -188,7 +190,7 @@ func TestItemRepository_Create_QuantityRejected(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
-	it := newItem("Broken quantity", bin, creator)
+	it := newItem(f.household, "Broken quantity", bin, creator)
 	it.Quantity = 0
 
 	err := f.repo.Create(testCtx(t), it)
@@ -204,7 +206,7 @@ func TestItemRepository_Create_PlacementRejected(t *testing.T) {
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
 	t.Run("both bin and holder", func(t *testing.T) {
-		it := newItem("Both", bin, creator)
+		it := newItem(f.household, "Both", bin, creator)
 		it.HeldBy = &creator
 		err := f.repo.Create(testCtx(t), it)
 		if !errors.Is(err, domain.ErrInvalidPlacement) {
@@ -213,7 +215,7 @@ func TestItemRepository_Create_PlacementRejected(t *testing.T) {
 	})
 
 	t.Run("neither bin nor holder", func(t *testing.T) {
-		it := &domain.Item{ID: domain.NewItemID(), Name: "Neither", Quantity: 1, CreatedBy: creator}
+		it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Neither", Quantity: 1, CreatedBy: creator}
 		err := f.repo.Create(testCtx(t), it)
 		if !errors.Is(err, domain.ErrInvalidPlacement) {
 			t.Errorf("Create(neither) = %v, want ErrInvalidPlacement", err)
@@ -224,7 +226,7 @@ func TestItemRepository_Create_PlacementRejected(t *testing.T) {
 func TestItemRepository_Create_UnknownBinRejected(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
-	it := newItem("Ghost bin", domain.NewBinID(), creator)
+	it := newItem(f.household, "Ghost bin", domain.NewBinID(), creator)
 
 	err := f.repo.Create(testCtx(t), it)
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -236,7 +238,7 @@ func TestItemRepository_Create_UnknownHeldByRejected(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	ghost := identity.NewUserID()
-	it := &domain.Item{ID: domain.NewItemID(), Name: "Ghost holder", Quantity: 1, HeldBy: &ghost, CreatedBy: creator}
+	it := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Ghost holder", Quantity: 1, HeldBy: &ghost, CreatedBy: creator}
 
 	err := f.repo.Create(testCtx(t), it)
 	if !errors.Is(err, identity.ErrUserNotFound) {
@@ -249,7 +251,7 @@ func TestItemRepository_Create_UnknownCreatedByRejected(t *testing.T) {
 	admin := f.seedUser(t, identity.RoleOwner)
 	loc := f.seedLocation(t, admin)
 	bin := f.seedBin(t, admin, loc, domain.VisibilityPublic)
-	it := newItem("Ghost creator", bin, identity.NewUserID())
+	it := newItem(f.household, "Ghost creator", bin, identity.NewUserID())
 
 	err := f.repo.Create(testCtx(t), it)
 	if !errors.Is(err, identity.ErrUserNotFound) {
@@ -273,7 +275,7 @@ func TestItemRepository_Update(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Old name", bin, creator)
+	it := newItem(f.household, "Old name", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -306,7 +308,7 @@ func TestItemRepository_Update_QuantityRejected(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -339,7 +341,7 @@ func TestItemRepository_Move_BinToHolderToBin(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	binA := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Traveling item", binA, creator)
+	it := newItem(f.household, "Traveling item", binA, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -414,7 +416,7 @@ func TestItemRepository_Move_InvalidPlacementRejected(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -433,7 +435,7 @@ func TestItemRepository_Move_UnknownBinRejected(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -449,7 +451,7 @@ func TestItemRepository_Move_UnknownHolderRejected(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -465,7 +467,7 @@ func TestItemRepository_Delete(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -497,7 +499,7 @@ func TestBinRepository_Delete_WithItemRejected(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}
@@ -531,9 +533,9 @@ func TestItemRepository_VisibilityMatrix(t *testing.T) {
 	publicBin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 
-	publicItem := newItem("Public bin item", publicBin, creator)
-	privateItem := newItem("Private bin item", privateBin, creator)
-	heldItem := &domain.Item{ID: domain.NewItemID(), Name: "Held item", Quantity: 1, HeldBy: &creator, CreatedBy: creator}
+	publicItem := newItem(f.household, "Public bin item", publicBin, creator)
+	privateItem := newItem(f.household, "Private bin item", privateBin, creator)
+	heldItem := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Held item", Quantity: 1, HeldBy: &creator, CreatedBy: creator}
 	for _, it := range []*domain.Item{publicItem, privateItem, heldItem} {
 		if err := f.repo.Create(testCtx(t), it); err != nil {
 			t.Fatalf("seed create(%s): %v", it.Name, err)
@@ -596,7 +598,7 @@ func TestItemRepository_ListByBin_ScopedToVisibility(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 
-	it := newItem("Private bin item", privateBin, creator)
+	it := newItem(f.household, "Private bin item", privateBin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -635,9 +637,9 @@ func TestItemRepository_ListVisible(t *testing.T) {
 	publicBin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 
-	publicItem := newItem("Public bin item", publicBin, creator)
-	privateItem := newItem("Private bin item", privateBin, creator)
-	heldItem := &domain.Item{ID: domain.NewItemID(), Name: "Held item", Quantity: 1, HeldBy: &other, CreatedBy: creator}
+	publicItem := newItem(f.household, "Public bin item", publicBin, creator)
+	privateItem := newItem(f.household, "Private bin item", privateBin, creator)
+	heldItem := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Held item", Quantity: 1, HeldBy: &other, CreatedBy: creator}
 	for _, it := range []*domain.Item{publicItem, privateItem, heldItem} {
 		if err := f.repo.Create(testCtx(t), it); err != nil {
 			t.Fatalf("seed create(%s): %v", it.Name, err)
@@ -718,7 +720,7 @@ func TestItemRepository_GetForUpdate(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -750,7 +752,7 @@ func TestItemRepository_GetForUpdate_LocksWithinTransaction(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -814,14 +816,14 @@ func TestItemRepository_CountsByBin(t *testing.T) {
 	binB := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
 	for _, name := range []string{"Stove", "Lantern"} {
-		if err := f.repo.Create(testCtx(t), newItem(name, binA, creator)); err != nil {
+		if err := f.repo.Create(testCtx(t), newItem(f.household, name, binA, creator)); err != nil {
 			t.Fatalf("Create(%s): %v", name, err)
 		}
 	}
-	if err := f.repo.Create(testCtx(t), newItem("Tent", binB, creator)); err != nil {
+	if err := f.repo.Create(testCtx(t), newItem(f.household, "Tent", binB, creator)); err != nil {
 		t.Fatalf("Create(Tent): %v", err)
 	}
-	held := &domain.Item{ID: domain.NewItemID(), Name: "Held Flashlight", Quantity: 1, HeldBy: &creator, CreatedBy: creator}
+	held := &domain.Item{ID: domain.NewItemID(), HouseholdID: f.household, Name: "Held Flashlight", Quantity: 1, HeldBy: &creator, CreatedBy: creator}
 	if err := f.repo.Create(testCtx(t), held); err != nil {
 		t.Fatalf("Create(held): %v", err)
 	}
@@ -850,7 +852,7 @@ func TestItemRepository_CountsByBin_ExcludesPrivateBinForNonOwner(t *testing.T) 
 	loc := f.seedLocation(t, creator)
 	privateBin := f.seedBin(t, creator, loc, domain.VisibilityPrivate)
 
-	if err := f.repo.Create(testCtx(t), newItem("Secret", privateBin, creator)); err != nil {
+	if err := f.repo.Create(testCtx(t), newItem(f.household, "Secret", privateBin, creator)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 

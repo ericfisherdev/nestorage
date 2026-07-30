@@ -32,7 +32,7 @@ const (
 
 // itemColumns selects an item's own columns with no join, used where
 // visibility scoping does not apply (GetForUpdate).
-const itemColumns = `SELECT id, name, description, quantity, current_bin_id, held_by, created_by, placement_changed_at, created_at, updated_at FROM item`
+const itemColumns = `SELECT id, household_id, name, description, quantity, current_bin_id, held_by, created_by, placement_changed_at, created_at, updated_at FROM item`
 
 // itemVisibleColumns left-joins bin so itemVisibilityWhere can apply
 // identity.CanSeeBin's rule to current_bin_id — LEFT, not INNER, because a
@@ -40,7 +40,7 @@ const itemColumns = `SELECT id, name, description, quantity, current_bin_id, hel
 // exception in itemVisibilityWhere is what makes that row visible despite
 // the join producing no matching bin.
 const itemVisibleColumns = `
-	SELECT i.id, i.name, i.description, i.quantity, i.current_bin_id, i.held_by, i.created_by,
+	SELECT i.id, i.household_id, i.name, i.description, i.quantity, i.current_bin_id, i.held_by, i.created_by,
 	       i.placement_changed_at, i.created_at, i.updated_at
 	FROM item i
 	LEFT JOIN bin b ON b.id = i.current_bin_id`
@@ -76,11 +76,11 @@ func (r *ItemRepository) Create(ctx context.Context, it *domain.Item) error {
 		return errors.New("storage/adapter: create item: nil item")
 	}
 	const q = `
-		INSERT INTO item (id, name, description, quantity, current_bin_id, held_by, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO item (id, household_id, name, description, quantity, current_bin_id, held_by, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING placement_changed_at, created_at, updated_at`
 	err := r.dbtx.QueryRow(ctx, q,
-		it.ID.String(), it.Name, it.Description, it.Quantity,
+		it.ID.String(), it.HouseholdID.String(), it.Name, it.Description, it.Quantity,
 		binIDParam(it.CurrentBinID), userIDParam(it.HeldBy), it.CreatedBy.String(),
 	).Scan(&it.PlacementChangedAt, &it.CreatedAt, &it.UpdatedAt)
 	if err != nil {
@@ -379,13 +379,13 @@ func binIDParam(id *domain.BinID) any {
 
 func scanItem(r scanner) (*domain.Item, error) {
 	var (
-		it                       domain.Item
-		idStr, createdByStr      string
-		description              *string
-		currentBinStr, heldByStr *string
+		it                                domain.Item
+		idStr, householdStr, createdByStr string
+		description                       *string
+		currentBinStr, heldByStr          *string
 	)
 	if err := r.Scan(
-		&idStr, &it.Name, &description, &it.Quantity, &currentBinStr, &heldByStr, &createdByStr,
+		&idStr, &householdStr, &it.Name, &description, &it.Quantity, &currentBinStr, &heldByStr, &createdByStr,
 		&it.PlacementChangedAt, &it.CreatedAt, &it.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -395,11 +395,15 @@ func scanItem(r scanner) (*domain.Item, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan item: id: %w", err)
 	}
+	householdID, err := identity.ParseHouseholdID(householdStr)
+	if err != nil {
+		return nil, fmt.Errorf("scan item: household id: %w", err)
+	}
 	createdBy, err := identity.ParseUserID(createdByStr)
 	if err != nil {
 		return nil, fmt.Errorf("scan item: created by: %w", err)
 	}
-	it.ID, it.CreatedBy, it.Description = id, createdBy, description
+	it.ID, it.HouseholdID, it.CreatedBy, it.Description = id, householdID, createdBy, description
 
 	if currentBinStr != nil {
 		binID, err := domain.ParseBinID(*currentBinStr)

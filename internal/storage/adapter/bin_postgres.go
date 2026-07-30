@@ -31,7 +31,7 @@ const (
 
 // binColumns is shared by every read query, keeping the column list and
 // scanBin in lockstep.
-const binColumns = `SELECT id, code, name, description, location_id, owner_id, created_by, visibility, created_at, updated_at FROM bin`
+const binColumns = `SELECT id, household_id, code, name, description, location_id, owner_id, created_by, visibility, created_at, updated_at FROM bin`
 
 // BinRepository is the pgx-backed domain.BinRepository. UUIDs are passed and
 // scanned as text, matching the location adapter, so no pgx UUID codec
@@ -68,11 +68,11 @@ func (r *BinRepository) Create(ctx context.Context, b *domain.Bin) error {
 		visibility = domain.VisibilityPublic
 	}
 	const q = `
-		INSERT INTO bin (id, code, name, description, location_id, owner_id, created_by, visibility)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO bin (id, household_id, code, name, description, location_id, owner_id, created_by, visibility)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at, updated_at`
 	err := r.dbtx.QueryRow(ctx, q,
-		b.ID.String(), b.Code, b.Name, b.Description, b.LocationID.String(),
+		b.ID.String(), b.HouseholdID.String(), b.Code, b.Name, b.Description, b.LocationID.String(),
 		userIDParam(b.OwnerID), b.CreatedBy.String(), visibility.String(),
 	).Scan(&b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
@@ -343,13 +343,13 @@ func isPgConstraint(err error, code, constraint string) bool {
 
 func scanBin(r scanner) (*domain.Bin, error) {
 	var (
-		bin                              domain.Bin
-		idStr, locationStr, createdByStr string
-		ownerStr                         *string
-		visibilityStr                    string
+		bin                                            domain.Bin
+		idStr, householdStr, locationStr, createdByStr string
+		ownerStr                                       *string
+		visibilityStr                                  string
 	)
 	if err := r.Scan(
-		&idStr, &bin.Code, &bin.Name, &bin.Description, &locationStr, &ownerStr, &createdByStr,
+		&idStr, &householdStr, &bin.Code, &bin.Name, &bin.Description, &locationStr, &ownerStr, &createdByStr,
 		&visibilityStr, &bin.CreatedAt, &bin.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -358,6 +358,10 @@ func scanBin(r scanner) (*domain.Bin, error) {
 	id, err := domain.ParseBinID(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("scan bin: id: %w", err)
+	}
+	householdID, err := identity.ParseHouseholdID(householdStr)
+	if err != nil {
+		return nil, fmt.Errorf("scan bin: household id: %w", err)
 	}
 	locationID, err := domain.ParseLocationID(locationStr)
 	if err != nil {
@@ -371,7 +375,7 @@ func scanBin(r scanner) (*domain.Bin, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan bin: %w", err)
 	}
-	bin.ID, bin.LocationID, bin.CreatedBy, bin.Visibility = id, locationID, createdBy, visibility
+	bin.ID, bin.HouseholdID, bin.LocationID, bin.CreatedBy, bin.Visibility = id, householdID, locationID, createdBy, visibility
 
 	if ownerStr != nil {
 		ownerID, err := identity.ParseUserID(*ownerStr)

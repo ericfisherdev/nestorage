@@ -76,7 +76,7 @@ func (f *fakeLocationService) Get(_ context.Context, _ identity.Principal, id do
 	return &l, nil
 }
 
-func (f *fakeLocationService) Create(_ context.Context, name, _ string, _ *domain.LocationID, createdBy identity.UserID) (*domain.Location, error) {
+func (f *fakeLocationService) Create(_ context.Context, name, _ string, _ *domain.LocationID, viewer identity.Principal) (*domain.Location, error) {
 	f.createCalls++
 	if f.createErr != nil {
 		return nil, f.createErr
@@ -89,7 +89,7 @@ func (f *fakeLocationService) Create(_ context.Context, name, _ string, _ *domai
 	if strings.TrimSpace(name) == "" {
 		return nil, domain.ErrInvalidLocationName
 	}
-	l := domain.Location{ID: domain.NewLocationID(), Name: strings.TrimSpace(name), CreatedBy: createdBy}
+	l := domain.Location{ID: domain.NewLocationID(), Name: strings.TrimSpace(name), CreatedBy: viewer.UserID}
 	f.locations[l.ID] = l
 	return &l, nil
 }

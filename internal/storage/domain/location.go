@@ -23,6 +23,7 @@ import (
 // NSTR-29/30 add one) and the repository, not to this type.
 type Location struct {
 	ID          LocationID
+	HouseholdID identity.HouseholdID
 	Name        string
 	Description string
 	ParentID    *LocationID

@@ -40,7 +40,7 @@ const (
 // FindByStorageRef. thumb_storage_ref (00010_item_photo.sql, populated by
 // NSTR-84) is nullable — scanPhoto reads it into a sql.NullString and
 // finishScanPhoto projects that onto Photo.ThumbnailRef.
-const photoColumns = `SELECT id, storage_ref, thumb_storage_ref, content_sha256, size_bytes, content_type, storage_backend, uploaded_by, created_at FROM photo`
+const photoColumns = `SELECT id, household_id, storage_ref, thumb_storage_ref, content_sha256, size_bytes, content_type, storage_backend, uploaded_by, created_at FROM photo`
 
 // photoJoinSelectColumns is photo's own columns, p.-prefixed for a query
 // joining onto item_photo — the one list itemPhotoJoinColumns (GetForItem)
@@ -49,7 +49,7 @@ const photoColumns = `SELECT id, storage_ref, thumb_storage_ref, content_sha256,
 // which columns a joined photo row carries (this is exactly the class of
 // drift that first shipped NSTR-84's thumb_storage_ref column in only one
 // of the two).
-const photoJoinSelectColumns = `p.id, p.storage_ref, p.thumb_storage_ref, p.content_sha256, p.size_bytes, p.content_type, p.storage_backend, p.uploaded_by, p.created_at`
+const photoJoinSelectColumns = `p.id, p.household_id, p.storage_ref, p.thumb_storage_ref, p.content_sha256, p.size_bytes, p.content_type, p.storage_backend, p.uploaded_by, p.created_at`
 
 // itemPhotoJoinColumns left-joins photo's columns onto item_photo, used by
 // GetForItem.
@@ -89,11 +89,11 @@ func (r *PhotoRepository) Create(ctx context.Context, photo *domain.Photo) error
 		return errors.New("media/adapter: create photo: nil photo")
 	}
 	const q = `
-		INSERT INTO photo (id, storage_ref, thumb_storage_ref, content_sha256, size_bytes, content_type, storage_backend, uploaded_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO photo (id, household_id, storage_ref, thumb_storage_ref, content_sha256, size_bytes, content_type, storage_backend, uploaded_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at`
 	err := r.dbtx.QueryRow(ctx, q,
-		photo.ID.String(), photo.StorageRef.String(), nullableStorageRefParam(photo.ThumbnailRef), photo.ContentHash, photo.SizeBytes,
+		photo.ID.String(), photo.HouseholdID.String(), photo.StorageRef.String(), nullableStorageRefParam(photo.ThumbnailRef), photo.ContentHash, photo.SizeBytes,
 		photo.ContentType, photo.StorageBackend.String(), photo.UploadedBy.String(),
 	).Scan(&photo.CreatedAt)
 	if err != nil {
@@ -372,38 +372,38 @@ type scanner interface {
 
 func scanPhoto(r scanner) (*domain.Photo, error) {
 	var (
-		photo             domain.Photo
-		idStr, refStr     string
-		thumbRefStr       sql.NullString
-		storageBackendStr string
-		uploadedByStr     string
+		photo                       domain.Photo
+		idStr, householdStr, refStr string
+		thumbRefStr                 sql.NullString
+		storageBackendStr           string
+		uploadedByStr               string
 	)
 	if err := r.Scan(
-		&idStr, &refStr, &thumbRefStr, &photo.ContentHash, &photo.SizeBytes, &photo.ContentType,
+		&idStr, &householdStr, &refStr, &thumbRefStr, &photo.ContentHash, &photo.SizeBytes, &photo.ContentType,
 		&storageBackendStr, &uploadedByStr, &photo.CreatedAt,
 	); err != nil {
 		return nil, err
 	}
-	return finishScanPhoto(&photo, idStr, refStr, thumbRefStr, storageBackendStr, uploadedByStr)
+	return finishScanPhoto(&photo, idStr, householdStr, refStr, thumbRefStr, storageBackendStr, uploadedByStr)
 }
 
 // scanItemPhotoRow scans one ListByItem row: a photo's own columns plus its
 // item_photo position/is_primary.
 func scanItemPhotoRow(r scanner) (photo *domain.Photo, position int, isPrimary bool, err error) {
 	var (
-		p                 domain.Photo
-		idStr, refStr     string
-		thumbRefStr       sql.NullString
-		storageBackendStr string
-		uploadedByStr     string
+		p                           domain.Photo
+		idStr, householdStr, refStr string
+		thumbRefStr                 sql.NullString
+		storageBackendStr           string
+		uploadedByStr               string
 	)
 	if err := r.Scan(
-		&idStr, &refStr, &thumbRefStr, &p.ContentHash, &p.SizeBytes, &p.ContentType,
+		&idStr, &householdStr, &refStr, &thumbRefStr, &p.ContentHash, &p.SizeBytes, &p.ContentType,
 		&storageBackendStr, &uploadedByStr, &p.CreatedAt, &position, &isPrimary,
 	); err != nil {
 		return nil, 0, false, err
 	}
-	photo, err = finishScanPhoto(&p, idStr, refStr, thumbRefStr, storageBackendStr, uploadedByStr)
+	photo, err = finishScanPhoto(&p, idStr, householdStr, refStr, thumbRefStr, storageBackendStr, uploadedByStr)
 	return photo, position, isPrimary, err
 }
 
@@ -411,10 +411,14 @@ func scanItemPhotoRow(r scanner) (photo *domain.Photo, position int, isPrimary b
 // read into p's typed fields, shared so the two scan paths stay in lockstep.
 // thumbRefStr is thumb_storage_ref (NSTR-84): NULL projects to a nil
 // Photo.ThumbnailRef, a non-NULL value to a populated one.
-func finishScanPhoto(p *domain.Photo, idStr, refStr string, thumbRefStr sql.NullString, storageBackendStr, uploadedByStr string) (*domain.Photo, error) {
+func finishScanPhoto(p *domain.Photo, idStr, householdStr, refStr string, thumbRefStr sql.NullString, storageBackendStr, uploadedByStr string) (*domain.Photo, error) {
 	id, err := domain.ParsePhotoID(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("scan photo: id: %w", err)
+	}
+	householdID, err := identity.ParseHouseholdID(householdStr)
+	if err != nil {
+		return nil, fmt.Errorf("scan photo: household id: %w", err)
 	}
 	backend, err := domain.ParseStorageBackend(storageBackendStr)
 	if err != nil {
@@ -425,6 +429,7 @@ func finishScanPhoto(p *domain.Photo, idStr, refStr string, thumbRefStr sql.Null
 		return nil, fmt.Errorf("scan photo: uploaded by: %w", err)
 	}
 	p.ID = id
+	p.HouseholdID = householdID
 	p.StorageRef = domain.StorageRef(refStr)
 	p.ThumbnailRef = nullableStorageRef(thumbRefStr)
 	p.StorageBackend = backend

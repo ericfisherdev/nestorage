@@ -30,7 +30,7 @@ func TestItemLinkRepository_CreateAndListByItem(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}
@@ -58,7 +58,7 @@ func TestItemLinkRepository_ListByItem_OrderedByPosition(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}
@@ -90,7 +90,7 @@ func TestItemLinkRepository_ListByItem_TieBreaksByID(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}
@@ -149,7 +149,7 @@ func TestItemLinkRepository_NextPosition(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}
@@ -182,7 +182,7 @@ func TestItemLinkRepository_Update(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}
@@ -222,8 +222,8 @@ func TestItemLinkRepository_Update_WrongItemRejected(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	itA := newItem("Stove", bin, creator)
-	itB := newItem("Lantern", bin, creator)
+	itA := newItem(f.household, "Stove", bin, creator)
+	itB := newItem(f.household, "Lantern", bin, creator)
 	if err := f.repo.Create(testCtx(t), itA); err != nil {
 		t.Fatalf("Create(itemA): %v", err)
 	}
@@ -247,7 +247,7 @@ func TestItemLinkRepository_Delete(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}
@@ -285,8 +285,8 @@ func TestItemLinkRepository_Delete_WrongItemRejected(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	itA := newItem("Stove", bin, creator)
-	itB := newItem("Lantern", bin, creator)
+	itA := newItem(f.household, "Stove", bin, creator)
+	itB := newItem(f.household, "Lantern", bin, creator)
 	if err := f.repo.Create(testCtx(t), itA); err != nil {
 		t.Fatalf("Create(itemA): %v", err)
 	}
@@ -320,7 +320,7 @@ func TestItemLinkRepository_CascadeDeleteWithItem(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 	bin := f.seedBin(t, creator, loc, domain.VisibilityPublic)
-	it := newItem("Stove", bin, creator)
+	it := newItem(f.household, "Stove", bin, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}

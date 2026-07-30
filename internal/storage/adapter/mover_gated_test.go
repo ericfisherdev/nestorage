@@ -132,6 +132,7 @@ func TestBinMover_Move_RelocatesBin(t *testing.T) {
 
 	mover := newBinMover(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	result, err := mover.Move(testCtx(t), actor, binID, to)
 	if err != nil {
@@ -161,6 +162,7 @@ func TestBinMover_Move_NoopRejected(t *testing.T) {
 
 	mover := newBinMover(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	_, err := mover.Move(testCtx(t), actor, binID, loc)
 	if !errors.Is(err, domain.ErrBinAlreadyInLocation) {
@@ -182,6 +184,7 @@ func TestBinMover_Move_UnknownLocationRejected(t *testing.T) {
 
 	mover := newBinMover(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	_, err := mover.Move(testCtx(t), actor, binID, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotFound) {
@@ -204,6 +207,7 @@ func TestBinMover_Move_InvisiblePrivateBinRejected(t *testing.T) {
 
 	mover := newBinMover(f)
 	actor := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	actor.HouseholdID = f.household
 
 	_, err := mover.Move(testCtx(t), actor, binID, to)
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -230,7 +234,7 @@ func TestBinMover_Move_ItemsUnaffectedByMove(t *testing.T) {
 	from := f.seedLocation(t, creator)
 	to := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
-	it := newItem("Camping stove", binID, creator)
+	it := newItem(f.household, "Camping stove", binID, creator)
 	if err := f.repo.Create(testCtx(t), it); err != nil {
 		t.Fatalf("Create(item): %v", err)
 	}
@@ -238,6 +242,7 @@ func TestBinMover_Move_ItemsUnaffectedByMove(t *testing.T) {
 
 	mover := newBinMover(f)
 	actor := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	actor.HouseholdID = f.household
 
 	if _, err := mover.Move(testCtx(t), actor, binID, to); err != nil {
 		t.Fatalf("Move: %v", err)
@@ -278,7 +283,9 @@ func TestBinMover_Move_ConcurrentAttemptsOnlyOneWins(t *testing.T) {
 
 	mover := newBinMover(f)
 	actorA := identity.NewUserPrincipal(f.seedUser(t, identity.RoleAdult), identity.RoleAdult, "A")
+	actorA.HouseholdID = f.household
 	actorB := identity.NewUserPrincipal(f.seedUser(t, identity.RoleAdult), identity.RoleAdult, "B")
+	actorB.HouseholdID = f.household
 
 	var wg sync.WaitGroup
 	results := make([]error, 2)
@@ -335,8 +342,8 @@ func TestBinMoveFanOutCommitsAtomically(t *testing.T) {
 	from := f.seedLocation(t, creator)
 	to := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
-	itemA := newItem("Stove", binID, creator)
-	itemB := newItem("Lantern", binID, creator)
+	itemA := newItem(f.household, "Stove", binID, creator)
+	itemB := newItem(f.household, "Lantern", binID, creator)
 	if err := f.repo.Create(testCtx(t), itemA); err != nil {
 		t.Fatalf("Create(itemA): %v", err)
 	}
@@ -346,7 +353,9 @@ func TestBinMoveFanOutCommitsAtomically(t *testing.T) {
 
 	mover := newBinMover(f)
 	actorA := identity.NewUserPrincipal(f.seedUser(t, identity.RoleAdult), identity.RoleAdult, "A")
+	actorA.HouseholdID = f.household
 	actorB := identity.NewUserPrincipal(f.seedUser(t, identity.RoleAdult), identity.RoleAdult, "B")
+	actorB.HouseholdID = f.household
 
 	var wg sync.WaitGroup
 	results := make([]error, 2)

@@ -24,7 +24,7 @@ import (
 type locationQueryCommandService interface {
 	List(ctx context.Context, viewer identity.Principal) ([]app.LocationSummary, error)
 	Get(ctx context.Context, viewer identity.Principal, id domain.LocationID) (*domain.Location, error)
-	Create(ctx context.Context, name, description string, parentID *domain.LocationID, createdBy identity.UserID) (*domain.Location, error)
+	Create(ctx context.Context, name, description string, parentID *domain.LocationID, viewer identity.Principal) (*domain.Location, error)
 	Rename(ctx context.Context, id domain.LocationID, name string) error
 	Delete(ctx context.Context, id domain.LocationID) error
 }
@@ -99,7 +99,7 @@ func (h *LocationsWebHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
 
 	name := strings.TrimSpace(r.FormValue("name"))
-	if _, err := h.locations.Create(r.Context(), name, "", nil, viewer.UserID); err != nil {
+	if _, err := h.locations.Create(r.Context(), name, "", nil, viewer); err != nil {
 		status, msg, ok := mapLocationError(err)
 		if !ok {
 			h.logger.ErrorContext(r.Context(), "locations: create", "error", err)

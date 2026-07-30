@@ -49,6 +49,7 @@ func ValidateItemQuantity(quantity int) error {
 // and State lives on it directly.
 type Item struct {
 	ID                 ItemID
+	HouseholdID        identity.HouseholdID
 	Name               string
 	Description        *string
 	Quantity           int

@@ -20,7 +20,7 @@ const itemEventActorUserFKConstraint = "item_event_actor_user_id_fkey"
 // itemEventColumns is shared by every read query, keeping the column list
 // and scanItemEvent in lockstep.
 const itemEventColumns = `
-	SELECT id, item_id, item_name, kind, actor_kind, actor_user_id, actor_label,
+	SELECT id, household_id, item_id, item_name, kind, actor_kind, actor_user_id, actor_label,
 	       bin_id, bin_label, note, from_location_id, from_location_label,
 	       to_location_id, to_location_label, changed_fields, occurred_at, created_at
 	FROM item_event`
@@ -61,14 +61,14 @@ func (r *ItemEventRepository) Append(ctx context.Context, e *domain.ItemEvent) e
 	}
 	const q = `
 		INSERT INTO item_event (
-			id, item_id, item_name, kind, actor_kind, actor_user_id, actor_label,
+			id, household_id, item_id, item_name, kind, actor_kind, actor_user_id, actor_label,
 			bin_id, bin_label, note, from_location_id, from_location_label,
 			to_location_id, to_location_label, changed_fields
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING occurred_at, created_at`
 	err := r.dbtx.QueryRow(ctx, q,
-		e.ID.String(), e.ItemID.String(), e.ItemName, e.Kind.String(), e.ActorKind.String(),
+		e.ID.String(), e.HouseholdID.String(), e.ItemID.String(), e.ItemName, e.Kind.String(), e.ActorKind.String(),
 		actorUserIDParam(e.ActorUserID), e.ActorLabel,
 		binIDParam(e.BinID), nullableString(e.BinLabel),
 		nullableString(e.Note),
@@ -213,17 +213,17 @@ func changedFieldsParam(fields []domain.EditedField) any {
 
 func scanItemEvent(r scanner) (*domain.ItemEvent, error) {
 	var (
-		e                                       domain.ItemEvent
-		idStr, itemIDStr, kindStr, actorKindStr string
-		actorUserIDStr                          *string
-		binIDStr, binLabel                      *string
-		note                                    *string
-		fromLocationIDStr, fromLocationLabel    *string
-		toLocationIDStr, toLocationLabel        *string
-		changedFields                           []string
+		e                                                     domain.ItemEvent
+		idStr, householdStr, itemIDStr, kindStr, actorKindStr string
+		actorUserIDStr                                        *string
+		binIDStr, binLabel                                    *string
+		note                                                  *string
+		fromLocationIDStr, fromLocationLabel                  *string
+		toLocationIDStr, toLocationLabel                      *string
+		changedFields                                         []string
 	)
 	if err := r.Scan(
-		&idStr, &itemIDStr, &e.ItemName, &kindStr, &actorKindStr, &actorUserIDStr, &e.ActorLabel,
+		&idStr, &householdStr, &itemIDStr, &e.ItemName, &kindStr, &actorKindStr, &actorUserIDStr, &e.ActorLabel,
 		&binIDStr, &binLabel, &note, &fromLocationIDStr, &fromLocationLabel,
 		&toLocationIDStr, &toLocationLabel, &changedFields, &e.OccurredAt, &e.CreatedAt,
 	); err != nil {
@@ -233,6 +233,10 @@ func scanItemEvent(r scanner) (*domain.ItemEvent, error) {
 	id, err := domain.ParseItemEventID(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("id: %w", err)
+	}
+	householdID, err := identity.ParseHouseholdID(householdStr)
+	if err != nil {
+		return nil, fmt.Errorf("household id: %w", err)
 	}
 	itemID, err := domain.ParseItemID(itemIDStr)
 	if err != nil {
@@ -246,7 +250,7 @@ func scanItemEvent(r scanner) (*domain.ItemEvent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("actor kind: %w", err)
 	}
-	e.ID, e.ItemID, e.Kind, e.ActorKind = id, itemID, kind, actorKind
+	e.ID, e.HouseholdID, e.ItemID, e.Kind, e.ActorKind = id, householdID, itemID, kind, actorKind
 
 	if actorUserIDStr != nil {
 		actorUserID, err := identity.ParseUserID(*actorUserIDStr)

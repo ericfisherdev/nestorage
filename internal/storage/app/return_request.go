@@ -141,7 +141,7 @@ func (s *ReturnRequestService) Request(ctx context.Context, actor identity.Princ
 	}
 
 	req := &domain.ReturnRequest{
-		ID: domain.NewReturnRequestID(), ItemID: itemID,
+		ID: domain.NewReturnRequestID(), HouseholdID: actor.HouseholdID, ItemID: itemID,
 		RequesterID: actor.UserID, HolderID: *it.HeldBy,
 		Message: message, Status: domain.ReturnRequestStatusOpen,
 	}

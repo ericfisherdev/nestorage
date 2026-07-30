@@ -65,7 +65,7 @@ func (stubLocationService) Get(context.Context, identity.Principal, storagedomai
 	return nil, nil
 }
 
-func (stubLocationService) Create(context.Context, string, string, *storagedomain.LocationID, identity.UserID) (*storagedomain.Location, error) {
+func (stubLocationService) Create(context.Context, string, string, *storagedomain.LocationID, identity.Principal) (*storagedomain.Location, error) {
 	return nil, nil
 }
 

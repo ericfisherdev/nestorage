@@ -89,6 +89,7 @@ func ValidateBinName(name string) error {
 // same contract ValidateLocationName documents for Location.Name.
 type Bin struct {
 	ID          BinID
+	HouseholdID identity.HouseholdID
 	Code        string
 	Name        string
 	Description string

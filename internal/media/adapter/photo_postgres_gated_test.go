@@ -88,20 +88,20 @@ func (f *photoFixture) seedUser(t *testing.T) identity.UserID {
 // returning the item's id — item_photo.item_id's FK target.
 func (f *photoFixture) seedItem(t *testing.T, createdBy identity.UserID) storagedomain.ItemID {
 	t.Helper()
-	loc := &storagedomain.Location{ID: storagedomain.NewLocationID(), Name: "Garage", CreatedBy: createdBy}
+	loc := &storagedomain.Location{ID: storagedomain.NewLocationID(), HouseholdID: f.household, Name: "Garage", CreatedBy: createdBy}
 	if err := f.locs.Create(testCtx(t), loc); err != nil {
 		t.Fatalf("seed location: %v", err)
 	}
 	binID := storagedomain.NewBinID()
 	bin := &storagedomain.Bin{
-		ID: binID, Code: "PHT" + binID.String(), Name: "Photo bin",
+		ID: binID, HouseholdID: f.household, Code: "PHT" + binID.String(), Name: "Photo bin",
 		LocationID: loc.ID, CreatedBy: createdBy, Visibility: storagedomain.VisibilityPublic,
 	}
 	if err := f.bins.Create(testCtx(t), bin); err != nil {
 		t.Fatalf("seed bin: %v", err)
 	}
 	it := &storagedomain.Item{
-		ID: storagedomain.NewItemID(), Name: "Photographed item", Quantity: 1,
+		ID: storagedomain.NewItemID(), HouseholdID: f.household, Name: "Photographed item", Quantity: 1,
 		CurrentBinID: &bin.ID, CreatedBy: createdBy,
 	}
 	if err := f.items.Create(testCtx(t), it); err != nil {
@@ -110,9 +110,9 @@ func (f *photoFixture) seedItem(t *testing.T, createdBy identity.UserID) storage
 	return it.ID
 }
 
-func newPhoto(uploadedBy identity.UserID, ref string) *domain.Photo {
+func newPhoto(household identity.HouseholdID, uploadedBy identity.UserID, ref string) *domain.Photo {
 	return &domain.Photo{
-		ID: domain.NewPhotoID(), StorageRef: domain.StorageRef(ref),
+		ID: domain.NewPhotoID(), HouseholdID: household, StorageRef: domain.StorageRef(ref),
 		ContentHash: validHash, SizeBytes: 1024, ContentType: domain.ContentTypeJPEG,
 		StorageBackend: domain.StorageBackendLocal, UploadedBy: uploadedBy,
 	}
@@ -125,7 +125,7 @@ const validHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b
 func TestPhotoRepository_CreateAndFindByStorageRef(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
-	p := newPhoto(uploader, "items/some-item/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/some-item/"+validHash+".jpg")
 
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -159,10 +159,10 @@ func TestPhotoRepository_Create_DuplicateStorageRefRejected(t *testing.T) {
 	uploader := f.seedUser(t)
 	ref := "items/some-item/" + validHash + ".jpg"
 
-	if err := f.repo.Create(testCtx(t), newPhoto(uploader, ref)); err != nil {
+	if err := f.repo.Create(testCtx(t), newPhoto(f.household, uploader, ref)); err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	err := f.repo.Create(testCtx(t), newPhoto(uploader, ref))
+	err := f.repo.Create(testCtx(t), newPhoto(f.household, uploader, ref))
 	if !errors.Is(err, domain.ErrDuplicatePhoto) {
 		t.Errorf("Create(duplicate storage ref) = %v, want ErrDuplicatePhoto", err)
 	}
@@ -171,7 +171,7 @@ func TestPhotoRepository_Create_DuplicateStorageRefRejected(t *testing.T) {
 func TestPhotoRepository_Create_UnknownUploaderRejected(t *testing.T) {
 	f := newPhotoFixture(t)
 	ghost := identity.NewUserID()
-	err := f.repo.Create(testCtx(t), newPhoto(ghost, "items/some-item/"+validHash+".jpg"))
+	err := f.repo.Create(testCtx(t), newPhoto(f.household, ghost, "items/some-item/"+validHash+".jpg"))
 	if !errors.Is(err, identity.ErrUserNotFound) {
 		t.Errorf("Create(unknown uploaded_by) = %v, want identity.ErrUserNotFound", err)
 	}
@@ -181,8 +181,8 @@ func TestPhotoRepository_AttachToItemAndListByItemAndGetForItem(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
 	itemID := f.seedItem(t, uploader)
-	p1 := newPhoto(uploader, "items/i/"+validHash+".jpg")
-	p2 := newPhoto(uploader, "items/i/other-"+validHash+".jpg")
+	p1 := newPhoto(f.household, uploader, "items/i/"+validHash+".jpg")
+	p2 := newPhoto(f.household, uploader, "items/i/other-"+validHash+".jpg")
 	for _, p := range []*domain.Photo{p1, p2} {
 		if err := f.repo.Create(testCtx(t), p); err != nil {
 			t.Fatalf("Create(%s): %v", p.StorageRef, err)
@@ -224,7 +224,7 @@ func TestPhotoRepository_GetForItem_WrongItemNotFound(t *testing.T) {
 	uploader := f.seedUser(t)
 	itemA := f.seedItem(t, uploader)
 	itemB := f.seedItem(t, uploader)
-	p := newPhoto(uploader, "items/a/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/a/"+validHash+".jpg")
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestPhotoRepository_GetForItem_WrongItemNotFound(t *testing.T) {
 func TestPhotoRepository_AttachToItem_UnknownItemRejected(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
-	p := newPhoto(uploader, "items/x/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/x/"+validHash+".jpg")
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestPhotoRepository_Delete_RemovesJunctionThenPhoto(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
 	itemID := f.seedItem(t, uploader)
-	p := newPhoto(uploader, "items/d/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/d/"+validHash+".jpg")
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestPhotoRepository_Delete_SecondJunctionRowBlocksPhotoDelete(t *testing.T)
 	uploader := f.seedUser(t)
 	itemA := f.seedItem(t, uploader)
 	itemB := f.seedItem(t, uploader)
-	p := newPhoto(uploader, "items/shared/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/shared/"+validHash+".jpg")
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestPhotoRepository_Delete_SecondJunctionRowBlocksPhotoDelete(t *testing.T)
 func TestPhotoRepository_Create_CheckViolationRejected(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
-	p := newPhoto(uploader, "items/bad/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/bad/"+validHash+".jpg")
 	p.SizeBytes = 0 // violates photo_size_bytes_check
 
 	err := f.repo.Create(testCtx(t), p)
@@ -366,8 +366,8 @@ func TestPhotoRepository_SetPrimary_MovesPrimaryFlag(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
 	itemID := f.seedItem(t, uploader)
-	p1 := newPhoto(uploader, "items/sp/1-"+validHash+".jpg")
-	p2 := newPhoto(uploader, "items/sp/2-"+validHash+".jpg")
+	p1 := newPhoto(f.household, uploader, "items/sp/1-"+validHash+".jpg")
+	p2 := newPhoto(f.household, uploader, "items/sp/2-"+validHash+".jpg")
 	for _, p := range []*domain.Photo{p1, p2} {
 		if err := f.repo.Create(testCtx(t), p); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -421,9 +421,9 @@ func TestPhotoRepository_Reorder_RewritesPositions(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
 	itemID := f.seedItem(t, uploader)
-	p1 := newPhoto(uploader, "items/ro/1-"+validHash+".jpg")
-	p2 := newPhoto(uploader, "items/ro/2-"+validHash+".jpg")
-	p3 := newPhoto(uploader, "items/ro/3-"+validHash+".jpg")
+	p1 := newPhoto(f.household, uploader, "items/ro/1-"+validHash+".jpg")
+	p2 := newPhoto(f.household, uploader, "items/ro/2-"+validHash+".jpg")
+	p3 := newPhoto(f.household, uploader, "items/ro/3-"+validHash+".jpg")
 	for i, p := range []*domain.Photo{p1, p2, p3} {
 		if err := f.repo.Create(testCtx(t), p); err != nil {
 			t.Fatalf("Create(%d): %v", i, err)
@@ -462,7 +462,7 @@ func TestPhotoRepository_Reorder_RewritesPositions(t *testing.T) {
 func TestPhotoRepository_Create_ThumbnailRefRoundTrips(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
-	p := newPhoto(uploader, "items/thumb/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/thumb/"+validHash+".jpg")
 	thumbRef := domain.StorageRef("items/thumb/" + validHash + "_thumb.jpg")
 	p.ThumbnailRef = &thumbRef
 
@@ -486,7 +486,7 @@ func TestPhotoRepository_Create_ThumbnailRefRoundTrips(t *testing.T) {
 func TestPhotoRepository_Create_NoThumbnailRefLeavesItNil(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
-	p := newPhoto(uploader, "items/no-thumb/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/no-thumb/"+validHash+".jpg")
 
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -507,7 +507,7 @@ func TestPhotoRepository_Create_NoThumbnailRefLeavesItNil(t *testing.T) {
 func TestPhotoRepository_SetThumbnailRef_RoundTrips(t *testing.T) {
 	f := newPhotoFixture(t)
 	uploader := f.seedUser(t)
-	p := newPhoto(uploader, "items/set-thumb/"+validHash+".jpg")
+	p := newPhoto(f.household, uploader, "items/set-thumb/"+validHash+".jpg")
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -543,7 +543,7 @@ func TestPhotoRepository_ListMissingThumbnail_OnlyNullRows(t *testing.T) {
 	uploader := f.seedUser(t)
 	itemID := f.seedItem(t, uploader)
 
-	missing := newPhoto(uploader, "items/lm/missing-"+validHash+".jpg")
+	missing := newPhoto(f.household, uploader, "items/lm/missing-"+validHash+".jpg")
 	if err := f.repo.Create(testCtx(t), missing); err != nil {
 		t.Fatalf("Create(missing): %v", err)
 	}
@@ -551,7 +551,7 @@ func TestPhotoRepository_ListMissingThumbnail_OnlyNullRows(t *testing.T) {
 		t.Fatalf("AttachToItem(missing): %v", err)
 	}
 
-	populated := newPhoto(uploader, "items/lm/populated-"+validHash+".jpg")
+	populated := newPhoto(f.household, uploader, "items/lm/populated-"+validHash+".jpg")
 	thumbRef := domain.StorageRef("items/lm/populated-" + validHash + "_thumb.jpg")
 	populated.ThumbnailRef = &thumbRef
 	if err := f.repo.Create(testCtx(t), populated); err != nil {
@@ -594,7 +594,7 @@ func TestPhotoRepository_ListMissingThumbnail_PagesByID(t *testing.T) {
 
 	var created []*domain.Photo
 	for i := 0; i < 3; i++ {
-		p := newPhoto(uploader, fmt.Sprintf("items/lm-page/%d-%s.jpg", i, validHash))
+		p := newPhoto(f.household, uploader, fmt.Sprintf("items/lm-page/%d-%s.jpg", i, validHash))
 		if err := f.repo.Create(testCtx(t), p); err != nil {
 			t.Fatalf("Create(%d): %v", i, err)
 		}
@@ -645,8 +645,8 @@ func TestPhotoRepository_ListPrimaryForItems_ReturnsPrimaryOnly(t *testing.T) {
 	itemWithPhotos := f.seedItem(t, uploader)
 	itemWithNone := f.seedItem(t, uploader)
 
-	primary := newPhoto(uploader, "items/lp/primary-"+validHash+".jpg")
-	secondary := newPhoto(uploader, "items/lp/secondary-"+validHash+".jpg")
+	primary := newPhoto(f.household, uploader, "items/lp/primary-"+validHash+".jpg")
+	secondary := newPhoto(f.household, uploader, "items/lp/secondary-"+validHash+".jpg")
 	for _, p := range []*domain.Photo{primary, secondary} {
 		if err := f.repo.Create(testCtx(t), p); err != nil {
 			t.Fatalf("Create(%s): %v", p.StorageRef, err)

@@ -53,6 +53,7 @@ func TestPhotosAPI_Upload_RoundTripsThroughSharedTables(t *testing.T) {
 
 	handlers := adapter.NewPhotosAPIHandlers(svc, defaultTestMaxUploadBytes, testLogger())
 	viewer := identity.NewUserPrincipal(uploader, identity.RoleAdult, "Uploader")
+	viewer.HouseholdID = f.household
 	server := newAPIPrincipalServer(t, viewer, handlers)
 
 	resp := multipartUploadRequest(t, server, "/api/v1/items/"+itemID.String()+"/photos", "a.jpg", string(jpegBytes(t)), 0)
