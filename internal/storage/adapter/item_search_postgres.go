@@ -22,7 +22,7 @@ import (
 // in-bin item has no holder — the same LEFT JOIN shape itemVisibleColumns
 // uses for the visibility predicate itself.
 const itemDetailColumns = `
-	SELECT i.id, i.name, i.description, i.quantity, i.current_bin_id, i.held_by, i.created_by,
+	SELECT i.id, i.household_id, i.name, i.description, i.quantity, i.current_bin_id, i.held_by, i.created_by,
 	       i.placement_changed_at, i.created_at, i.updated_at,
 	       b.name, b.code, l.name, au.display_name, ap.color
 	FROM item i
@@ -114,15 +114,15 @@ func escapeLikeTerm(term string) string {
 // scanItem's shape for the joined columns it additionally carries.
 func scanItemDetail(r scanner) (*domain.ItemDetailResult, error) {
 	var (
-		it                             domain.Item
-		idStr, createdByStr            string
-		description                    *string
-		currentBinStr, heldByStr       *string
-		binName, binCode, locationName *string
-		holderName, holderColor        *string
+		it                                domain.Item
+		idStr, householdStr, createdByStr string
+		description                       *string
+		currentBinStr, heldByStr          *string
+		binName, binCode, locationName    *string
+		holderName, holderColor           *string
 	)
 	if err := r.Scan(
-		&idStr, &it.Name, &description, &it.Quantity, &currentBinStr, &heldByStr, &createdByStr,
+		&idStr, &householdStr, &it.Name, &description, &it.Quantity, &currentBinStr, &heldByStr, &createdByStr,
 		&it.PlacementChangedAt, &it.CreatedAt, &it.UpdatedAt,
 		&binName, &binCode, &locationName, &holderName, &holderColor,
 	); err != nil {
@@ -133,11 +133,15 @@ func scanItemDetail(r scanner) (*domain.ItemDetailResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan item detail: id: %w", err)
 	}
+	householdID, err := identity.ParseHouseholdID(householdStr)
+	if err != nil {
+		return nil, fmt.Errorf("scan item detail: household id: %w", err)
+	}
 	createdBy, err := identity.ParseUserID(createdByStr)
 	if err != nil {
 		return nil, fmt.Errorf("scan item detail: created by: %w", err)
 	}
-	it.ID, it.CreatedBy, it.Description = id, createdBy, description
+	it.ID, it.HouseholdID, it.CreatedBy, it.Description = id, householdID, createdBy, description
 
 	if currentBinStr != nil {
 		binID, err := domain.ParseBinID(*currentBinStr)

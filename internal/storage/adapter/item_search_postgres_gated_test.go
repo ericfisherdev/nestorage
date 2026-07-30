@@ -31,6 +31,9 @@ func TestItemRepository_FindVisibleDetail_InBin(t *testing.T) {
 	if got.Item.ID != it.ID || got.Item.Name != "Camping stove" {
 		t.Errorf("FindVisibleDetail.Item = %+v, want it to match the created item", got.Item)
 	}
+	if got.Item.HouseholdID != f.household {
+		t.Errorf("FindVisibleDetail.Item.HouseholdID = %v, want %v", got.Item.HouseholdID, f.household)
+	}
 	if got.BinCode == "" {
 		t.Error("FindVisibleDetail(in-bin item) missing BinCode")
 	}

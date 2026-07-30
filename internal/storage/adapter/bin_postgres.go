@@ -113,9 +113,21 @@ func (r *BinRepository) FindVisibleByID(ctx context.Context, viewer identity.Pri
 // domain.NormalizeBinCode) since a scanned label's case cannot be trusted.
 // Returns domain.ErrBinNotFound both when code is unknown and when the bin
 // exists but viewer may not see it.
+//
+// Scoped to viewer.HouseholdID ahead of NSTR-131's general read-filtering
+// sweep: 00018_household_scoping.sql replaced bin_code_uniq's global
+// UNIQUE (code) with UNIQUE (household_id, code), so two households can now
+// legitimately share a code — without this predicate, QueryRow's single-row
+// result would be an arbitrary pick between them, and the public /b/CODE
+// deep link (and its POST-to-edit counterpart) would resolve and mutate
+// whichever bin Postgres happened to return, not necessarily the viewer's
+// own household's bin. Every other read on this repository stays unscoped,
+// per this ticket's own split with NSTR-131 — this one predicate is the
+// exception, because the uniqueness guarantee that used to make the
+// unscoped query correct is exactly what this migration removed.
 func (r *BinRepository) FindVisibleByCode(ctx context.Context, viewer identity.Principal, code string) (*domain.Bin, error) {
-	q := binColumns + ` WHERE code = $1 AND ` + visibilityWhere(1)
-	args := append([]any{domain.NormalizeBinCode(code)}, viewerArgs(viewer)...)
+	q := binColumns + ` WHERE household_id = $1 AND code = $2 AND ` + visibilityWhere(2)
+	args := append([]any{viewer.HouseholdID.String(), domain.NormalizeBinCode(code)}, viewerArgs(viewer)...)
 
 	b, err := scanBin(r.dbtx.QueryRow(ctx, q, args...))
 	if err != nil {
