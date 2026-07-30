@@ -162,39 +162,10 @@ func TestEnsureSharedIdentitySchema_NewerIdentity_Refuses(t *testing.T) {
 	}
 	top := highestKnownVersion(ctx, t, identityRunner, dsn)
 
-	// Fabricate a migration version beyond anything embedded here, standing
-	// in for a newer nestcore's identity schema — this binary has no source
-	// file for it, so this is the only way to construct the scenario.
 	const fabricatedVersion = 999999
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	// Closed from within the Cleanup below, not deferred here: t.Cleanup
-	// callbacks run AFTER this function's own defers, so a plain defer
-	// would close db before the cleanup below gets to use it.
-	if _, err := db.ExecContext(ctx,
-		"INSERT INTO identity.goose_db_version (version_id, is_applied) VALUES ($1, true)", fabricatedVersion,
-	); err != nil {
-		t.Fatalf("fabricate a newer applied version: %v", err)
-	}
-	t.Cleanup(func() {
-		defer func() { _ = db.Close() }()
-		// The fabricated row has no corresponding migration file, so goose
-		// cannot compute a down path through it — remove it BEFORE Reset,
-		// or Reset fails with "version not found" and leaves this row
-		// behind for the next run to trip over too.
-		if _, err := db.ExecContext(context.Background(),
-			"DELETE FROM identity.goose_db_version WHERE version_id = $1", fabricatedVersion,
-		); err != nil {
-			t.Logf("cleanup: remove fabricated version row failed: %v", err)
-		}
-		if err := identityRunner.Reset(context.Background(), dsn); err != nil {
-			t.Logf("cleanup Reset failed: %v", err)
-		}
-	})
+	db := fabricateNewerAppliedVersion(ctx, t, dsn, identityRunner, fabricatedVersion)
 
-	err = ensureSharedIdentitySchema(ctx, dsn, testSchemas)
+	err := ensureSharedIdentitySchema(ctx, dsn, testSchemas)
 	if err == nil {
 		t.Fatal("ensureSharedIdentitySchema() with identity newer than embedded = nil, want an error")
 	}
@@ -218,6 +189,42 @@ func TestEnsureSharedIdentitySchema_NewerIdentity_Refuses(t *testing.T) {
 	} else if got != fabricatedVersion {
 		t.Errorf("applied version = %d, want %d unchanged (top was %d)", got, fabricatedVersion, top)
 	}
+}
+
+// fabricateNewerAppliedVersion inserts a migration version beyond anything
+// embedded here, standing in for a newer nestcore's identity schema — this
+// binary has no source file for it, so this is the only way to construct
+// the scenario. It registers a Cleanup that removes the fabricated row
+// before resetting identityRunner: the row has no corresponding migration
+// file, so goose cannot compute a down path through it, and Reset would
+// fail with "version not found" and leave the row behind for the next run
+// to trip over too. Returns the *sql.DB the caller queries afterward to
+// confirm no down-migration ran; it is closed from within this Cleanup,
+// not the caller's own defer, since Cleanup callbacks run AFTER the test
+// function's own defers.
+func fabricateNewerAppliedVersion(ctx context.Context, t *testing.T, dsn string, identityRunner *ncmigrate.Runner, version int) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO identity.goose_db_version (version_id, is_applied) VALUES ($1, true)", version,
+	); err != nil {
+		t.Fatalf("fabricate a newer applied version: %v", err)
+	}
+	t.Cleanup(func() {
+		defer func() { _ = db.Close() }()
+		if _, err := db.ExecContext(context.Background(),
+			"DELETE FROM identity.goose_db_version WHERE version_id = $1", version,
+		); err != nil {
+			t.Logf("cleanup: remove fabricated version row failed: %v", err)
+		}
+		if err := identityRunner.Reset(context.Background(), dsn); err != nil {
+			t.Logf("cleanup Reset failed: %v", err)
+		}
+	})
+	return db
 }
 
 // newIdentityRunner returns a fresh identity/migrate Runner for one test's
