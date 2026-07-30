@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/alexedwards/scs/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -29,14 +31,29 @@ const defaultCleanupInterval = 5 * time.Minute
 type identityStore struct {
 	pool   *pgxpool.Pool
 	cancel context.CancelFunc
+	logger *slog.Logger
 }
+
+// Compile-time assurance the store satisfies the optional scs interfaces the
+// app relies on beyond scs.Store, which is all sm.Store's declared type
+// checks: CtxStore for the request-scoped calls, and IterableCtxStore for
+// SessionRevoker.RevokeAll's sm.Iterate — scs panics rather than degrading
+// when the latter is missing.
+var (
+	_ scs.CtxStore         = (*identityStore)(nil)
+	_ scs.IterableCtxStore = (*identityStore)(nil)
+)
 
 // newIdentityStore constructs the store and starts its background cleanup
 // goroutine at defaultCleanupInterval, mirroring pgxstore.New. Callers that
-// need to stop it (tests) get the token back from StopCleanup.
-func newIdentityStore(pool *pgxpool.Pool) *identityStore {
+// need to stop it (tests) get the token back from StopCleanup. Panics on a
+// nil logger, matching every other constructor in this codebase.
+func newIdentityStore(pool *pgxpool.Pool, logger *slog.Logger) *identityStore {
+	if logger == nil {
+		panic("platform/session: newIdentityStore requires a non-nil logger")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &identityStore{pool: pool, cancel: cancel}
+	s := &identityStore{pool: pool, cancel: cancel, logger: logger}
 	go s.startCleanup(ctx, defaultCleanupInterval)
 	return s
 }
@@ -57,7 +74,9 @@ func (s *identityStore) startCleanup(ctx context.Context, interval time.Duration
 	for {
 		select {
 		case <-ticker.C:
-			_, _ = s.pool.Exec(ctx, `DELETE FROM identity.sessions WHERE expiry < now()`)
+			if _, err := s.pool.Exec(ctx, `DELETE FROM identity.sessions WHERE expiry < now()`); err != nil {
+				s.logger.ErrorContext(ctx, "identity session store: purge expired sessions", "error", err)
+			}
 		case <-ctx.Done():
 			return
 		}

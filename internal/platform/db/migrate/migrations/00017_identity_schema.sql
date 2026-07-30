@@ -2,15 +2,29 @@
 -- NSTR-116: Nestorage stops owning identity and adopts the shared identity
 -- schema (epic NSTR-112). Interim note: nestcore's own identity schema
 -- migration (NSTR-120) and Go package (NSTR-121) are not built yet, so this
--- migration creates the `identity` schema itself, matching the exact shape
--- Nestova's baseline household/member tables already use (see Nestova's
--- 00001_baseline.sql and 00002_auth.sql) so it is forward-compatible once
--- nestcore takes over owning it. IF NOT EXISTS guards below let a later,
--- nestcore-owned migration adopt this schema without conflict.
+-- migration creates the `identity` schema itself, modeled closely on
+-- Nestova's baseline household/member tables (see Nestova's 00001_baseline.sql
+-- and 00002_auth.sql) — but NOT an exact match, and the divergences are
+-- deliberate for now, not merely unfinished: email/password_hash are NOT NULL
+-- here (Nestova's are nullable, paired with a member_credentials_complete
+-- CHECK, since it supports members with no login — Nestorage does not yet);
+-- color lives on Nestorage's own profile table below rather than a shared
+-- member.color_key; active is added here (NSTR-120 will add its own copy to
+-- Nestova's member); and Nestova's member_household_name_uniq /
+-- member_household_id_id_uniq indexes have no counterpart here. Which side
+-- wins is nestcore's call to make when NSTR-120 actually lands. IF NOT EXISTS
+-- guards below let that later, nestcore-owned migration adopt this schema
+-- without conflict.
 --
 -- Scope decision (Eric, 2026-07-29): neither app is live, so there is no
 -- app_user data to migrate — this migration drops and recreates rather than
--- transforming rows.
+-- transforming rows. This also means the Up direction below is only safe
+-- against an empty (freshly reset) database: every re-pointed FK validates
+-- against identity.member, which is empty at that point in the migration, so
+-- a database already holding rows in any of the 13 re-pointed tables fails
+-- the corresponding ADD CONSTRAINT with SQLSTATE 23503 — recoverable by hand
+-- for twelve of them, but not for item_event (see its own NOT VALID note
+-- below).
 CREATE SCHEMA IF NOT EXISTS identity;
 
 CREATE TABLE IF NOT EXISTS identity.household (
@@ -34,7 +48,10 @@ CREATE TABLE IF NOT EXISTS identity.member (
     active        boolean     NOT NULL DEFAULT true,
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT identity_member_email_unique UNIQUE (email)
+    -- Named to match Nestova's own member_email_unique (its 00002_auth.sql)
+    -- so isDuplicateEmail (internal/identity/adapter/postgres.go) keeps
+    -- matching once nestcore owns this table.
+    CONSTRAINT member_email_unique UNIQUE (email)
 );
 CREATE INDEX IF NOT EXISTS identity_member_household_id_idx ON identity.member (household_id);
 CREATE INDEX IF NOT EXISTS identity_member_active_idx ON identity.member (active) WHERE active;
@@ -85,9 +102,15 @@ ALTER TABLE photo
     DROP CONSTRAINT photo_uploaded_by_fkey,
     ADD CONSTRAINT photo_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES identity.member (id) ON DELETE RESTRICT;
 
+-- NOT VALID for the same reason the Down half below uses it: item_event is
+-- append-only (00012_item_event.sql revokes UPDATE/DELETE/TRUNCATE with a
+-- trigger backstop), so pre-existing rows can neither be re-pointed nor
+-- cleared, and identity.member is empty at this point in the migration. The
+-- other twelve re-pointed tables above hit the same empty-target problem on
+-- a non-empty database, but stay recoverable by hand (see the header note).
 ALTER TABLE item_event
     DROP CONSTRAINT item_event_actor_user_id_fkey,
-    ADD CONSTRAINT item_event_actor_user_id_fkey FOREIGN KEY (actor_user_id) REFERENCES identity.member (id) ON DELETE RESTRICT;
+    ADD CONSTRAINT item_event_actor_user_id_fkey FOREIGN KEY (actor_user_id) REFERENCES identity.member (id) ON DELETE RESTRICT NOT VALID;
 
 ALTER TABLE return_request
     DROP CONSTRAINT return_request_requester_id_fkey,

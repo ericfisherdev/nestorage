@@ -174,7 +174,7 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// NSTR-24's resolve (built further down, once its dependencies exist)
 	// runs the same session lookup through the Principal model instead,
 	// which is what RequireAdmin reads back via CurrentPrincipal.
-	sm := session.New(pool, cfg.Session)
+	sm := session.New(pool, cfg.Session, logger)
 	identityRepo := identityadapter.NewUserRepository(pool)
 	provisioner := identityadapter.NewProvisioner(pool)
 	onboarding := identityadapter.NewOnboardingHandlers(identityRepo, provisioner, sm, logger)

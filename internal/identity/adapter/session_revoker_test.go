@@ -35,7 +35,7 @@ type sessionRevokerFixture struct {
 func newSessionRevokerFixture(t *testing.T) *sessionRevokerFixture {
 	t.Helper()
 	pool := dbtest.Harness.NewIsolatedPool(t, "identity")
-	sm := session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour})
+	sm := session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour}, testLogger())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /seed", func(w http.ResponseWriter, r *http.Request) {
