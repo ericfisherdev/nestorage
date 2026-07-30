@@ -121,6 +121,7 @@ func TestBinRepository_FindVisibleByCode_Normalizes(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.FindVisibleByCode(testCtx(t), viewer, "  a2 ")
 	if err != nil {
 		t.Fatalf("FindVisibleByCode: %v", err)
@@ -134,6 +135,7 @@ func TestBinRepository_FindVisibleByCode_NotFound(t *testing.T) {
 	f := newBinFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 
 	_, err := f.repo.FindVisibleByCode(testCtx(t), viewer, "GHOST")
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -456,7 +458,9 @@ func TestBinRepository_FindVisibleByCode_PrivateBin_NotFoundForNonOwner(t *testi
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 
 	if _, err := f.repo.FindVisibleByCode(testCtx(t), otherViewer, "PRIVCODE1"); !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("non-owner FindVisibleByCode(private bin's code) = %v, want ErrBinNotFound", err)

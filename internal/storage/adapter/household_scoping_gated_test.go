@@ -159,6 +159,47 @@ func TestBinRepository_Create_SameCodeAcrossHouseholds(t *testing.T) {
 	}
 }
 
+// TestBinRepository_FindVisibleByCode_ScopedToHouseholdEvenWhenCodesCollide
+// proves FindVisibleByCode's own household_id predicate: once two households
+// share the same code (bin_code_uniq is now per-household, see the test
+// above), a viewer in household A must still resolve household A's bin and a
+// viewer in household B must still resolve household B's — never the other,
+// and never a non-deterministic pick between the two rows Postgres could
+// otherwise return for the bare `code = $1` this query used to run before
+// this household predicate was added.
+func TestBinRepository_FindVisibleByCode_ScopedToHouseholdEvenWhenCodesCollide(t *testing.T) {
+	f := newHouseholdScopingFixture(t)
+	locA := f.seedLocation(t, f.householdA, f.memberA)
+	locB := f.seedLocation(t, f.householdB, f.memberB)
+
+	binA := f.seedBin(t, f.householdA, locA, f.memberA, "COLLIDE")
+	binB := f.seedBin(t, f.householdB, locB, f.memberB, "COLLIDE")
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM bin WHERE id = ANY($1)`, []string{binA.String(), binB.String()})
+	})
+
+	viewerA := identity.NewUserPrincipal(f.memberA, identity.RoleAdult, "Household A Viewer")
+	viewerA.HouseholdID = f.householdA
+	viewerB := identity.NewUserPrincipal(f.memberB, identity.RoleAdult, "Household B Viewer")
+	viewerB.HouseholdID = f.householdB
+
+	gotA, err := f.bins.FindVisibleByCode(testCtx(t), viewerA, "COLLIDE")
+	if err != nil {
+		t.Fatalf("FindVisibleByCode(household A viewer): %v", err)
+	}
+	if gotA.ID != binA {
+		t.Errorf("FindVisibleByCode(household A viewer) = bin %v, want household A's own bin %v", gotA.ID, binA)
+	}
+
+	gotB, err := f.bins.FindVisibleByCode(testCtx(t), viewerB, "COLLIDE")
+	if err != nil {
+		t.Fatalf("FindVisibleByCode(household B viewer): %v", err)
+	}
+	if gotB.ID != binB {
+		t.Errorf("FindVisibleByCode(household B viewer) = bin %v, want household B's own bin %v", gotB.ID, binB)
+	}
+}
+
 // TestBinRepository_Create_CrossHouseholdLocationRejected proves the
 // (household_id, location_id) composite FK: a bin claiming household A but
 // pointing at a location that belongs to household B is rejected with the
