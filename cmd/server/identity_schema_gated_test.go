@@ -144,12 +144,17 @@ func TestEnsureSharedIdentitySchema_OlderIdentity_AppliesPending(t *testing.T) {
 	}
 }
 
-// TestEnsureSharedIdentitySchema_NewerIdentity_Refuses proves the fourth
-// outcome: identity is at a version beyond anything this binary's embedded
-// migrations know about (built against an older nestcore) — the check
-// refuses to start and, critically, never migrates down: every table
-// belonging to the (fabricated) newer version must still exist afterward.
-func TestEnsureSharedIdentitySchema_NewerIdentity_Refuses(t *testing.T) {
+// TestEnsureSharedIdentitySchema_NewerIdentity_BootsWithoutMigratingDown
+// proves the additive-only outcome: identity is at a version beyond
+// anything this binary's embedded migrations know about (this binary was
+// built against an older nestcore) — the check must boot successfully
+// rather than refuse, per identity/migrate's documented additive-only
+// contract (a newer-than-built schema is explicitly allowed; refusing would
+// make an independent Nestova-first deploy an outage for every Nestorage
+// instance still on the older nestcore). Critically, it must never migrate
+// down: every table belonging to the (fabricated) newer version must still
+// exist afterward, and the fabricated version itself must be untouched.
+func TestEnsureSharedIdentitySchema_NewerIdentity_BootsWithoutMigratingDown(t *testing.T) {
 	dsn := dbtest.Harness.DSN(t, "identity_boot_newer")
 	ctx := context.Background()
 
@@ -160,17 +165,12 @@ func TestEnsureSharedIdentitySchema_NewerIdentity_Refuses(t *testing.T) {
 	if err := identityRunner.Up(ctx, dsn); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
-	top := highestKnownVersion(ctx, t, identityRunner, dsn)
 
 	const fabricatedVersion = 999999
 	db := fabricateNewerAppliedVersion(ctx, t, dsn, identityRunner, fabricatedVersion)
 
-	err := ensureSharedIdentitySchema(ctx, dsn, testSchemas)
-	if err == nil {
-		t.Fatal("ensureSharedIdentitySchema() with identity newer than embedded = nil, want an error")
-	}
-	if !strings.Contains(err.Error(), "newer") {
-		t.Errorf("error = %q, want it to say the schema is newer", err.Error())
+	if err := ensureSharedIdentitySchema(ctx, dsn, testSchemas); err != nil {
+		t.Fatalf("ensureSharedIdentitySchema() with identity newer than embedded = %v, want nil (additive-only: newer is allowed)", err)
 	}
 
 	// Never migrate down: every table from the real (non-fabricated)
@@ -181,13 +181,13 @@ func TestEnsureSharedIdentitySchema_NewerIdentity_Refuses(t *testing.T) {
 			t.Fatalf("query to_regclass(%q): %v", table, err)
 		}
 		if name == nil {
-			t.Errorf("identity.%s no longer exists after a refused newer-schema boot — a down-migration ran", table)
+			t.Errorf("identity.%s no longer exists after booting against a newer schema — a down-migration ran", table)
 		}
 	}
 	if got, err := identityRunner.AppliedVersion(ctx, dsn); err != nil {
 		t.Fatalf("AppliedVersion: %v", err)
 	} else if got != fabricatedVersion {
-		t.Errorf("applied version = %d, want %d unchanged (top was %d)", got, fabricatedVersion, top)
+		t.Errorf("applied version = %d, want %d unchanged (no down-migration)", got, fabricatedVersion)
 	}
 }
 
