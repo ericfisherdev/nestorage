@@ -1,7 +1,7 @@
 // Package migrate owns Nestorage's embedded migration set and wires it into
 // nestcore's migration runner. Applying, rolling back, and inspecting
 // migrations is entirely nestcore/db/migrate's job (github.com/ericfisherdev/nestcore,
-// tagged v0.1.0) — nothing about goose is re-implemented here. This package
+// tagged v0.2.0) — nothing about goose is re-implemented here. This package
 // only supplies the embedded filesystem those migrations live in and the
 // on-disk directory new ones are scaffolded into.
 package migrate
