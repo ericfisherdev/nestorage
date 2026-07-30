@@ -90,6 +90,17 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
+	// NSTR-123: confirm the shared identity schema before anything else
+	// touches the database — bootstrapping it on a fresh install, applying
+	// pending migrations on an older one, or failing readiness outright on a
+	// missing-when-it-should-exist or newer-than-this-binary schema.
+	// context.Background(), not ctx, for the same reason db.New below uses
+	// it: an interrupt racing this check should not turn a real
+	// connectivity/schema problem into an ambiguous context-cancelled error.
+	if err := ensureSharedIdentitySchema(context.Background(), cfg.DB.DSN, cfg.Schemas); err != nil {
+		return err
+	}
+
 	// Establish the Postgres pool up front so a bad DSN or unreachable
 	// database fails fast at boot (db.New bounds its own ping with
 	// DB.ConnTimeout). context.Background(), not ctx: an interrupt racing
