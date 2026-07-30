@@ -16,6 +16,22 @@ func newTestHouseholdRepo(t *testing.T) *adapter.HouseholdRepository {
 	return adapter.NewHouseholdRepository(pool)
 }
 
+func TestNewHouseholdRepository_NilExecutorPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("NewHouseholdRepository(nil) did not panic")
+		}
+	}()
+	adapter.NewHouseholdRepository(nil)
+}
+
+func TestHouseholdRepository_Create_NilHouseholdErrors(t *testing.T) {
+	repo := newTestHouseholdRepo(t)
+	if err := repo.Create(testCtx(t), nil); err == nil {
+		t.Error("Create(nil) = nil error, want an error")
+	}
+}
+
 func TestHouseholdRepository_ListEmpty(t *testing.T) {
 	repo := newTestHouseholdRepo(t)
 	got, err := repo.List(testCtx(t))
