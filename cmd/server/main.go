@@ -38,6 +38,7 @@ import (
 	notifybootstrap "github.com/ericfisherdev/nestorage/internal/notify/bootstrap"
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
+	ownmigrate "github.com/ericfisherdev/nestorage/internal/platform/db/migrate"
 	ratelimitmetrics "github.com/ericfisherdev/nestorage/internal/platform/metrics"
 	"github.com/ericfisherdev/nestorage/internal/platform/peer"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
@@ -115,8 +116,22 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// NSTR-119: confirm the connection actually resolves into Nestorage's own
 	// schema before anything queries through pool — a forgotten search_path
 	// option in DATABASE_URL must fail boot loudly, not scatter a fresh copy
-	// of every table into public on the next migrate-up.
-	if err := verifyOwnSchema(context.Background(), pool, cfg.Schemas.Nestorage); err != nil {
+	// of every table into public on the next migrate-up. Checked against
+	// ownmigrate.Schema, the literal the migrations themselves use, not
+	// cfg.Schemas.Nestorage: that value is operator-configurable via
+	// DB_SCHEMA_NESTORAGE, but migrate.New hard-codes "nestorage" and
+	// nestorage.goose_db_version, so an override would pass this guard while
+	// migrations still version-track and create tables under the default
+	// name — ensureSharedIdentitySchema above already refuses that
+	// mismatch outright for DB_SCHEMA_NESTORAGE, mirroring its existing
+	// DB_SCHEMA_IDENTITY refusal.
+	//
+	// Bounded for the same fail-fast reason as the media/email bootstraps
+	// below: an unresponsive server must not hang boot indefinitely.
+	schemaCtx, cancelSchema := context.WithTimeout(context.Background(), cfg.DB.ConnTimeout)
+	err = verifyOwnSchema(schemaCtx, pool, ownmigrate.Schema)
+	cancelSchema()
+	if err != nil {
 		return err
 	}
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)

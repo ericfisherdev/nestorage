@@ -39,8 +39,14 @@ The `options` parameter carries `search_path=nestorage,public` (NSTR-119):
 `migrate.Reset`/`Up` create the `nestorage` schema and land every migrated
 object in it, exactly as production does, and `cmd/server`'s boot guard
 (`verifyOwnSchema` in `cmd/server/db_schema.go`) refuses to connect without
-it — a DSN missing this option fails every gated adapter test with a
-`current schema` error naming the missing option.
+it — but only `cmd/server`'s own gated boot-guard test
+(`TestVerifyOwnSchema_SearchPathPresent_Succeeds`) detects a DSN missing this
+option. No adapter suite calls `verifyOwnSchema`: without the option, the
+migrated tables and each adapter's own unqualified queries both resolve to
+`public`, so those tests pass regardless, against tables in the wrong
+schema. Do not rely on the gated suite as the safety net for schema
+placement — `cmd/migrate`'s own `verifySearchPath` guard (`cmd/migrate/db_schema.go`)
+is what actually refuses to migrate against a misconfigured DSN.
 
 `make test-gated` names the gated packages explicitly
 (`GATED_TEST_PACKAGES` in the [`Makefile`](../Makefile)). `go test ./...`
@@ -223,14 +229,24 @@ The rename carries `public.goose_db_version` along as
 `nestorage.goose_db_version` automatically — no separate step moves goose's
 own bookkeeping.
 
-Dump just the renamed schema and restore it into the shared database. The
+Dump just the renamed schema and restore it into the shared database. All
 four extensions must already be installed in the shared database's `public`
-schema — Nestova's own consolidation (NSTR-118) already requires them there,
-which is why that ticket blocks this one. Do **not** run `make migrate-up`
-against the shared database before this restore: it would create the same
-`nestorage` schema and empty tables the restore is about to create itself,
-and the two collide. `--single-transaction` again makes the restore all-or-
-nothing:
+schema first. Nestova's own consolidation (NSTR-118) only provides two of
+them — `pgcrypto` (`00001_baseline.sql`) and `citext` (`00002_auth.sql`);
+`pg_trgm` and `btree_gin` are Nestorage-only (`00009_item_search.sql`,
+`00018_household_scoping.sql`), and `pg_dump --schema=nestorage` does not
+carry extensions along — the rename above already moved them to `public`, so
+install the remaining two directly:
+
+```sh
+psql "$SHARED_DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public;' \
+                             -c 'CREATE EXTENSION IF NOT EXISTS btree_gin SCHEMA public;'
+```
+
+Do **not** run `make migrate-up` against the shared database before the
+restore below: it would create the same `nestorage` schema and empty tables
+the restore is about to create itself, and the two collide.
+`--single-transaction` makes the restore all-or-nothing:
 
 ```sh
 pg_dump --schema=nestorage --format=custom "$OLD_DATABASE_URL" > nestorage.dump

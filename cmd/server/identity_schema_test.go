@@ -40,6 +40,23 @@ func TestEnsureSharedIdentitySchema_NonDefaultIdentitySchemaRejected(t *testing.
 	}
 }
 
+// TestEnsureSharedIdentitySchema_NonDefaultNestorageSchemaRejected confirms a
+// configured DB_SCHEMA_NESTORAGE other than the default is refused before any
+// database call, mirroring TestEnsureSharedIdentitySchema_NonDefaultIdentitySchemaRejected
+// above — internal/platform/db/migrate hard-codes ownmigrate.Schema, so any
+// other configured value would be guarded against here but never migrated
+// into by cmd/migrate or cmd/server's own verifyOwnSchema.
+func TestEnsureSharedIdentitySchema_NonDefaultNestorageSchemaRejected(t *testing.T) {
+	schemas := corecfg.SchemaConfig{Identity: "identity", Nestova: "nestova", Nestorage: "custom_nestorage"}
+	err := ensureSharedIdentitySchema(context.Background(), "postgres://u:p@127.0.0.1:1/nope", schemas)
+	if err == nil {
+		t.Fatal("ensureSharedIdentitySchema() with a non-default DB_SCHEMA_NESTORAGE = nil error, want error")
+	}
+	if !strings.Contains(err.Error(), "DB_SCHEMA_NESTORAGE") {
+		t.Errorf("error = %q, want it to name DB_SCHEMA_NESTORAGE", err.Error())
+	}
+}
+
 // TestDsnHost covers both of dsnHost's branches: a URL-form DSN with a host,
 // and every input that must fall back to the generic phrase rather than risk
 // echoing something credential-shaped.

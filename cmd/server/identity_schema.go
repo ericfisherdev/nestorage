@@ -40,12 +40,13 @@ const defaultIdentitySchemaName = "identity"
 //     allowed rather than refused — see upgradeIdentity's own doc for why.
 //
 // Whether Nestorage has "migrated its own schema before" is read from its
-// OWN goose version table (via ownmigrate's Runner), not from a
-// schemas.Nestorage schema existing — Nestorage's own tables are not yet
-// namespaced into a dedicated schema (a separate, not-yet-scheduled
-// migration), so schema existence would never distinguish anything. Applied
+// OWN goose version table (via ownmigrate's Runner, always schema-qualified
+// as nestorage.goose_db_version regardless of search_path — NSTR-119), not
+// from the nestorage schema existing: SchemaExists would give a false
+// negative on a database where WithEnsureSchema created the schema but Up
+// then failed partway through, before ever reaching this check. Applied
 // version already means exactly "has this app booted and migrated against
-// this database before", independent of which schema its tables live in.
+// this database before".
 func ensureSharedIdentitySchema(ctx context.Context, dsn string, schemas corecfg.SchemaConfig) error {
 	// nestcore's identity/migrate hard-codes its schema name (see
 	// corecfg.SchemaConfig's own doc), so a configured value other than the
@@ -54,6 +55,14 @@ func ensureSharedIdentitySchema(ctx context.Context, dsn string, schemas corecfg
 	if schemas.Identity != defaultIdentitySchemaName {
 		return fmt.Errorf("DB_SCHEMA_IDENTITY=%q is not supported yet: nestcore's identity migrations are hard-coded to %q; leave it unset",
 			schemas.Identity, defaultIdentitySchemaName)
+	}
+	// Same rationale for Nestorage's own schema (NSTR-119): internal/platform/db/migrate
+	// hard-codes ownmigrate.Schema and nestorage.goose_db_version, so a
+	// configured override would be guarded against here but never migrated
+	// into by cmd/migrate or cmd/server's own verifyOwnSchema.
+	if schemas.Nestorage != ownmigrate.Schema {
+		return fmt.Errorf("DB_SCHEMA_NESTORAGE=%q is not supported yet: Nestorage's own migrations are hard-coded to %q; leave it unset",
+			schemas.Nestorage, ownmigrate.Schema)
 	}
 
 	identityExists, err := ncmigrate.SchemaExists(ctx, dsn, schemas.Identity)
