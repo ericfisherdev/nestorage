@@ -28,6 +28,21 @@ type ShellProps struct {
 	// (e.g. a future logout or "New bin" submission); Sprint 3 owns auth, so
 	// nothing in this ticket renders it yet.
 	CSRFToken string
+	// Peer is NSTR-124's cross-app nav entry (the sibling Nestova install),
+	// or nil when PEER_NESTOVA_URL is unset — a nil Peer renders nothing at
+	// all in the sidebar's bottom cluster, not a disabled entry.
+	Peer *PeerLink
+}
+
+// PeerLink is the sidebar's cross-app nav entry (NSTR-124): the sibling
+// app's display name, the full-page navigation target, and whether it
+// currently answers its own /healthz (cached — see
+// internal/platform/peer.Prober's own doc). Reachable false keeps the
+// entry rendered but disabled, never removes it.
+type PeerLink struct {
+	Name      string
+	URL       string
+	Reachable bool
 }
 
 // Layout renders the Hearth app shell — a 264px sidebar plus main — around
@@ -118,7 +133,49 @@ templ sidebar(props ShellProps, nav []NavItem) {
 				@statItem(props.Stats.Rooms, "rooms")
 			</dl>
 		</section>
+		if props.Peer != nil {
+			<!-- mt-auto pins NSTR-124's cross-app entry to the sidebar's bottom
+			     cluster regardless of how much the sections above it grow,
+			     keeping it visually separated from primary nav. -->
+			<div class="mt-auto">
+				<hr class="mb-4 border-divider"/>
+				@peerLink(*props.Peer)
+			</div>
+		}
 	</aside>
+}
+
+// peerLink renders NSTR-124's cross-app nav entry: a plain full-page anchor
+// (no HTMX boost across origins, no scripted window opening — see the
+// ticket's own "plain full-page anchor" requirement) to the peer app's
+// configured origin, wearing a small chip in the PEER's own palette
+// (--color-peer-accent, declared in input.css) while everything else stays
+// native to this shell. Reachable false swaps the anchor for a disabled
+// <div> with a plain status line — the entry stays visible and recovers on
+// its own once the cached probe next succeeds, rather than disappearing.
+templ peerLink(p PeerLink) {
+	if p.Reachable {
+		<a
+			href={ templ.SafeURL(p.URL) }
+			class="flex items-center gap-[9px] rounded-button border border-divider bg-surface px-3 py-[11px] text-[15px] font-semibold text-text-secondary transition-colors hover:bg-sidebar-accent"
+		>
+			<span class="h-2 w-2 flex-none rounded-full bg-peer-accent" aria-hidden="true"></span>
+			<span class="flex-1">Open { p.Name }</span>
+			<span aria-hidden="true">&#8599;</span>
+		</a>
+	} else {
+		<div
+			class="flex flex-col gap-[2px] rounded-button border border-divider bg-surface px-3 py-[11px] text-[15px] font-semibold text-text-faint"
+			aria-disabled="true"
+		>
+			<div class="flex items-center gap-[9px]">
+				<span class="h-2 w-2 flex-none rounded-full bg-peer-accent opacity-40" aria-hidden="true"></span>
+				<span class="flex-1">{ p.Name }</span>
+				<span aria-hidden="true">&#8599;</span>
+			</div>
+			<span class="text-xs font-medium">Not reachable right now</span>
+		</div>
+	}
 }
 
 // navLink renders one primary-nav entry, whitespace-nowrap so it stays

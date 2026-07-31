@@ -42,6 +42,9 @@ type Config struct {
 	// identity (nestcore's, shared with Nestova) and each app's own —
 	// consulted by cmd/server's startup identity-schema compatibility check.
 	Schemas corecfg.SchemaConfig
+	// Peer configures the sidebar's cross-app nav control (NSTR-124) —
+	// Nestorage-local, since nestcore has no peer-app loader.
+	Peer PeerConfig
 	// Env is the deployment environment: one of corecfg.EnvDev, EnvTest, or
 	// EnvProd.
 	Env string
@@ -82,6 +85,8 @@ func Load() (Config, error) {
 	rateLimit, rateLimitErrs := LoadRateLimit()
 	errs = append(errs, rateLimitErrs...)
 	schemas := corecfg.LoadSchemas()
+	peer, peerErrs := LoadPeer()
+	errs = append(errs, peerErrs...)
 
 	errs = append(errs, corecfg.ValidateAppEnv(env)...)
 	errs = append(errs, server.Validate()...)
@@ -93,6 +98,7 @@ func Load() (Config, error) {
 	errs = append(errs, email.Validate()...)
 	errs = append(errs, rateLimit.Validate()...)
 	errs = append(errs, schemas.Validate()...)
+	errs = append(errs, peer.Validate()...)
 
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("invalid configuration:\n%w", errors.Join(errs...))
@@ -108,6 +114,7 @@ func Load() (Config, error) {
 		Email:     email,
 		RateLimit: rateLimit,
 		Schemas:   schemas,
+		Peer:      peer,
 		Env:       env,
 	}, nil
 }

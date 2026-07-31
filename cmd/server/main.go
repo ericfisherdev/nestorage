@@ -39,6 +39,7 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
 	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	ratelimitmetrics "github.com/ericfisherdev/nestorage/internal/platform/metrics"
+	"github.com/ericfisherdev/nestorage/internal/platform/peer"
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
@@ -308,7 +309,16 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 	// transaction.
 	labelPreferenceRepo := labelsadapter.NewSizePreferenceRepository(pool)
 
-	shellData := newShellDataService(identityRepo, binService, locationService, labelSizes)
+	// NSTR-124's cross-app nav: peerProbe is always constructed, even when
+	// PEER_NESTOVA_URL is unset, so shellDataService's own dependency stays
+	// non-nil like every other constructor-injected dependency in this
+	// composition root — shellDataService.Peer itself short-circuits on an
+	// empty cfg.Peer.NestovaURL before ever calling Reachable, so an
+	// unconfigured install issues no probe traffic despite the Prober
+	// existing (see that method's own doc).
+	peerProbe := peer.NewProber(&http.Client{}, cfg.Peer.NestovaURL, peer.DefaultProbeTimeout, peer.DefaultVerdictTTL)
+
+	shellData := newShellDataService(identityRepo, binService, locationService, labelSizes, cfg.Peer, peerProbe)
 
 	binsWeb := storageadapter.NewBinsWebHandlers(storageadapter.BinsWebHandlersDeps{
 		Bins: binService, Mover: binMover, Locations: locationService, Members: identityRepo, Items: itemService, Photos: photoService, Events: itemEventRepo,

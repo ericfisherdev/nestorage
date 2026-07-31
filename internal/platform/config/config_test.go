@@ -33,6 +33,7 @@ var allKeys = []string{
 	"API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST",
 	"AUTH_RATE_LIMIT_RPM", "AUTH_RATE_LIMIT_BURST",
 	"DB_SCHEMA_IDENTITY", "DB_SCHEMA_NESTOVA", "DB_SCHEMA_NESTORAGE",
+	"PEER_NESTOVA_URL",
 }
 
 // setEnv isolates a test case from both the developer's ambient environment
