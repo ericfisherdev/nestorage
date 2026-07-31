@@ -20,7 +20,7 @@ import (
 type PeerConfig struct {
 	// NestovaURL is PEER_NESTOVA_URL, optional. When unset, Nestova is not
 	// installed on this appliance and no cross-app nav control renders at
-	// all (see components.AppSwitchEntry's own doc) — a bare "not
+	// all (see components.PeerLink's own doc) — a bare "not
 	// configured" state, not an error.
 	NestovaURL string
 }
@@ -48,16 +48,25 @@ func (p PeerConfig) Validate() []error {
 	// PEER_NESTOVA_URL must be an absolute http(s) URL so it can be used
 	// directly as a full-page navigation target and as the probe's own
 	// {baseURL}/healthz base, mirroring PUBLIC_BASE_URL's identical
-	// two-branch scheme/host-then-query/fragment check in nestcore's
+	// two-branch scheme/host-then-origin-only check in nestcore's
 	// config/server.go. u may be nil when err != nil, so the second case
 	// below is only ever reached once the first has already ruled that out
 	// (a switch, not independent ifs, so u is never dereferenced unparsed).
+	//
+	// User/Path are rejected, not just RawQuery/Fragment: userinfo would
+	// flow straight into the sidebar's href via templ.SafeURL, landing
+	// credentials in HTML served to every household member, and a path
+	// changes what probe's {baseURL}/healthz concatenation actually
+	// requests (e.g. a subpath 404s outright, permanently rendering a
+	// healthy peer as unreachable) — see .env.example's own "no trailing
+	// slash" note, now an enforced contract rather than a silently
+	// tolerated redirect.
 	u, err := url.Parse(p.NestovaURL)
 	switch {
 	case err != nil, u.Scheme != "http" && u.Scheme != "https", u.Host == "":
 		errs = append(errs, fmt.Errorf("PEER_NESTOVA_URL must be an absolute http(s) URL, got %q", p.NestovaURL))
-	case u.RawQuery != "" || u.Fragment != "":
-		errs = append(errs, fmt.Errorf("PEER_NESTOVA_URL must be an origin only (no query or fragment), got %q", p.NestovaURL))
+	case u.User != nil, u.Path != "", u.RawQuery != "", u.Fragment != "":
+		errs = append(errs, fmt.Errorf("PEER_NESTOVA_URL must be an origin only (scheme + host, no user/path/query/fragment), got %q", p.NestovaURL))
 	}
 
 	return errs

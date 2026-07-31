@@ -18,9 +18,11 @@ import (
 const DefaultProbeTimeout = 300 * time.Millisecond
 
 // DefaultVerdictTTL caches a probe's outcome so a request landing within TTL
-// of the last check never re-probes the peer, bounding probe traffic to at
-// most one /healthz request per TTL window regardless of sidebar render
-// volume.
+// of the last check never re-probes the peer. The bound is per cache
+// window, not per instant: Reachable releases the mutex before probing, so
+// renders that miss the cache concurrently (e.g. right after a cold start
+// or right after the previous TTL window expired) each issue their own
+// /healthz request until the first verdict lands.
 const DefaultVerdictTTL = 30 * time.Second
 
 // Prober is a cached, timeout-bounded reachability check against a peer
@@ -53,9 +55,12 @@ func NewProber(client *http.Client, baseURL string, timeout, ttl time.Duration) 
 
 // Reachable reports whether baseURL's /healthz answered 200 within timeout,
 // caching the verdict for ttl so repeated sidebar renders within the same
-// window never re-probe a peer that was just checked. ctx bounds request
-// cancellation (e.g. the caller's own request lifetime); the probe's own
-// timeout further bounds it regardless of ctx's own deadline.
+// window never re-probe a peer that was just checked. ctx contributes
+// values only (e.g. a logger or trace ID) — it does NOT bound or cancel
+// the probe itself, only p.timeout does (see probe's own doc for why: the
+// verdict is process-wide cached state, so one caller's context being
+// canceled must never poison every other render's cache for the rest of
+// ttl).
 func (p *Prober) Reachable(ctx context.Context) bool {
 	if v, ok := p.cached(); ok {
 		return v
@@ -83,8 +88,16 @@ func (p *Prober) cached() (bool, bool) {
 }
 
 // probe issues the actual GET {baseURL}/healthz, bounded by timeout.
+//
+// context.WithoutCancel detaches ctx's own cancellation (keeping only its
+// values) before WithTimeout applies p.timeout: the verdict this produces
+// is process-wide cached state, not per-request data, so a caller's
+// context being canceled mid-probe (e.g. a browser navigating away or a
+// kiosk tab closing) must not be recorded as "unreachable" and then served
+// to every OTHER render for the rest of ttl. p.timeout alone bounds the
+// request.
 func (p *Prober) probe(ctx context.Context) bool {
-	reqCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), p.timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, p.baseURL+"/healthz", nil)

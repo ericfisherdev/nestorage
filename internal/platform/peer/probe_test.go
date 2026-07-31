@@ -124,3 +124,28 @@ func TestReachable_ReprobesAfterTTLExpires(t *testing.T) {
 		t.Errorf("healthz hits = %d, want exactly 2 (ttl expired between calls)", got)
 	}
 }
+
+// TestReachable_CanceledCallerContextDoesNotPoisonCache covers the fix for
+// a real regression: the verdict is process-wide cached state, so ONE
+// caller's context being canceled mid-probe (a browser navigating away, a
+// kiosk tab closing) must not record "unreachable" and serve that to every
+// OTHER render for the rest of ttl. probe's own context.WithoutCancel is
+// what this asserts.
+func TestReachable_CanceledCallerContextDoesNotPoisonCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := peer.NewProber(srv.Client(), srv.URL, time.Second, longTTL)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if p.Reachable(canceled) != true {
+		t.Fatal("Reachable(canceled) = false, want true — a canceled CALLER context must not fail the underlying probe")
+	}
+	if !p.Reachable(context.Background()) {
+		t.Error("Reachable() = false after a canceled-context call, want true (cache must not be poisoned by caller cancellation)")
+	}
+}
