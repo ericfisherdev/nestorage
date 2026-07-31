@@ -34,6 +34,15 @@ func TestVerifyOwnSchema_SearchPathPresent_Succeeds(t *testing.T) {
 // let the caller silently query — and later migrate — against the wrong
 // schema.
 func TestVerifyOwnSchema_SearchPathMissing_FailsWithActionableError(t *testing.T) {
+	// Reset and migrate the derived database first — same suffix, so DSN
+	// below names the same database — so the nestorage schema genuinely
+	// exists and the stripped option is the only reason current_schema()
+	// resolves to public. Harness.DSN alone neither resets nor migrates, so
+	// without this the database would have no nestorage schema regardless
+	// of the option, and the assertions below would hold even on an
+	// unstripped DSN.
+	dbtest.Harness.NewIsolatedPool(t, "db_schema_missing")
+
 	dsn := dbtest.Harness.DSN(t, "db_schema_missing")
 	strippedDSN := stripSearchPathOption(t, dsn)
 

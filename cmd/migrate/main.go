@@ -82,6 +82,19 @@ func run(args []string) error {
 
 	dsn, opts := migrateSettings(dbCfg)
 
+	// NSTR-119: the migration set's DDL is unqualified, so it lands wherever
+	// search_path resolves — and this DSN may be MIGRATE_DATABASE_URL, which
+	// cmd/server's own boot guard never inspects. Refuse before writing
+	// anything rather than scatter Nestorage's tables across the shared
+	// database's public schema. status is exempt: it only reads goose's own
+	// schema-qualified version table and runs no migration SQL.
+	switch command {
+	case "up", "down", "reset":
+		if err := verifySearchPath(ctx, dsn, migrate.Schema); err != nil {
+			return err
+		}
+	}
+
 	switch command {
 	case "up":
 		return runner.Up(ctx, dsn, opts...)
