@@ -24,10 +24,16 @@ create `nestorage_test` in the same instance once (it is a separate database,
 not a schema, for the isolation reasons below):
 
 ```sh
-docker compose exec postgres createdb -U nestova nestorage_test
+createdb -h 127.0.0.1 -p 5432 -U nestova nestorage_test
 export NESTORAGE_TEST_DATABASE_URL="postgres://nestova:nestova@127.0.0.1:5432/nestorage_test?sslmode=disable&options=-csearch_path%3Dnestorage%2Cpublic"
 make test-gated
 ```
+
+`createdb` connects directly over TCP rather than `docker compose exec` — the
+Postgres container is owned by Nestova's own `compose.yaml`, a different
+Compose project than this repo's, so `exec` run from a Nestorage worktree
+would look for a `postgres` service here and fail (this repo's `compose.yaml`
+only defines `minio`).
 
 The `options` parameter carries `search_path=nestorage,public` (NSTR-119):
 `migrate.Reset`/`Up` create the `nestorage` schema and land every migrated
@@ -55,10 +61,12 @@ exists so a gated run is deliberate and its package list is reviewable.
   purpose-made role needs it granted:
 
   ```sql
-  ALTER ROLE nestorage_test CREATEDB;
+  ALTER ROLE <role> CREATEDB;
   ```
 
-  Without it, gated tests fail with a `create database` error naming this
+  `<role>` is whatever role your DSN authenticates as — `nestova` for the
+  local recipe above, which already has it via `POSTGRES_USER`. Without
+  `CREATEDB`, gated tests fail with a `create database` error naming this
   document.
 
 ### Isolation model
@@ -94,8 +102,9 @@ database if missing, resets and migrates it, and registers cleanup.
   database, not the package's, so the two would silently diverge.
 
 Derived databases persist between runs; only their schemas are reset (on
-both setup and cleanup), so repeat runs are fast. Drop them wholesale by
-dropping the compose volume, or:
+both setup and cleanup), so repeat runs are fast. Nestorage's own
+`compose.yaml` no longer owns any Postgres storage to drop wholesale
+(NSTR-119) — drop the derived databases directly instead:
 
 ```sql
 -- inside psql, connected to the maintenance database. \gexec runs each
@@ -183,16 +192,24 @@ Nestorage is deployed) before pointing `DATABASE_URL` at the shared database.
 Mirrors the equivalent Nestova recipe (`docs/deployment.md` in the nestova
 repo, NSTR-118) — same shape, Nestorage's own schema name and extensions.
 
+Back up the OLD database before any of this — the rename below is run
+against the live database, not a copy:
+
+```sh
+pg_dump --format=custom "$OLD_DATABASE_URL" > old-database-pre-rename.dump
+```
+
 In the OLD database, move `public` (Nestorage's tables, plus the `pgcrypto`,
 `citext`, `pg_trgm`, and `btree_gin` extension objects the rename drags
 along) into a `nestorage` schema, then restore a fresh empty `public` and
 return the extensions to it — later `citext` column, `gen_random_uuid()`,
 and trigram/GIN index references resolve through `search_path`'s trailing
 `public` entry, not a schema-qualified name, so they must live there and not
-in `nestorage`:
+in `nestorage`. `--single-transaction` rolls back every statement below if
+any one of them fails, rather than leaving the rename half-applied:
 
 ```sh
-psql "$OLD_DATABASE_URL" <<'SQL'
+psql --set=ON_ERROR_STOP=1 --single-transaction "$OLD_DATABASE_URL" <<'SQL'
 ALTER SCHEMA public RENAME TO nestorage;
 CREATE SCHEMA public;
 ALTER EXTENSION citext SET SCHEMA public;
@@ -206,20 +223,27 @@ The rename carries `public.goose_db_version` along as
 `nestorage.goose_db_version` automatically — no separate step moves goose's
 own bookkeeping.
 
-Dump just the renamed schema and restore it into the shared database (which
-must already exist and already have all four extensions installed in
-`public` — a `make migrate-up` run against that database, pointed at
-`DATABASE_URL` with the `nestorage,public` search path, provides both):
+Dump just the renamed schema and restore it into the shared database. The
+four extensions must already be installed in the shared database's `public`
+schema — Nestova's own consolidation (NSTR-118) already requires them there,
+which is why that ticket blocks this one. Do **not** run `make migrate-up`
+against the shared database before this restore: it would create the same
+`nestorage` schema and empty tables the restore is about to create itself,
+and the two collide. `--single-transaction` again makes the restore all-or-
+nothing:
 
 ```sh
 pg_dump --schema=nestorage --format=custom "$OLD_DATABASE_URL" > nestorage.dump
-pg_restore --dbname="$SHARED_DATABASE_URL" nestorage.dump
+pg_restore --single-transaction --dbname="$SHARED_DATABASE_URL" nestorage.dump
 ```
 
 Verify nothing was dropped before cutting `DATABASE_URL` over, comparing row
 counts per table (and `goose_db_version`'s row count, proving its migration
 history moved too) between `information_schema.tables` on the old database
-and the same query against the `nestorage` schema of the new one.
+and the same query against the `nestorage` schema of the new one. Only
+after this restore is verified, run `make migrate-up` against
+`DATABASE_URL` (with the `nestorage,public` search path) to apply any
+migration added after the dump was taken but before cutover.
 
 ## No separate Nestorage backup timer
 

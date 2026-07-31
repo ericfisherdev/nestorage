@@ -10,4 +10,7 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA public;
 
 -- +goose Down
-DROP EXTENSION IF EXISTS pgcrypto;
+-- Not dropped (NSTR-119): pgcrypto lives in public of the shared "nest"
+-- database, not a private Nestorage database, so dropping it here would
+-- remove it out from under Nestova and identity too. Mirrors 00009_item_search.sql
+-- and 00018_household_scoping.sql's identical pg_trgm/btree_gin rationale.

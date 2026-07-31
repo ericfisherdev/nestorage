@@ -4,9 +4,16 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// mockPoolErrorTimeout bounds TestVerifyOwnSchema_MockPoolError's query
+// against an unreachable address — an unbounded context.Background() would
+// otherwise wait out the OS's own TCP connect timeout (well over a minute
+// on some networks) rather than failing fast.
+const mockPoolErrorTimeout = 5 * time.Second
 
 // TestVerifyOwnSchema_MockPoolError confirms verifyOwnSchema wraps a query
 // failure rather than swallowing it, without needing a live database:
@@ -14,13 +21,16 @@ import (
 // unreachable DSN fails on the first real query, exactly like the
 // current_schema() check itself would against a bad connection.
 func TestVerifyOwnSchema_MockPoolError(t *testing.T) {
-	pool, err := pgxpool.New(context.Background(), "postgres://u:p@127.0.0.1:1/nope")
+	ctx, cancel := context.WithTimeout(context.Background(), mockPoolErrorTimeout)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, "postgres://u:p@127.0.0.1:1/nope")
 	if err != nil {
 		t.Fatalf("pgxpool.New(): %v", err)
 	}
 	defer pool.Close()
 
-	err = verifyOwnSchema(context.Background(), pool, "nestorage")
+	err = verifyOwnSchema(ctx, pool, "nestorage")
 	if err == nil {
 		t.Fatal("verifyOwnSchema() over an unreachable pool = nil error, want error")
 	}

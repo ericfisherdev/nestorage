@@ -25,7 +25,10 @@ import (
 // re-applying Up with nothing pending is idempotent. It also checks the
 // pgcrypto extension directly rather than trusting goose's own bookkeeping
 // alone, so a Status mismatch and a schema mismatch can't both hide behind
-// the same passing assertion.
+// the same passing assertion — and confirms DownTo(0) leaves pgcrypto
+// installed (NSTR-119): it lives in public of the shared database, not a
+// private Nestorage one, so Nestorage's own Down migration must never drop
+// it out from under Nestova and identity.
 func TestMigrate_UpStatusDownToReset(t *testing.T) {
 	dsn := dbtest.Harness.DSN(t, "migrate")
 	ctx := context.Background()
@@ -62,8 +65,8 @@ func TestMigrate_UpStatusDownToReset(t *testing.T) {
 		t.Fatalf("DownTo(0): %v", err)
 	}
 	requireAllApplied(ctx, t, runner, dsn, false)
-	if pgcryptoInstalled(t, dsn) {
-		t.Error("pgcrypto extension still installed after DownTo(0)")
+	if !pgcryptoInstalled(t, dsn) {
+		t.Error("pgcrypto extension dropped by DownTo(0), want it left installed (shared with Nestova/identity)")
 	}
 
 	if err := runner.Up(ctx, dsn); err != nil {
