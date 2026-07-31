@@ -16,19 +16,25 @@ dependency-free.
 
 ## The database-gated suite
 
-The `postgres` service in [`compose.yaml`](../compose.yaml) is the easiest
-way to get one:
+Nestorage's own `compose.yaml` no longer starts a Postgres service (NSTR-119
+retired it): Nestorage's tables live in a `nestorage` schema of the "nest"
+database shared with Nestova and identity, on the instance Nestova's own
+`docker compose up -d` starts at `127.0.0.1:5432`. Start that first, then
+create `nestorage_test` in the same instance once (it is a separate database,
+not a schema, for the isolation reasons below):
 
 ```sh
-docker compose up -d
-export NESTORAGE_TEST_DATABASE_URL="postgres://nestorage:nestorage@127.0.0.1:5433/nestorage_test?sslmode=disable"
+docker compose exec postgres createdb -U nestova nestorage_test
+export NESTORAGE_TEST_DATABASE_URL="postgres://nestova:nestova@127.0.0.1:5432/nestorage_test?sslmode=disable&options=-csearch_path%3Dnestorage%2Cpublic"
 make test-gated
 ```
 
-`nestorage_test` is created automatically the first time the compose
-volume is created, by [`compose/initdb/01-test-database.sql`](../compose/initdb/01-test-database.sql)
-— see that file for why an existing `nestorage-pgdata` volume from before it
-existed needs the database created by hand, once.
+The `options` parameter carries `search_path=nestorage,public` (NSTR-119):
+`migrate.Reset`/`Up` create the `nestorage` schema and land every migrated
+object in it, exactly as production does, and `cmd/server`'s boot guard
+(`verifyOwnSchema` in `cmd/server/db_schema.go`) refuses to connect without
+it — a DSN missing this option fails every gated adapter test with a
+`current schema` error naming the missing option.
 
 `make test-gated` names the gated packages explicitly
 (`GATED_TEST_PACKAGES` in the [`Makefile`](../Makefile)). `go test ./...`
@@ -38,14 +44,14 @@ exists so a gated run is deliberate and its package list is reviewable.
 ### Prerequisites
 
 - **A Postgres reachable at that DSN, version 17.** Production runs 17, and
-  `compose.yaml` pins the same major so the gated suite exercises what the
-  appliance actually runs.
+  Nestova's `compose.yaml` pins the same major so the gated suite exercises
+  what the appliance actually runs.
 - **A database named `test` or ending in `_test`.** Enforced as a safety
   rail: the harness refuses to run otherwise, because it drops and
   recreates schemas. `nestorage_test` is the convention.
 - **The `CREATEDB` privilege on that role.** The harness creates a database
-  per package on demand. The compose service's `nestorage` role already has
-  it (the official postgres image grants `POSTGRES_USER` superuser); a
+  per package on demand. Nestova's compose service's `nestova` role already
+  has it (the official postgres image grants `POSTGRES_USER` superuser); a
   purpose-made role needs it granted:
 
   ```sql
@@ -147,14 +153,17 @@ reruns the identical port-level suite `TestLocalPhotoStore_Conformance`
 ## CI runs both gated suites
 
 The `test-gated` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
-runs `make test-gated` against a `postgres:17-alpine` service container,
-matching `compose.yaml`'s major version, with its own `NESTORAGE_TEST_DATABASE_URL`
-pointing at a `nestorage_test` database. The service's health check gates
-the job's steps, so there is no hand-rolled ready-loop the way there is for
-a locally started container. The Makefile target runs with `-v` so the
-job's log shows each gated test PASS or SKIP by name — a package-level "ok"
-line alone can't distinguish "ran and passed" from "every test skipped
-itself" (e.g. a misnamed or missing environment variable).
+runs `make test-gated` against its own dedicated `postgres:17-alpine` service
+container — version 17 to match production, not the shared dev "nest"
+instance this job never touches — with its own `NESTORAGE_TEST_DATABASE_URL`
+pointing at a `nestorage_test` database, its `options` parameter carrying
+`search_path=nestorage,public` the same way the local recipe above does. The
+service's health check gates the job's steps, so there is no hand-rolled
+ready-loop the way there is for a locally started container. The Makefile
+target runs with `-v` so the job's log shows each gated test PASS or SKIP by
+name — a package-level "ok" line alone can't distinguish "ran and passed"
+from "every test skipped itself" (e.g. a misnamed or missing environment
+variable).
 
 MinIO runs alongside it as a plain `docker run -d` step, not a `services:`
 entry: GitHub Actions' service-container support has no way to pass the
@@ -164,3 +173,59 @@ and its readiness polled explicitly. The step exports
 `NESTORAGE_TEST_S3_ENDPOINT` and the container's own test credentials before
 `make test-gated` runs, so the S3-gated suite executes in the very same
 `go test` invocation as the database-gated one.
+
+## Moving existing data into the shared database (NSTR-119)
+
+A one-time recipe for a database that predates the shared `nest` database
+(NSTR-112) — Nestorage's tables sit directly in `public` of their own private
+`nestorage` database. Run this once per environment (dev, then wherever
+Nestorage is deployed) before pointing `DATABASE_URL` at the shared database.
+Mirrors the equivalent Nestova recipe (`docs/deployment.md` in the nestova
+repo, NSTR-118) — same shape, Nestorage's own schema name and extensions.
+
+In the OLD database, move `public` (Nestorage's tables, plus the `pgcrypto`,
+`citext`, `pg_trgm`, and `btree_gin` extension objects the rename drags
+along) into a `nestorage` schema, then restore a fresh empty `public` and
+return the extensions to it — later `citext` column, `gen_random_uuid()`,
+and trigram/GIN index references resolve through `search_path`'s trailing
+`public` entry, not a schema-qualified name, so they must live there and not
+in `nestorage`:
+
+```sh
+psql "$OLD_DATABASE_URL" <<'SQL'
+ALTER SCHEMA public RENAME TO nestorage;
+CREATE SCHEMA public;
+ALTER EXTENSION citext SET SCHEMA public;
+ALTER EXTENSION pgcrypto SET SCHEMA public;
+ALTER EXTENSION pg_trgm SET SCHEMA public;
+ALTER EXTENSION btree_gin SET SCHEMA public;
+SQL
+```
+
+The rename carries `public.goose_db_version` along as
+`nestorage.goose_db_version` automatically — no separate step moves goose's
+own bookkeeping.
+
+Dump just the renamed schema and restore it into the shared database (which
+must already exist and already have all four extensions installed in
+`public` — a `make migrate-up` run against that database, pointed at
+`DATABASE_URL` with the `nestorage,public` search path, provides both):
+
+```sh
+pg_dump --schema=nestorage --format=custom "$OLD_DATABASE_URL" > nestorage.dump
+pg_restore --dbname="$SHARED_DATABASE_URL" nestorage.dump
+```
+
+Verify nothing was dropped before cutting `DATABASE_URL` over, comparing row
+counts per table (and `goose_db_version`'s row count, proving its migration
+history moved too) between `information_schema.tables` on the old database
+and the same query against the `nestorage` schema of the new one.
+
+## No separate Nestorage backup timer
+
+This repo ships no systemd unit or backup docs of its own — the appliance's
+backup story lives entirely in Nestova's `docs/aws-backups.md` (nestova
+repo): once both apps' tables and identity share one `nest` database, a
+single `pg_dump` against it covers all three schemas. Do not add a second
+backup timer here; there is nothing Nestorage-specific left to back up
+separately.

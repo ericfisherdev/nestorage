@@ -20,7 +20,26 @@ var migrationsFS embed.FS
 // subcommand from the repo root.
 const SourceDir = "internal/platform/db/migrate/migrations"
 
-// New returns a Runner over Nestorage's embedded migration set.
+// Schema is the dedicated Postgres schema Nestorage's own tables and goose's
+// bookkeeping live in, inside the "nest" database shared with Nestova and the
+// identity schema (NSTR-119). Exported so cmd/server's boot guard can check
+// current_schema() against the same literal this package migrates into,
+// without a second, possibly-drifting copy of the name.
+const Schema = "nestorage"
+
+// versionTable is goose's schema-qualified bookkeeping table name.
+const versionTable = Schema + ".goose_db_version"
+
+// New returns a Runner over Nestorage's embedded migration set. WithEnsureSchema
+// creates the nestorage schema before any goose command runs — including the
+// very first Up against a fresh database — since goose itself never creates
+// a schema and would otherwise fail trying to create versionTable inside one
+// that does not exist yet. WithVersionTable moves goose's own bookkeeping
+// into that schema too, so it coexists with Nestova's and identity's own
+// version tables in the same shared database.
 func New() (*ncmigrate.Runner, error) {
-	return ncmigrate.New(migrationsFS, "migrations")
+	return ncmigrate.New(migrationsFS, "migrations",
+		ncmigrate.WithVersionTable(versionTable),
+		ncmigrate.WithEnsureSchema(Schema),
+	)
 }

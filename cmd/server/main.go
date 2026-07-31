@@ -112,6 +112,13 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
+	// NSTR-119: confirm the connection actually resolves into Nestorage's own
+	// schema before anything queries through pool — a forgotten search_path
+	// option in DATABASE_URL must fail boot loudly, not scatter a fresh copy
+	// of every table into public on the next migrate-up.
+	if err := verifyOwnSchema(context.Background(), pool, cfg.Schemas.Nestorage); err != nil {
+		return err
+	}
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
 
 	// NSTR-47: construct the label size registry now, at boot — an invalid

@@ -5,7 +5,10 @@
 -- ICU collation was considered and rejected: Postgres does not support
 -- pattern matching against nondeterministic collations, and B-tree
 -- deduplication is disabled under them.
-CREATE EXTENSION IF NOT EXISTS citext;
+-- Schema-qualified for the same reason as pgcrypto in 00001_baseline.sql
+-- (NSTR-119): search_path resolves nestorage before public, so an
+-- unqualified CREATE EXTENSION would install into nestorage instead.
+CREATE EXTENSION IF NOT EXISTS citext SCHEMA public;
 
 -- The table is app_user, not user: user is a reserved key word in Postgres 17
 -- and CREATE TABLE user (...) is a syntax error, verified against the compose
