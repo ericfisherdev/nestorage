@@ -103,6 +103,15 @@
 
   /* Names the sidebar width so w-sidebar / shell:w-sidebar compose. */
   --spacing-sidebar: 264px;
+
+  /* NSTR-124's cross-app nav entry wears a chip in the PEER's own palette
+   * (Nestova's warm sage, #6f8c6a in Nestova's own input.css) rather than
+   * this shell's indigo-slate --color-primary, so the entry visually reads
+   * as "this leaves the app" per the ticket's own design intent. Declared
+   * locally (not in nestorage-web/tokens.css, the Nestorage-only palette's
+   * source of truth) since this single value belongs to neither app's
+   * palette on its own. */
+  --color-peer-accent: #6f8c6a;
 }
 
 /* Self-hosted fonts (the appliance has to render with the internet down).

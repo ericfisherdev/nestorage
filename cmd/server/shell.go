@@ -19,6 +19,7 @@ import (
 	mediaadapter "github.com/ericfisherdev/nestorage/internal/media/adapter"
 	notifyadapter "github.com/ericfisherdev/nestorage/internal/notify/adapter"
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
+	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	ratelimitmetrics "github.com/ericfisherdev/nestorage/internal/platform/metrics"
 	storageadapter "github.com/ericfisherdev/nestorage/internal/storage/adapter"
 	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
@@ -120,6 +121,16 @@ type shellLocationLister interface {
 	List(ctx context.Context, viewer identity.Principal) ([]storageapp.LocationSummary, error)
 }
 
+// shellPeerReachabilityChecker is the narrow port (ISP) shellDataService
+// depends on to know whether the configured peer app (Nestova) currently
+// answers its own /healthz, satisfied by *peer.Prober (a superset, via
+// Reachable) — kept as a local interface rather than importing peer.Prober
+// directly so shellDataService depends on an abstraction, not that
+// package's concretion.
+type shellPeerReachabilityChecker interface {
+	Reachable(ctx context.Context) bool
+}
+
 // shellDataService computes ShellProps' real Owners/Stats per request,
 // replacing the removed shellOwners()/hard-coded ShellStats demo data.
 // Stats is scoped by viewer through the same ListVisible/List calls the
@@ -133,17 +144,27 @@ type shellLocationLister interface {
 // process-wide, request-independent composition value already lives for
 // NSTR-50's batch service and NSTR-51's size-selection UI to read back via
 // Labels().
+//
+// peerCfg/peerProbe back NSTR-124's own Peer method: peerCfg names the
+// configured peer (empty NestovaURL means none), peerProbe is the
+// reachability check consulted ONLY when peerCfg says a peer is actually
+// configured — see Peer's own doc for why probe traffic never exists
+// otherwise.
 type shellDataService struct {
 	members   shellMemberLister
 	bins      shellBinLister
 	locations shellLocationLister
 	labels    *labelsdomain.Registry
+	peerCfg   config.PeerConfig
+	peerProbe shellPeerReachabilityChecker
 }
 
-// newShellDataService constructs shellDataService. All dependencies are
-// required; a missing one panics at construction time, matching every other
-// constructor in this codebase.
-func newShellDataService(members shellMemberLister, bins shellBinLister, locations shellLocationLister, labels *labelsdomain.Registry) *shellDataService {
+// newShellDataService constructs shellDataService. members/bins/locations/
+// labels/peerProbe are required; a missing one panics at construction time,
+// matching every other constructor in this codebase. peerCfg carries no
+// such check — an empty PeerConfig (no peer installed) is itself a valid,
+// expected value, not a misconfiguration.
+func newShellDataService(members shellMemberLister, bins shellBinLister, locations shellLocationLister, labels *labelsdomain.Registry, peerCfg config.PeerConfig, peerProbe shellPeerReachabilityChecker) *shellDataService {
 	if members == nil {
 		panic("main: newShellDataService requires a non-nil shellMemberLister")
 	}
@@ -156,7 +177,10 @@ func newShellDataService(members shellMemberLister, bins shellBinLister, locatio
 	if labels == nil {
 		panic("main: newShellDataService requires a non-nil *labelsdomain.Registry")
 	}
-	return &shellDataService{members: members, bins: bins, locations: locations, labels: labels}
+	if peerProbe == nil {
+		panic("main: newShellDataService requires a non-nil shellPeerReachabilityChecker")
+	}
+	return &shellDataService{members: members, bins: bins, locations: locations, labels: labels, peerCfg: peerCfg, peerProbe: peerProbe}
 }
 
 // Labels returns the label size registry NSTR-50's batch service and
@@ -205,6 +229,25 @@ func (s *shellDataService) Stats(ctx context.Context, viewer identity.Principal)
 		items += b.ItemCount
 	}
 	return components.ShellStats{Bins: len(bins), Items: items, Rooms: len(locations)}, nil
+}
+
+// nestovaPeerName is the peer app's display name in the sidebar entry.
+const nestovaPeerName = "Nestova"
+
+// Peer returns the sidebar's cross-app nav entry (NSTR-124), or nil when no
+// peer app is configured. The nil case is checked FIRST, before touching
+// peerProbe at all: an unconfigured install must issue zero probe traffic
+// (NSTR-124's own AC), not merely render nothing while still probing in the
+// background.
+func (s *shellDataService) Peer(ctx context.Context) *components.PeerLink {
+	if s.peerCfg.NestovaURL == "" {
+		return nil
+	}
+	return &components.PeerLink{
+		Name:      nestovaPeerName,
+		URL:       s.peerCfg.NestovaURL,
+		Reachable: s.peerProbe.Reachable(ctx),
+	}
 }
 
 // shellInitials returns the first letter of name, uppercased, matching
@@ -502,19 +545,20 @@ func isCurrentUserAdmin(r *http.Request) bool {
 	return ok && u.IsAdmin()
 }
 
-// shellProps assembles ShellProps for title from data's real Owners/Stats,
-// scoped by ctx's resolved Principal (anonymous if none resolved).
+// shellProps assembles ShellProps for title from data's real Owners/Stats/
+// Peer, scoped by ctx's resolved Principal (anonymous if none resolved).
 func shellProps(ctx context.Context, data *shellDataService, title string) (components.ShellProps, error) {
 	viewer, _ := identityadapter.CurrentPrincipal(ctx)
+	peerLink := data.Peer(ctx)
 	owners, err := data.Owners(ctx)
 	if err != nil {
-		return components.ShellProps{Title: title}, err
+		return components.ShellProps{Title: title, Peer: peerLink}, err
 	}
 	stats, err := data.Stats(ctx, viewer)
 	if err != nil {
-		return components.ShellProps{Title: title, Owners: owners}, err
+		return components.ShellProps{Title: title, Owners: owners, Peer: peerLink}, err
 	}
-	return components.ShellProps{Title: title, Owners: owners, Stats: stats}, nil
+	return components.ShellProps{Title: title, Owners: owners, Stats: stats, Peer: peerLink}, nil
 }
 
 // newShellLayout returns the request-aware layout func a page whose nav's
