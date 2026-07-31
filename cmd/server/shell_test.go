@@ -14,8 +14,11 @@ import (
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
 	"github.com/ericfisherdev/nestorage/internal/identity/domain"
+	labelsdomain "github.com/ericfisherdev/nestorage/internal/labels/domain"
 	"github.com/ericfisherdev/nestorage/internal/platform/api"
+	"github.com/ericfisherdev/nestorage/internal/platform/config"
 	ratelimitmetrics "github.com/ericfisherdev/nestorage/internal/platform/metrics"
+	storageapp "github.com/ericfisherdev/nestorage/internal/storage/app"
 )
 
 // generousRateLimiter builds a NSTR-58 KeyedRateLimiter that never denies
@@ -213,4 +216,90 @@ func TestShellHandlers_StaticAssets(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("GET /static/css/app.css = %d, want %d", rec.Code, http.StatusOK)
 	}
+}
+
+// stubMembers/stubBins/stubLocations are minimal no-op implementations of
+// shellDataService's own ports, only enough to satisfy newShellDataService's
+// non-nil checks — the tests below exercise Peer, not Owners/Stats.
+type stubMembers struct{}
+
+func (stubMembers) List(context.Context) ([]domain.User, error) { return nil, nil }
+
+type stubBins struct{}
+
+func (stubBins) ListVisible(context.Context, domain.Principal) ([]storageapp.BinView, error) {
+	return nil, nil
+}
+
+type stubLocations struct{}
+
+func (stubLocations) List(context.Context, domain.Principal) ([]storageapp.LocationSummary, error) {
+	return nil, nil
+}
+
+// countingPeerProbe records how many times Reachable was consulted, so a
+// test can assert an unconfigured install probes zero times.
+type countingPeerProbe struct {
+	calls     int
+	reachable bool
+}
+
+func (c *countingPeerProbe) Reachable(context.Context) bool {
+	c.calls++
+	return c.reachable
+}
+
+func newTestShellDataService(t *testing.T, peerCfg config.PeerConfig, peerProbe shellPeerReachabilityChecker) *shellDataService {
+	t.Helper()
+	labels, err := labelsdomain.NewRegistry()
+	if err != nil {
+		t.Fatalf("labelsdomain.NewRegistry() error = %v", err)
+	}
+	return newShellDataService(stubMembers{}, stubBins{}, stubLocations{}, labels, peerCfg, peerProbe)
+}
+
+// TestShellDataService_Peer_UnconfiguredReturnsNilAndNeverProbes covers
+// NSTR-124's own AC: with no PEER_NESTOVA_URL configured, the sidebar
+// renders no cross-app control, and — the part a doc comment alone cannot
+// guarantee — no probe traffic exists at all.
+func TestShellDataService_Peer_UnconfiguredReturnsNilAndNeverProbes(t *testing.T) {
+	probe := &countingPeerProbe{reachable: true}
+	s := newTestShellDataService(t, config.PeerConfig{}, probe)
+
+	if got := s.Peer(context.Background()); got != nil {
+		t.Errorf("Peer() = %+v, want nil with no PEER_NESTOVA_URL configured", got)
+	}
+	if probe.calls != 0 {
+		t.Errorf("Reachable calls = %d, want 0 — an unconfigured install must issue no probe traffic", probe.calls)
+	}
+}
+
+func TestShellDataService_Peer_ConfiguredCarriesProbeVerdict(t *testing.T) {
+	probe := &countingPeerProbe{reachable: false}
+	cfg := config.PeerConfig{NestovaURL: "https://nestova.example.test"}
+	s := newTestShellDataService(t, cfg, probe)
+
+	got := s.Peer(context.Background())
+	if got == nil {
+		t.Fatal("Peer() = nil, want an entry when PEER_NESTOVA_URL is set")
+	}
+	if got.URL != cfg.NestovaURL || got.Name != nestovaPeerName || got.Reachable {
+		t.Errorf("Peer() = %+v, want URL=%q Name=%q Reachable=false", got, cfg.NestovaURL, nestovaPeerName)
+	}
+	if probe.calls != 1 {
+		t.Errorf("Reachable calls = %d, want exactly 1", probe.calls)
+	}
+}
+
+func TestNewShellDataService_NilPeerProbePanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("newShellDataService(..., nil peerProbe) did not panic")
+		}
+	}()
+	labels, err := labelsdomain.NewRegistry()
+	if err != nil {
+		t.Fatalf("labelsdomain.NewRegistry() error = %v", err)
+	}
+	newShellDataService(stubMembers{}, stubBins{}, stubLocations{}, labels, config.PeerConfig{}, nil)
 }

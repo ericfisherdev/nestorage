@@ -91,3 +91,46 @@ func TestLoad_PeerNonHTTPSchemeRejected(t *testing.T) {
 		t.Fatalf("Load() error = %v, want an error naming PEER_NESTOVA_URL", err)
 	}
 }
+
+// TestLoad_PeerURLWithTrailingSlashRejected covers a bare trailing slash
+// (a path of "/"), which changes what probe's {baseURL}/healthz
+// concatenation requests — see PeerConfig.Validate's own doc.
+func TestLoad_PeerURLWithTrailingSlashRejected(t *testing.T) {
+	env := basePeerEnv()
+	env["PEER_NESTOVA_URL"] = "https://nestova.tailnet-name.ts.net/"
+	setEnv(t, env)
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "PEER_NESTOVA_URL") {
+		t.Fatalf("Load() error = %v, want an error naming PEER_NESTOVA_URL", err)
+	}
+}
+
+// TestLoad_PeerURLWithSubpathRejected covers a non-root path: a subpath
+// changes probe's {baseURL}/healthz target outright (e.g. it 404s), so a
+// healthy peer would otherwise render permanently unreachable.
+func TestLoad_PeerURLWithSubpathRejected(t *testing.T) {
+	env := basePeerEnv()
+	env["PEER_NESTOVA_URL"] = "https://nestova.tailnet-name.ts.net/nestova"
+	setEnv(t, env)
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "PEER_NESTOVA_URL") {
+		t.Fatalf("Load() error = %v, want an error naming PEER_NESTOVA_URL", err)
+	}
+}
+
+// TestLoad_PeerURLWithUserinfoRejected covers the security-relevant case:
+// userinfo must never reach Validate's success path, since PeerConfig.
+// NestovaURL is handed straight to templ.SafeURL(p.URL) and would land
+// embedded credentials in the HTML served to every household member.
+func TestLoad_PeerURLWithUserinfoRejected(t *testing.T) {
+	env := basePeerEnv()
+	env["PEER_NESTOVA_URL"] = "https://user:pass@nestova.tailnet-name.ts.net"
+	setEnv(t, env)
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "PEER_NESTOVA_URL") {
+		t.Fatalf("Load() error = %v, want an error naming PEER_NESTOVA_URL", err)
+	}
+}
