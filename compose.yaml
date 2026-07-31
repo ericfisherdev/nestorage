@@ -1,39 +1,15 @@
 # Local development services. Start with: docker compose up -d
-# .env.example's DATABASE_URL placeholder matches this service's credentials.
+# .env.example's DATABASE_URL placeholder matches the shared Postgres this
+# file no longer starts (NSTR-119) — Nestova's own `docker compose up -d`
+# owns that instance on 127.0.0.1:5432 now that Nestorage's tables live in a
+# nestorage schema of its shared "nest" database instead of a private
+# nestorage database on 127.0.0.1:5433. Start Nestova's compose stack first.
 #
-# This file only starts Postgres/MinIO — the app binary itself is not a
-# compose service, so PUBLIC_BASE_URL (NSTR-48's bin deep-link/QR origin;
-# see .env.example for the full doc) is set in .env alongside the app's
-# other configuration, not here.
+# This file only starts MinIO — the app binary itself is not a compose
+# service, so PUBLIC_BASE_URL (NSTR-48's bin deep-link/QR origin; see
+# .env.example for the full doc) is set in .env alongside the app's other
+# configuration, not here.
 services:
-  postgres:
-    image: postgres:17-alpine
-    container_name: nestorage-postgres
-    environment:
-      # Local-development credentials only — NOT for any shared or production
-      # environment. Production must supply DATABASE_URL with real credentials.
-      POSTGRES_USER: nestorage
-      POSTGRES_PASSWORD: nestorage
-      POSTGRES_DB: nestorage
-    ports:
-      # Bind to loopback only — this dev service has fixed local credentials
-      # and must not be reachable from other hosts on the network. Host port
-      # 5433, not Postgres's default 5432: Nestorage runs on the same host as
-      # Nestova, whose own compose service already binds 127.0.0.1:5432. 5433
-      # was checked free on this host (55433 is nestcore's gated-test
-      # container, not a local dev service).
-      - "127.0.0.1:5433:5432"
-    volumes:
-      - nestorage-pgdata:/var/lib/postgresql/data
-      # Read-only: these scripts only ever run once, against a fresh volume —
-      # see compose/initdb/01-test-database.sql.
-      - ./compose/initdb:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nestorage -d nestorage"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   # S3-compatible object storage for the optional MEDIA_STORAGE_BACKEND=s3
   # PhotoStore adapter (NSTR-35). Local installs never need this service —
   # MEDIA_STORAGE_BACKEND defaults to local.
@@ -48,9 +24,10 @@ services:
       MINIO_ROOT_PASSWORD: nestorage-dev-minio
     command: server /data
     ports:
-      # Bind to loopback only, matching the postgres service's identical
-      # rationale. Host port 59001, not MinIO's default 9000: 59000 is
-      # Nestova's own documented dev MinIO on this shared host (NES-132).
+      # Bind to loopback only — this dev service has fixed local credentials
+      # and must not be reachable from other hosts on the network. Host port
+      # 59001, not MinIO's default 9000: 59000 is Nestova's own documented
+      # dev MinIO on this shared host (NES-132).
       - "127.0.0.1:59001:9000"
     volumes:
       - nestorage-miniodata:/data
@@ -61,5 +38,4 @@ services:
       retries: 5
 
 volumes:
-  nestorage-pgdata:
   nestorage-miniodata:

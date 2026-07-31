@@ -154,7 +154,10 @@ CREATE INDEX item_event_bin_occurred_idx ON item_event (household_id, bin_id, oc
 -- operator class for a uuid column at all. Not dropped in Down, mirroring
 -- 00009_item_search.sql's own pg_trgm rationale: dropping a shared
 -- extension in a per-feature down migration is unsafe.
-CREATE EXTENSION IF NOT EXISTS btree_gin;
+-- Schema-qualified for the same reason as pgcrypto in 00001_baseline.sql
+-- (NSTR-119): search_path resolves nestorage before public, so an
+-- unqualified CREATE EXTENSION would install into nestorage instead.
+CREATE EXTENSION IF NOT EXISTS btree_gin SCHEMA public;
 DROP INDEX item_name_trgm;
 CREATE INDEX item_name_trgm ON item USING gin (household_id, name gin_trgm_ops);
 DROP INDEX item_description_trgm;

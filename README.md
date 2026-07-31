@@ -53,15 +53,18 @@ first use.
 
 Configuration is read exclusively from the environment — there is no
 hardcoded fallback, including in dev. Copy [`.env.example`](.env.example) to
-`.env` (gitignored) once per worktree and fill in `DATABASE_URL`; `docker
-compose up -d` starts a matching local Postgres on `127.0.0.1:5433` using
-the same credentials the example file's placeholder points at.
+`.env` (gitignored) once per worktree and fill in `DATABASE_URL`. Nestorage's
+own `compose.yaml` only starts MinIO now (NSTR-119): Postgres is the shared
+`nest` instance Nestova's own `docker compose up -d` starts on
+`127.0.0.1:5432`, so start that first — the example file's placeholder DSN
+points at it, with Nestorage's own tables resolving through its
+`search_path=nestorage,public` option.
 
 ```sh
 git -C /home/esfisher/dev/housedev/nestorage worktree add <dir> -b <branch>
 cd /home/esfisher/dev/housedev/nestorage/<dir>
 cp .env.example .env   # once per worktree: fill in DATABASE_URL, etc.
-docker compose up -d   # local Postgres on 127.0.0.1:5433
+docker compose up -d   # MinIO only — start Nestova's compose stack for Postgres
 make hooks   # once per clone: installs the Lefthook Git hooks
 # ... edit ...
 make build   # build the CSS bundle, then compile bin/server
@@ -95,8 +98,8 @@ make help       # list available targets
 ```
 
 The `migrate-*` targets invoke `./cmd/migrate` against the database named by
-`DATABASE_URL` (and, optionally, `MIGRATE_DATABASE_URL`) — start the local
-Postgres from [`compose.yaml`](compose.yaml) first: `docker compose up -d`.
+`DATABASE_URL` (and, optionally, `MIGRATE_DATABASE_URL`) — start the shared
+Postgres from Nestova's own `compose.yaml` first: `docker compose up -d`.
 
 ### Gated tests
 

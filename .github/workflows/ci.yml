@@ -164,7 +164,11 @@ jobs:
       # already has CREATEDB -- required if the gated harness creates a
       # database per package. localhost is correct, not the service label:
       # these steps run directly on the runner, not inside a container.
-      NESTORAGE_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/nestorage_test?sslmode=disable
+      # options carries search_path=nestorage,public (NSTR-119): migrate.Reset/Up
+      # create the nestorage schema and land every migrated object in it,
+      # exactly as production does, and cmd/server's boot guard
+      # (verifyOwnSchema) refuses to connect without it.
+      NESTORAGE_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/nestorage_test?sslmode=disable&options=-csearch_path%3Dnestorage%2Cpublic
       # The disposable MinIO container the "Start MinIO" step below launches
       # (NSTR-35) -- test-only credentials, thrown away with the runner at
       # the end of the job. localhost, not a service label: MinIO runs via a

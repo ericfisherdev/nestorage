@@ -18,7 +18,10 @@
 -- migration below deliberately does not drop it — dropping a shared
 -- extension in a per-feature down migration is unsafe, since a later
 -- migration could come to depend on it before this one is ever rolled back.
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- Schema-qualified for the same reason as pgcrypto in 00001_baseline.sql
+-- (NSTR-119): search_path resolves nestorage before public, so an
+-- unqualified CREATE EXTENSION would install into nestorage instead.
+CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public;
 
 CREATE INDEX item_name_trgm ON item USING gin (name gin_trgm_ops);
 CREATE INDEX item_description_trgm ON item USING gin (description gin_trgm_ops);
