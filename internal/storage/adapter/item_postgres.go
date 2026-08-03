@@ -104,8 +104,9 @@ func (r *ItemRepository) Create(ctx context.Context, it *domain.Item) error {
 // itemVisibilityWhere). Returns domain.ErrItemNotFound both when id is
 // unknown and when the item exists but viewer may not see it.
 func (r *ItemRepository) Get(ctx context.Context, viewer identity.Principal, id domain.ItemID) (*domain.Item, error) {
-	q := itemVisibleColumns + ` WHERE i.id = $1 AND ` + itemVisibilityWhere(1)
-	args := append([]any{id.String()}, viewerArgs(viewer)...)
+	q := itemVisibleColumns + ` WHERE i.id = $1 AND i.household_id = $2 AND ` + itemVisibilityWhere(2)
+	args := append([]any{id.String()}, householdArgs(viewer)...)
+	args = append(args, viewerArgs(viewer)...)
 
 	it, err := scanItem(r.dbtx.QueryRow(ctx, q, args...))
 	if err != nil {
@@ -117,13 +118,14 @@ func (r *ItemRepository) Get(ctx context.Context, viewer identity.Principal, id 
 	return it, nil
 }
 
-// GetForUpdate returns the item locked FOR UPDATE, not scoped by visibility
-// (see domain.ItemRepository.GetForUpdate's own doc: the caller is expected
-// to have already checked visibility via Get). Returns
-// domain.ErrItemNotFound when id is unknown.
-func (r *ItemRepository) GetForUpdate(ctx context.Context, id domain.ItemID) (*domain.Item, error) {
-	q := itemColumns + ` WHERE id = $1 FOR UPDATE`
-	it, err := scanItem(r.dbtx.QueryRow(ctx, q, id.String()))
+// GetForUpdate returns the item locked FOR UPDATE, scoped to householdID but
+// not further by visibility (see domain.ItemRepository.GetForUpdate's own
+// doc: the caller is expected to have already checked visibility via Get).
+// Returns domain.ErrItemNotFound when id is unknown or belongs to a
+// different household.
+func (r *ItemRepository) GetForUpdate(ctx context.Context, householdID identity.HouseholdID, id domain.ItemID) (*domain.Item, error) {
+	q := itemColumns + ` WHERE id = $1 AND ` + householdWhere(1) + ` FOR UPDATE`
+	it, err := scanItem(r.dbtx.QueryRow(ctx, q, id.String(), householdID.String()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrItemNotFound
@@ -138,12 +140,12 @@ func (r *ItemRepository) GetForUpdate(ctx context.Context, id domain.ItemID) (*d
 // domain.ErrItemNotFound when id is unknown, or
 // domain.ErrInvalidQuantity/a wrapped blank-name error when the new values
 // violate the database CHECKs.
-func (r *ItemRepository) Update(ctx context.Context, it *domain.Item) error {
+func (r *ItemRepository) Update(ctx context.Context, householdID identity.HouseholdID, it *domain.Item) error {
 	if it == nil {
 		return errors.New("storage/adapter: update item: nil item")
 	}
-	const q = `UPDATE item SET name = $2, description = $3, quantity = $4, updated_at = now() WHERE id = $1`
-	tag, err := r.dbtx.Exec(ctx, q, it.ID.String(), it.Name, it.Description, it.Quantity)
+	q := `UPDATE item SET name = $2, description = $3, quantity = $4, updated_at = now() WHERE id = $1 AND ` + householdWhere(4)
+	tag, err := r.dbtx.Exec(ctx, q, it.ID.String(), it.Name, it.Description, it.Quantity, householdID.String())
 	if err != nil {
 		if isPgConstraint(err, checkViolation, itemQuantityCheckConstraint) {
 			return domain.ErrInvalidQuantity
@@ -161,15 +163,15 @@ func (r *ItemRepository) Update(ctx context.Context, it *domain.Item) error {
 // domain.ItemRepository.Move's own doc for the rows-affected contract.
 // Returns domain.ErrInvalidPlacement immediately, without a round trip,
 // when dst itself is malformed.
-func (r *ItemRepository) Move(ctx context.Context, id domain.ItemID, dst domain.Placement) (int64, error) {
+func (r *ItemRepository) Move(ctx context.Context, householdID identity.HouseholdID, id domain.ItemID, dst domain.Placement) (int64, error) {
 	if !dst.Valid() {
 		return 0, domain.ErrInvalidPlacement
 	}
-	const q = `
+	q := `
 		UPDATE item
 		SET current_bin_id = $2, held_by = $3, placement_changed_at = now(), updated_at = now()
-		WHERE id = $1`
-	tag, err := r.dbtx.Exec(ctx, q, id.String(), binIDParam(dst.BinID), userIDParam(dst.HeldBy))
+		WHERE id = $1 AND ` + householdWhere(3)
+	tag, err := r.dbtx.Exec(ctx, q, id.String(), binIDParam(dst.BinID), userIDParam(dst.HeldBy), householdID.String())
 	if err != nil {
 		switch {
 		case isPgConstraint(err, checkViolation, itemPlacementExclusiveConstraint):
@@ -192,8 +194,9 @@ func (r *ItemRepository) Move(ctx context.Context, id domain.ItemID, dst domain.
 // tie-broken by id. Returns an empty slice, not an error, when none are
 // visible.
 func (r *ItemRepository) ListByBin(ctx context.Context, viewer identity.Principal, binID domain.BinID) ([]domain.Item, error) {
-	q := itemVisibleColumns + ` WHERE i.current_bin_id = $1 AND ` + itemVisibilityWhere(1) + ` ORDER BY i.name, i.id`
-	args := append([]any{binID.String()}, viewerArgs(viewer)...)
+	q := itemVisibleColumns + ` WHERE i.current_bin_id = $1 AND i.household_id = $2 AND ` + itemVisibilityWhere(2) + ` ORDER BY i.name, i.id`
+	args := append([]any{binID.String()}, householdArgs(viewer)...)
+	args = append(args, viewerArgs(viewer)...)
 
 	rows, err := r.dbtx.Query(ctx, q, args...)
 	if err != nil {
@@ -223,8 +226,8 @@ func (r *ItemRepository) ListByBin(ctx context.Context, viewer identity.Principa
 // (see domain.ItemRepository.ListVisible's own doc). Returns an empty slice,
 // not an error, when nothing matches.
 func (r *ItemRepository) ListVisible(ctx context.Context, viewer identity.Principal, f domain.ItemFilter) ([]domain.Item, error) {
-	q := itemVisibleColumns + ` WHERE ` + itemVisibilityWhere(0)
-	args := viewerArgs(viewer)
+	q := itemVisibleColumns + ` WHERE i.household_id = $1 AND ` + itemVisibilityWhere(1)
+	args := append(householdArgs(viewer), viewerArgs(viewer)...)
 
 	if f.BinID != nil {
 		args = append(args, f.BinID.String())
@@ -269,9 +272,10 @@ func (r *ItemRepository) CountsByBin(ctx context.Context, viewer identity.Princi
 		SELECT i.current_bin_id, COUNT(*)
 		FROM item i
 		JOIN bin b ON b.id = i.current_bin_id
-		WHERE ` + binVisibilityWhereJoined(0) + `
+		WHERE i.household_id = $1 AND ` + binVisibilityWhereJoined(1) + `
 		GROUP BY i.current_bin_id`
-	rows, err := r.dbtx.Query(ctx, q, viewerArgs(viewer)...)
+	args := append(householdArgs(viewer), viewerArgs(viewer)...)
+	rows, err := r.dbtx.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("count items by bin: %w", err)
 	}
@@ -296,12 +300,13 @@ func (r *ItemRepository) CountsByBin(ctx context.Context, viewer identity.Princi
 	return counts, nil
 }
 
-// Delete removes the item. Returns domain.ErrItemNotFound when id is
-// unknown. Not visibility-scoped — see domain.ItemRepository.Delete's own
-// doc.
-func (r *ItemRepository) Delete(ctx context.Context, id domain.ItemID) error {
-	const q = `DELETE FROM item WHERE id = $1`
-	tag, err := r.dbtx.Exec(ctx, q, id.String())
+// Delete removes the item, scoped to householdID. Returns
+// domain.ErrItemNotFound when id is unknown or belongs to a different
+// household. Not further visibility-scoped — see
+// domain.ItemRepository.Delete's own doc.
+func (r *ItemRepository) Delete(ctx context.Context, householdID identity.HouseholdID, id domain.ItemID) error {
+	q := `DELETE FROM item WHERE id = $1 AND ` + householdWhere(1)
+	tag, err := r.dbtx.Exec(ctx, q, id.String(), householdID.String())
 	if err != nil {
 		return fmt.Errorf("delete item: %w", err)
 	}
@@ -316,9 +321,9 @@ func (r *ItemRepository) Delete(ctx context.Context, id domain.ItemID) error {
 // itemVisibilityWhere the way ListByBin does. Ordered by id for a stable
 // fan-out order across app.BinMover's per-item moved events. Returns an
 // empty slice, not an error, when binID holds no items.
-func (r *ItemRepository) ListIDsByBin(ctx context.Context, binID domain.BinID) ([]domain.ItemRef, error) {
-	const q = `SELECT id, name FROM item WHERE current_bin_id = $1 ORDER BY id`
-	rows, err := r.dbtx.Query(ctx, q, binID.String())
+func (r *ItemRepository) ListIDsByBin(ctx context.Context, householdID identity.HouseholdID, binID domain.BinID) ([]domain.ItemRef, error) {
+	q := `SELECT id, name FROM item WHERE current_bin_id = $1 AND ` + householdWhere(1) + ` ORDER BY id`
+	rows, err := r.dbtx.Query(ctx, q, binID.String(), householdID.String())
 	if err != nil {
 		return nil, fmt.Errorf("list item ids by bin: %w", err)
 	}

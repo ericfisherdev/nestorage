@@ -98,6 +98,7 @@ func TestBinRepository_CreateAndFindVisibleByID(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, bin.ID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID: %v", err)
@@ -212,6 +213,7 @@ func TestBinRepository_Create_OwnerRoundTrips(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 
 	gotShared, err := f.repo.FindVisibleByID(testCtx(t), viewer, shared.ID)
 	if err != nil {
@@ -247,8 +249,11 @@ func TestBinRepository_PrivateBin_ScopedToCreatorAndAdmin(t *testing.T) {
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 	adminViewer := identity.NewUserPrincipal(admin, identity.RoleOwner, "Admin")
+	adminViewer.HouseholdID = f.household
 
 	if _, err := f.repo.FindVisibleByID(testCtx(t), creatorViewer, private.ID); err != nil {
 		t.Errorf("creator FindVisibleByID = %v, want nil", err)
@@ -289,6 +294,7 @@ func TestBinRepository_ListVisible_Empty(t *testing.T) {
 	f := newBinFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 
 	got, err := f.repo.ListVisible(testCtx(t), viewer)
 	if err != nil {
@@ -316,7 +322,9 @@ func TestBinRepository_UpdateVisibility(t *testing.T) {
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 
 	if err := f.repo.UpdateVisibility(testCtx(t), otherViewer, bin.ID, domain.VisibilityPublic); !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("UpdateVisibility(non-creator, private bin) = %v, want ErrBinNotFound", err)
@@ -354,6 +362,7 @@ func TestBinRepository_UpdateVisibility_PublicBinMutableByAnyone(t *testing.T) {
 	}
 
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 	if err := f.repo.UpdateVisibility(testCtx(t), otherViewer, bin.ID, domain.VisibilityPrivate); err != nil {
 		t.Errorf("UpdateVisibility(non-creator, public bin) = %v, want nil under today's CanMutateBin", err)
 	}
@@ -363,6 +372,7 @@ func TestBinRepository_UpdateVisibility_NotFound(t *testing.T) {
 	f := newBinFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 
 	err := f.repo.UpdateVisibility(testCtx(t), viewer, domain.NewBinID(), domain.VisibilityPrivate)
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -385,7 +395,9 @@ func TestBinRepository_Delete(t *testing.T) {
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 
 	if err := f.repo.Delete(testCtx(t), otherViewer, bin.ID); !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("Delete(non-creator, private bin) = %v, want ErrBinNotFound", err)
@@ -404,6 +416,7 @@ func TestBinRepository_Delete_NotFound(t *testing.T) {
 	f := newBinFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 
 	err := f.repo.Delete(testCtx(t), viewer, domain.NewBinID())
 	if !errors.Is(err, domain.ErrBinNotFound) {
@@ -420,20 +433,22 @@ func TestBinRepository_Delete_NotFound(t *testing.T) {
 func TestLocationRepository_Delete_WithBinRejected(t *testing.T) {
 	f := newBinFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
+	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	loc := f.seedLocation(t, creator)
 	bin := newBin(f.household, "LOC1", loc, creator)
 	if err := f.repo.Create(testCtx(t), bin); err != nil {
 		t.Fatalf("Create(bin): %v", err)
 	}
 
-	err := f.locations.Delete(testCtx(t), loc)
+	err := f.locations.Delete(testCtx(t), viewer, loc)
 	if !errors.Is(err, domain.ErrLocationNotEmpty) {
 		t.Fatalf("Delete(location with a bin) = %v, want ErrLocationNotEmpty", err)
 	}
 
-	got, err := f.locations.FindByID(testCtx(t), loc)
+	got, err := f.locations.FindVisibleByID(testCtx(t), viewer, loc)
 	if err != nil {
-		t.Fatalf("FindByID(location) after rejected delete: %v", err)
+		t.Fatalf("FindVisibleByID(location) after rejected delete: %v", err)
 	}
 	if got == nil {
 		t.Error("Delete(location with a bin) must leave the location row in place")
@@ -495,7 +510,9 @@ func TestBinRepository_ListVisibleByLocation(t *testing.T) {
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 
 	creatorList, err := f.repo.ListVisibleByLocation(testCtx(t), creatorViewer, locA)
 	if err != nil {
@@ -530,7 +547,9 @@ func TestBinRepository_Update(t *testing.T) {
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 
 	rejected := &domain.Bin{ID: bin.ID, Name: "Should not apply", Visibility: domain.VisibilityPublic}
 	if err := f.repo.Update(testCtx(t), otherViewer, rejected); !errors.Is(err, domain.ErrBinNotFound) {
@@ -570,6 +589,7 @@ func TestBinRepository_Update_UnknownOwnerRejected(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	unknownOwner := identity.NewUserID()
 	update := &domain.Bin{ID: bin.ID, Name: bin.Name, OwnerID: &unknownOwner, Visibility: domain.VisibilityPublic}
 

@@ -134,7 +134,7 @@ func TestPhotoRepository_CreateAndFindByStorageRef(t *testing.T) {
 		t.Error("Create left CreatedAt zero")
 	}
 
-	got, err := f.repo.FindByStorageRef(testCtx(t), p.StorageRef)
+	got, err := f.repo.FindByStorageRef(testCtx(t), f.household, p.StorageRef)
 	if err != nil {
 		t.Fatalf("FindByStorageRef: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestPhotoRepository_CreateAndFindByStorageRef(t *testing.T) {
 
 func TestPhotoRepository_FindByStorageRef_NotFound(t *testing.T) {
 	f := newPhotoFixture(t)
-	_, err := f.repo.FindByStorageRef(testCtx(t), domain.StorageRef("items/nope/deadbeef.jpg"))
+	_, err := f.repo.FindByStorageRef(testCtx(t), f.household, domain.StorageRef("items/nope/deadbeef.jpg"))
 	if !errors.Is(err, domain.ErrPhotoNotFound) {
 		t.Errorf("FindByStorageRef(unknown) = %v, want ErrPhotoNotFound", err)
 	}
@@ -189,14 +189,14 @@ func TestPhotoRepository_AttachToItemAndListByItemAndGetForItem(t *testing.T) {
 		}
 	}
 
-	if err := f.repo.AttachToItem(testCtx(t), itemID, p1.ID, 0, true); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, p1.ID, 0, true); err != nil {
 		t.Fatalf("AttachToItem(p1): %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemID, p2.ID, 1, false); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, p2.ID, 1, false); err != nil {
 		t.Fatalf("AttachToItem(p2): %v", err)
 	}
 
-	list, err := f.repo.ListByItem(testCtx(t), itemID)
+	list, err := f.repo.ListByItem(testCtx(t), f.household, itemID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestPhotoRepository_AttachToItemAndListByItemAndGetForItem(t *testing.T) {
 		t.Errorf("ListByItem[1] = %+v, want p2 non-primary at position 1", list[1])
 	}
 
-	got, err := f.repo.GetForItem(testCtx(t), itemID, p1.ID)
+	got, err := f.repo.GetForItem(testCtx(t), f.household, itemID, p1.ID)
 	if err != nil {
 		t.Fatalf("GetForItem: %v", err)
 	}
@@ -228,13 +228,13 @@ func TestPhotoRepository_GetForItem_WrongItemNotFound(t *testing.T) {
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemA, p.ID, 0, true); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemA, p.ID, 0, true); err != nil {
 		t.Fatalf("AttachToItem: %v", err)
 	}
 
 	// A photo attached to itemA must not be reachable through itemB — the
 	// visibility-scoping guard Sprint 5 reconciliation R5 requires.
-	_, err := f.repo.GetForItem(testCtx(t), itemB, p.ID)
+	_, err := f.repo.GetForItem(testCtx(t), f.household, itemB, p.ID)
 	if !errors.Is(err, domain.ErrPhotoNotFound) {
 		t.Errorf("GetForItem(wrong item) = %v, want ErrPhotoNotFound", err)
 	}
@@ -248,7 +248,7 @@ func TestPhotoRepository_AttachToItem_UnknownItemRejected(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	err := f.repo.AttachToItem(testCtx(t), storagedomain.NewItemID(), p.ID, 0, true)
+	err := f.repo.AttachToItem(testCtx(t), f.household, storagedomain.NewItemID(), p.ID, 0, true)
 	if !errors.Is(err, storagedomain.ErrItemNotFound) {
 		t.Errorf("AttachToItem(unknown item) = %v, want storagedomain.ErrItemNotFound", err)
 	}
@@ -259,7 +259,7 @@ func TestPhotoRepository_AttachToItem_UnknownPhotoRejected(t *testing.T) {
 	uploader := f.seedUser(t)
 	itemID := f.seedItem(t, uploader)
 
-	err := f.repo.AttachToItem(testCtx(t), itemID, domain.NewPhotoID(), 0, true)
+	err := f.repo.AttachToItem(testCtx(t), f.household, itemID, domain.NewPhotoID(), 0, true)
 	if !errors.Is(err, domain.ErrPhotoNotFound) {
 		t.Errorf("AttachToItem(unknown photo) = %v, want domain.ErrPhotoNotFound", err)
 	}
@@ -277,18 +277,18 @@ func TestPhotoRepository_Delete_RemovesJunctionThenPhoto(t *testing.T) {
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemID, p.ID, 0, true); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, p.ID, 0, true); err != nil {
 		t.Fatalf("AttachToItem: %v", err)
 	}
 
-	if err := f.repo.Delete(testCtx(t), itemID, p.ID); err != nil {
+	if err := f.repo.Delete(testCtx(t), f.household, itemID, p.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	if _, err := f.repo.GetForItem(testCtx(t), itemID, p.ID); !errors.Is(err, domain.ErrPhotoNotFound) {
+	if _, err := f.repo.GetForItem(testCtx(t), f.household, itemID, p.ID); !errors.Is(err, domain.ErrPhotoNotFound) {
 		t.Errorf("GetForItem after Delete = %v, want ErrPhotoNotFound", err)
 	}
-	list, err := f.repo.ListByItem(testCtx(t), itemID)
+	list, err := f.repo.ListByItem(testCtx(t), f.household, itemID)
 	if err != nil {
 		t.Fatalf("ListByItem after Delete: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestPhotoRepository_Delete_RemovesJunctionThenPhoto(t *testing.T) {
 
 func TestPhotoRepository_Delete_NotFound(t *testing.T) {
 	f := newPhotoFixture(t)
-	err := f.repo.Delete(testCtx(t), storagedomain.NewItemID(), domain.NewPhotoID())
+	err := f.repo.Delete(testCtx(t), f.household, storagedomain.NewItemID(), domain.NewPhotoID())
 	if !errors.Is(err, domain.ErrPhotoNotFound) {
 		t.Errorf("Delete(unknown) = %v, want ErrPhotoNotFound", err)
 	}
@@ -321,24 +321,24 @@ func TestPhotoRepository_Delete_SecondJunctionRowBlocksPhotoDelete(t *testing.T)
 	if err := f.repo.Create(testCtx(t), p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemA, p.ID, 0, true); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemA, p.ID, 0, true); err != nil {
 		t.Fatalf("AttachToItem(itemA): %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemB, p.ID, 0, true); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemB, p.ID, 0, true); err != nil {
 		t.Fatalf("AttachToItem(itemB): %v", err)
 	}
 
-	err := f.repo.Delete(testCtx(t), itemA, p.ID)
+	err := f.repo.Delete(testCtx(t), f.household, itemA, p.ID)
 	if !errors.Is(err, domain.ErrInvalidPhoto) {
 		t.Fatalf("Delete(photo still linked to itemB) = %v, want ErrInvalidPhoto", err)
 	}
 
 	// itemA's own link is gone (the first statement always runs), but the
 	// photo row itself must have survived the blocked delete.
-	if _, err := f.repo.GetForItem(testCtx(t), itemA, p.ID); !errors.Is(err, domain.ErrPhotoNotFound) {
+	if _, err := f.repo.GetForItem(testCtx(t), f.household, itemA, p.ID); !errors.Is(err, domain.ErrPhotoNotFound) {
 		t.Errorf("GetForItem(itemA) after blocked delete = %v, want ErrPhotoNotFound (link removed)", err)
 	}
-	if _, err := f.repo.GetForItem(testCtx(t), itemB, p.ID); err != nil {
+	if _, err := f.repo.GetForItem(testCtx(t), f.household, itemB, p.ID); err != nil {
 		t.Errorf("GetForItem(itemB) after blocked delete = %v, want nil (photo row survives)", err)
 	}
 }
@@ -373,18 +373,18 @@ func TestPhotoRepository_SetPrimary_MovesPrimaryFlag(t *testing.T) {
 			t.Fatalf("Create: %v", err)
 		}
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemID, p1.ID, 0, true); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, p1.ID, 0, true); err != nil {
 		t.Fatalf("AttachToItem(p1): %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemID, p2.ID, 1, false); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, p2.ID, 1, false); err != nil {
 		t.Fatalf("AttachToItem(p2): %v", err)
 	}
 
-	if err := f.repo.SetPrimary(testCtx(t), itemID, p2.ID); err != nil {
+	if err := f.repo.SetPrimary(testCtx(t), f.household, itemID, p2.ID); err != nil {
 		t.Fatalf("SetPrimary: %v", err)
 	}
 
-	list, err := f.repo.ListByItem(testCtx(t), itemID)
+	list, err := f.repo.ListByItem(testCtx(t), f.household, itemID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestPhotoRepository_SetPrimary_UnattachedPhotoNotFound(t *testing.T) {
 	uploader := f.seedUser(t)
 	itemID := f.seedItem(t, uploader)
 
-	err := f.repo.SetPrimary(testCtx(t), itemID, domain.NewPhotoID())
+	err := f.repo.SetPrimary(testCtx(t), f.household, itemID, domain.NewPhotoID())
 	if !errors.Is(err, domain.ErrPhotoNotFound) {
 		t.Errorf("SetPrimary(unattached photo) = %v, want ErrPhotoNotFound", err)
 	}
@@ -428,17 +428,17 @@ func TestPhotoRepository_Reorder_RewritesPositions(t *testing.T) {
 		if err := f.repo.Create(testCtx(t), p); err != nil {
 			t.Fatalf("Create(%d): %v", i, err)
 		}
-		if err := f.repo.AttachToItem(testCtx(t), itemID, p.ID, i, i == 0); err != nil {
+		if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, p.ID, i, i == 0); err != nil {
 			t.Fatalf("AttachToItem(%d): %v", i, err)
 		}
 	}
 
 	// Full reversal: every row's position changes.
-	if err := f.repo.Reorder(testCtx(t), itemID, []domain.PhotoID{p3.ID, p2.ID, p1.ID}); err != nil {
+	if err := f.repo.Reorder(testCtx(t), f.household, itemID, []domain.PhotoID{p3.ID, p2.ID, p1.ID}); err != nil {
 		t.Fatalf("Reorder: %v", err)
 	}
 
-	list, err := f.repo.ListByItem(testCtx(t), itemID)
+	list, err := f.repo.ListByItem(testCtx(t), f.household, itemID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestPhotoRepository_Create_ThumbnailRefRoundTrips(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := f.repo.FindByStorageRef(testCtx(t), p.StorageRef)
+	got, err := f.repo.FindByStorageRef(testCtx(t), f.household, p.StorageRef)
 	if err != nil {
 		t.Fatalf("FindByStorageRef: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestPhotoRepository_Create_NoThumbnailRefLeavesItNil(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := f.repo.FindByStorageRef(testCtx(t), p.StorageRef)
+	got, err := f.repo.FindByStorageRef(testCtx(t), f.household, p.StorageRef)
 	if err != nil {
 		t.Fatalf("FindByStorageRef: %v", err)
 	}
@@ -517,7 +517,7 @@ func TestPhotoRepository_SetThumbnailRef_RoundTrips(t *testing.T) {
 		t.Fatalf("SetThumbnailRef: %v", err)
 	}
 
-	got, err := f.repo.FindByStorageRef(testCtx(t), p.StorageRef)
+	got, err := f.repo.FindByStorageRef(testCtx(t), f.household, p.StorageRef)
 	if err != nil {
 		t.Fatalf("FindByStorageRef: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestPhotoRepository_ListMissingThumbnail_OnlyNullRows(t *testing.T) {
 	if err := f.repo.Create(testCtx(t), missing); err != nil {
 		t.Fatalf("Create(missing): %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemID, missing.ID, 0, true); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, missing.ID, 0, true); err != nil {
 		t.Fatalf("AttachToItem(missing): %v", err)
 	}
 
@@ -557,7 +557,7 @@ func TestPhotoRepository_ListMissingThumbnail_OnlyNullRows(t *testing.T) {
 	if err := f.repo.Create(testCtx(t), populated); err != nil {
 		t.Fatalf("Create(populated): %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemID, populated.ID, 1, false); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, populated.ID, 1, false); err != nil {
 		t.Fatalf("AttachToItem(populated): %v", err)
 	}
 
@@ -598,7 +598,7 @@ func TestPhotoRepository_ListMissingThumbnail_PagesByID(t *testing.T) {
 		if err := f.repo.Create(testCtx(t), p); err != nil {
 			t.Fatalf("Create(%d): %v", i, err)
 		}
-		if err := f.repo.AttachToItem(testCtx(t), itemID, p.ID, i, i == 0); err != nil {
+		if err := f.repo.AttachToItem(testCtx(t), f.household, itemID, p.ID, i, i == 0); err != nil {
 			t.Fatalf("AttachToItem(%d): %v", i, err)
 		}
 		created = append(created, p)
@@ -652,10 +652,10 @@ func TestPhotoRepository_ListPrimaryForItems_ReturnsPrimaryOnly(t *testing.T) {
 			t.Fatalf("Create(%s): %v", p.StorageRef, err)
 		}
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemWithPhotos, primary.ID, 0, true); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemWithPhotos, primary.ID, 0, true); err != nil {
 		t.Fatalf("AttachToItem(primary): %v", err)
 	}
-	if err := f.repo.AttachToItem(testCtx(t), itemWithPhotos, secondary.ID, 1, false); err != nil {
+	if err := f.repo.AttachToItem(testCtx(t), f.household, itemWithPhotos, secondary.ID, 1, false); err != nil {
 		t.Fatalf("AttachToItem(secondary): %v", err)
 	}
 

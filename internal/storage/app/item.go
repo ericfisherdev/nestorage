@@ -46,9 +46,9 @@ type itemRepository interface {
 // ItemTxStores.
 type ItemLifecycleStore interface {
 	Create(ctx context.Context, it *domain.Item) error
-	GetForUpdate(ctx context.Context, id domain.ItemID) (*domain.Item, error)
-	Update(ctx context.Context, it *domain.Item) error
-	Delete(ctx context.Context, id domain.ItemID) error
+	GetForUpdate(ctx context.Context, householdID identity.HouseholdID, id domain.ItemID) (*domain.Item, error)
+	Update(ctx context.Context, householdID identity.HouseholdID, it *domain.Item) error
+	Delete(ctx context.Context, householdID identity.HouseholdID, id domain.ItemID) error
 }
 
 // ItemTxStores bundles the tx-bound stores an itemTransactor's closure
@@ -164,14 +164,14 @@ func (s *ItemService) Edit(ctx context.Context, id domain.ItemID, name string, d
 	}
 
 	err := s.uow.WithinItemTx(ctx, func(stores ItemTxStores) error {
-		current, err := stores.Items.GetForUpdate(ctx, id)
+		current, err := stores.Items.GetForUpdate(ctx, actor.HouseholdID, id)
 		if err != nil {
 			return err
 		}
 		changed := diffEditableFields(current, name, description, quantity)
 
 		updated := &domain.Item{ID: id, Name: name, Description: description, Quantity: quantity}
-		if err := stores.Items.Update(ctx, updated); err != nil {
+		if err := stores.Items.Update(ctx, actor.HouseholdID, updated); err != nil {
 			return err
 		}
 		if len(changed) == 0 {
@@ -262,11 +262,11 @@ func (s *ItemService) ListVisible(ctx context.Context, viewer identity.Principal
 // request first (typically via a preceding Get).
 func (s *ItemService) Delete(ctx context.Context, id domain.ItemID, actor identity.Principal) error {
 	err := s.uow.WithinItemTx(ctx, func(stores ItemTxStores) error {
-		it, err := stores.Items.GetForUpdate(ctx, id)
+		it, err := stores.Items.GetForUpdate(ctx, actor.HouseholdID, id)
 		if err != nil {
 			return err
 		}
-		if err := stores.Items.Delete(ctx, id); err != nil {
+		if err := stores.Items.Delete(ctx, actor.HouseholdID, id); err != nil {
 			return err
 		}
 		event := domain.NewItemEvent(domain.NewItemEventID(), id, it.Name, domain.EventDeleted, actor)

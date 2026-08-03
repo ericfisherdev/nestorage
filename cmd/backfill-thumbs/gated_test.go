@@ -97,7 +97,7 @@ func TestRun_BackfillsAgainstRealDatabase(t *testing.T) {
 	if err := photos.Create(ctx, photo); err != nil {
 		t.Fatalf("seed photo: %v", err)
 	}
-	if err := photos.AttachToItem(ctx, item.ID, photo.ID, 0, true); err != nil {
+	if err := photos.AttachToItem(ctx, uploader.HouseholdID, item.ID, photo.ID, 0, true); err != nil {
 		t.Fatalf("attach photo to item: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestRun_BackfillsAgainstRealDatabase(t *testing.T) {
 		t.Fatalf("run() = %v, want nil", err)
 	}
 
-	got, err := photos.FindByStorageRef(ctx, ref)
+	got, err := photos.FindByStorageRef(ctx, uploader.HouseholdID, ref)
 	if err != nil {
 		t.Fatalf("FindByStorageRef after run(): %v", err)
 	}

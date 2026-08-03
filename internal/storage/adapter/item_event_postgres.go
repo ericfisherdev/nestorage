@@ -90,8 +90,8 @@ func (r *ItemEventRepository) Append(ctx context.Context, e *domain.ItemEvent) e
 // the keyset page NSTR-42's item timeline reads, and NSTR-55's own item
 // history API endpoint. Returns an empty slice, not an error, when itemID
 // has no events.
-func (r *ItemEventRepository) ListByItem(ctx context.Context, itemID domain.ItemID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
-	q, args := buildKeysetHistoryQuery("item_id", itemID.String(), page)
+func (r *ItemEventRepository) ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
+	q, args := buildKeysetHistoryQuery(householdID, "item_id", itemID.String(), page)
 	events, err := queryItemEvents(ctx, r.dbtx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list item events by item: %w", err)
@@ -108,8 +108,8 @@ func (r *ItemEventRepository) ListByItem(ctx context.Context, itemID domain.Item
 // item left, this surfaces removals as well as additions, not only
 // EventAdded. Returns an empty slice, not an error, when binID has no
 // events.
-func (r *ItemEventRepository) ListByBin(ctx context.Context, binID domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
-	q, args := buildKeysetHistoryQuery("bin_id", binID.String(), page)
+func (r *ItemEventRepository) ListByBin(ctx context.Context, householdID identity.HouseholdID, binID domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
+	q, args := buildKeysetHistoryQuery(householdID, "bin_id", binID.String(), page)
 	events, err := queryItemEvents(ctx, r.dbtx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list item events by bin: %w", err)
@@ -125,11 +125,11 @@ func (r *ItemEventRepository) ListByBin(ctx context.Context, binID domain.BinID,
 // literals those methods themselves pass, never request input, so building
 // it into the query string rather than a placeholder carries no injection
 // risk.
-func buildKeysetHistoryQuery(column, id string, page domain.HistoryPage) (string, []any) {
-	q := itemEventColumns + ` WHERE ` + column + ` = $1`
-	args := []any{id}
+func buildKeysetHistoryQuery(householdID identity.HouseholdID, column, id string, page domain.HistoryPage) (string, []any) {
+	q := itemEventColumns + ` WHERE ` + column + ` = $1 AND household_id = $2`
+	args := []any{id, householdID.String()}
 	if page.Before != nil {
-		q += ` AND (occurred_at, id) < ($2, $3)`
+		q += ` AND (occurred_at, id) < ($3, $4)`
 		args = append(args, page.Before.OccurredAt, page.Before.ID.String())
 	}
 	q += fmt.Sprintf(` ORDER BY occurred_at DESC, id DESC LIMIT $%d`, len(args)+1)

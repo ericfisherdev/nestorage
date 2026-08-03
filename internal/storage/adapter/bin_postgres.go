@@ -91,12 +91,14 @@ func (r *BinRepository) Create(ctx context.Context, b *domain.Bin) error {
 	return nil
 }
 
-// FindVisibleByID returns the bin, scoped to what viewer may see (see
-// visibilityWhere). Returns domain.ErrBinNotFound both when id is unknown
-// and when the bin exists but viewer may not see it.
+// FindVisibleByID returns the bin, scoped to viewer's household (see
+// householdWhere) and to what viewer may see within it (see visibilityWhere).
+// Returns domain.ErrBinNotFound when id is unknown, belongs to a different
+// household, or exists but viewer may not see it.
 func (r *BinRepository) FindVisibleByID(ctx context.Context, viewer identity.Principal, id domain.BinID) (*domain.Bin, error) {
-	q := binColumns + ` WHERE id = $1 AND ` + visibilityWhere(1)
-	args := append([]any{id.String()}, viewerArgs(viewer)...)
+	q := binColumns + ` WHERE id = $1 AND ` + householdWhere(1) + ` AND ` + visibilityWhere(2)
+	args := append([]any{id.String()}, householdArgs(viewer)...)
+	args = append(args, viewerArgs(viewer)...)
 
 	b, err := scanBin(r.dbtx.QueryRow(ctx, q, args...))
 	if err != nil {
@@ -108,23 +110,19 @@ func (r *BinRepository) FindVisibleByID(ctx context.Context, viewer identity.Pri
 	return b, nil
 }
 
-// FindVisibleByCode returns the bin whose code matches, scoped to what
-// viewer may see. code is normalized before the lookup (see
-// domain.NormalizeBinCode) since a scanned label's case cannot be trusted.
-// Returns domain.ErrBinNotFound both when code is unknown and when the bin
-// exists but viewer may not see it.
+// FindVisibleByCode returns the bin whose code matches, scoped to viewer's
+// household and to what viewer may see within it. code is normalized before
+// the lookup (see domain.NormalizeBinCode) since a scanned label's case
+// cannot be trusted. Returns domain.ErrBinNotFound when code is unknown,
+// belongs to a different household, or exists but viewer may not see it.
 //
-// Scoped to viewer.HouseholdID ahead of NSTR-131's general read-filtering
-// sweep: 00018_household_scoping.sql replaced bin_code_uniq's global
-// UNIQUE (code) with UNIQUE (household_id, code), so two households can now
-// legitimately share a code — without this predicate, QueryRow's single-row
-// result would be an arbitrary pick between them, and the public /b/CODE
-// deep link (and its POST-to-edit counterpart) would resolve and mutate
-// whichever bin Postgres happened to return, not necessarily the viewer's
-// own household's bin. Every other read on this repository stays unscoped,
-// per this ticket's own split with NSTR-131 — this one predicate is the
-// exception, because the uniqueness guarantee that used to make the
-// unscoped query correct is exactly what this migration removed.
+// Scoped to viewer.HouseholdID: 00018_household_scoping.sql replaced
+// bin_code_uniq's global UNIQUE (code) with UNIQUE (household_id, code), so
+// two households can now legitimately share a code — without this
+// predicate, QueryRow's single-row result would be an arbitrary pick between
+// them, and the public /b/CODE deep link (and its POST-to-edit counterpart)
+// would resolve and mutate whichever bin Postgres happened to return, not
+// necessarily the viewer's own household's bin.
 func (r *BinRepository) FindVisibleByCode(ctx context.Context, viewer identity.Principal, code string) (*domain.Bin, error) {
 	q := binColumns + ` WHERE household_id = $1 AND code = $2 AND ` + visibilityWhere(2)
 	args := append([]any{viewer.HouseholdID.String(), domain.NormalizeBinCode(code)}, viewerArgs(viewer)...)
@@ -139,12 +137,14 @@ func (r *BinRepository) FindVisibleByCode(ctx context.Context, viewer identity.P
 	return b, nil
 }
 
-// ListVisible returns every bin viewer may see, ordered by code. Returns an
-// empty slice, not an error, when none are visible.
+// ListVisible returns every bin in viewer's household viewer may see,
+// ordered by code. Returns an empty slice, not an error, when none are
+// visible.
 func (r *BinRepository) ListVisible(ctx context.Context, viewer identity.Principal) ([]domain.Bin, error) {
-	q := binColumns + ` WHERE ` + visibilityWhere(0) + ` ORDER BY code`
+	q := binColumns + ` WHERE ` + householdWhere(0) + ` AND ` + visibilityWhere(1) + ` ORDER BY code`
+	args := append(householdArgs(viewer), viewerArgs(viewer)...)
 
-	rows, err := r.dbtx.Query(ctx, q, viewerArgs(viewer)...)
+	rows, err := r.dbtx.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list visible bins: %w", err)
 	}
@@ -169,8 +169,9 @@ func (r *BinRepository) ListVisible(ctx context.Context, viewer identity.Princip
 // additionally filtered to one location at the query level rather than in
 // memory, so a non-owner's private bin never crosses the wire at all.
 func (r *BinRepository) ListVisibleByLocation(ctx context.Context, viewer identity.Principal, locationID domain.LocationID) ([]domain.Bin, error) {
-	q := binColumns + ` WHERE location_id = $1 AND ` + visibilityWhere(1) + ` ORDER BY code`
-	args := append([]any{locationID.String()}, viewerArgs(viewer)...)
+	q := binColumns + ` WHERE location_id = $1 AND ` + householdWhere(1) + ` AND ` + visibilityWhere(2) + ` ORDER BY code`
+	args := append([]any{locationID.String()}, householdArgs(viewer)...)
+	args = append(args, viewerArgs(viewer)...)
 
 	rows, err := r.dbtx.Query(ctx, q, args...)
 	if err != nil {
@@ -204,11 +205,12 @@ func (r *BinRepository) Update(ctx context.Context, viewer identity.Principal, b
 	}
 	q := `
 		UPDATE bin SET name = $2, description = $3, owner_id = $4, visibility = $5, updated_at = now()
-		WHERE id = $1 AND ` + visibilityWhere(5)
+		WHERE id = $1 AND ` + householdWhere(5) + ` AND ` + visibilityWhere(6)
 	args := append(
 		[]any{b.ID.String(), b.Name, b.Description, userIDParam(b.OwnerID), b.Visibility.String()},
-		viewerArgs(viewer)...,
+		householdArgs(viewer)...,
 	)
+	args = append(args, viewerArgs(viewer)...)
 
 	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {
@@ -229,8 +231,9 @@ func (r *BinRepository) Update(ctx context.Context, viewer identity.Principal, b
 // CanSeeBin today but kept separate for a later ticket to tighten). Returns
 // domain.ErrBinNotFound when id is unknown or not mutable by viewer.
 func (r *BinRepository) UpdateVisibility(ctx context.Context, viewer identity.Principal, id domain.BinID, visibility domain.Visibility) error {
-	q := `UPDATE bin SET visibility = $2, updated_at = now() WHERE id = $1 AND ` + visibilityWhere(2)
-	args := append([]any{id.String(), visibility.String()}, viewerArgs(viewer)...)
+	q := `UPDATE bin SET visibility = $2, updated_at = now() WHERE id = $1 AND ` + householdWhere(2) + ` AND ` + visibilityWhere(3)
+	args := append([]any{id.String(), visibility.String()}, householdArgs(viewer)...)
+	args = append(args, viewerArgs(viewer)...)
 
 	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {
@@ -249,8 +252,9 @@ func (r *BinRepository) UpdateVisibility(ctx context.Context, viewer identity.Pr
 // item.current_bin_id's ON DELETE RESTRICT foreign key, the bin-side analog
 // of LocationRepository.Delete's ErrLocationNotEmpty.
 func (r *BinRepository) Delete(ctx context.Context, viewer identity.Principal, id domain.BinID) error {
-	q := `DELETE FROM bin WHERE id = $1 AND ` + visibilityWhere(1)
-	args := append([]any{id.String()}, viewerArgs(viewer)...)
+	q := `DELETE FROM bin WHERE id = $1 AND ` + householdWhere(1) + ` AND ` + visibilityWhere(2)
+	args := append([]any{id.String()}, householdArgs(viewer)...)
+	args = append(args, viewerArgs(viewer)...)
 
 	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {
@@ -266,13 +270,16 @@ func (r *BinRepository) Delete(ctx context.Context, viewer identity.Principal, i
 }
 
 // GetForUpdate returns the bin locked FOR UPDATE within the caller's
-// transaction, not scoped by visibility — see domain.BinRepository's own doc:
-// the caller (NSTR-30's app.BinMover) is expected to have already checked
-// visibility via FindVisibleByID. Mirrors ItemRepository.GetForUpdate
-// exactly. Returns domain.ErrBinNotFound when id is unknown.
-func (r *BinRepository) GetForUpdate(ctx context.Context, id domain.BinID) (*domain.Bin, error) {
-	q := binColumns + ` WHERE id = $1 FOR UPDATE`
-	b, err := scanBin(r.dbtx.QueryRow(ctx, q, id.String()))
+// transaction, scoped to householdID but not further by visibility — see
+// domain.BinRepository's own doc: the caller (NSTR-30's app.BinMover) is
+// expected to have already checked visibility via FindVisibleByID; the
+// household predicate here is NSTR-131's own belt-and-suspenders scoping of
+// every statement inside the transaction, not only the first read. Mirrors
+// ItemRepository.GetForUpdate exactly. Returns domain.ErrBinNotFound when id
+// is unknown or belongs to a different household.
+func (r *BinRepository) GetForUpdate(ctx context.Context, householdID identity.HouseholdID, id domain.BinID) (*domain.Bin, error) {
+	q := binColumns + ` WHERE id = $1 AND ` + householdWhere(1) + ` FOR UPDATE`
+	b, err := scanBin(r.dbtx.QueryRow(ctx, q, id.String(), householdID.String()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrBinNotFound
@@ -294,9 +301,9 @@ func (r *BinRepository) GetForUpdate(ctx context.Context, id domain.BinID) (*dom
 // the target, via LocationRepository.FindVisibleByID, is the primary guard,
 // since it also rejects a present-but-invisible location the FK alone
 // cannot catch.
-func (r *BinRepository) Move(ctx context.Context, id domain.BinID, target domain.LocationID, now time.Time) (int64, error) {
-	const q = `UPDATE bin SET location_id = $2, updated_at = $3 WHERE id = $1`
-	tag, err := r.dbtx.Exec(ctx, q, id.String(), target.String(), now)
+func (r *BinRepository) Move(ctx context.Context, householdID identity.HouseholdID, id domain.BinID, target domain.LocationID, now time.Time) (int64, error) {
+	q := `UPDATE bin SET location_id = $2, updated_at = $3 WHERE id = $1 AND ` + householdWhere(3)
+	tag, err := r.dbtx.Exec(ctx, q, id.String(), target.String(), now, householdID.String())
 	if err != nil {
 		if isPgConstraint(err, foreignKeyViolation, binLocationFKConstraint) {
 			return 0, domain.ErrLocationNotFound

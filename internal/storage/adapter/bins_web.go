@@ -70,7 +70,7 @@ type itemLister interface {
 // identical reason itemEventLister carries none: Activity already enforces
 // visibility via h.bins.GetByCode before ever calling this.
 type binActivityLister interface {
-	ListByBin(ctx context.Context, binID domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error)
+	ListByBin(ctx context.Context, householdID identity.HouseholdID, binID domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error)
 }
 
 // Compile-time assurance *ItemEventRepository satisfies binActivityLister.
@@ -442,7 +442,7 @@ func (h *BinsWebHandlers) Activity(w http.ResponseWriter, r *http.Request) {
 		h.handleGetError(w, r, err, "bins: activity")
 		return
 	}
-	events, err := h.events.ListByBin(r.Context(), view.Bin.ID, domain.HistoryPage{Limit: binActivityLimit})
+	events, err := h.events.ListByBin(r.Context(), viewer.HouseholdID, view.Bin.ID, domain.HistoryPage{Limit: binActivityLimit})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "bins: activity: list events", "error", err)
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)

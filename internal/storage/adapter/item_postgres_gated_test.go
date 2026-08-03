@@ -140,6 +140,7 @@ func TestItemRepository_CreateAndGet(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -172,6 +173,7 @@ func TestItemRepository_Create_HeldByRoundTrips(t *testing.T) {
 	// member can see it, since it has no bin to gate on.
 	other := f.seedUser(t, identity.RoleAdult)
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), otherViewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get(unrelated viewer, held item): %v", err)
@@ -263,6 +265,7 @@ func TestItemRepository_Get_NotFound(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 
 	_, err := f.repo.Get(testCtx(t), viewer, domain.NewItemID())
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -283,11 +286,12 @@ func TestItemRepository_Update(t *testing.T) {
 
 	desc := "Updated description"
 	update := &domain.Item{ID: it.ID, Name: "New name", Description: &desc, Quantity: 5}
-	if err := f.repo.Update(testCtx(t), update); err != nil {
+	if err := f.repo.Update(testCtx(t), f.household, update); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after Update: %v", err)
@@ -314,7 +318,7 @@ func TestItemRepository_Update_QuantityRejected(t *testing.T) {
 	}
 
 	update := &domain.Item{ID: it.ID, Name: "Stove", Quantity: -1}
-	err := f.repo.Update(testCtx(t), update)
+	err := f.repo.Update(testCtx(t), f.household, update)
 	if !errors.Is(err, domain.ErrInvalidQuantity) {
 		t.Errorf("Update(quantity=-1) = %v, want ErrInvalidQuantity", err)
 	}
@@ -323,7 +327,7 @@ func TestItemRepository_Update_QuantityRejected(t *testing.T) {
 func TestItemRepository_Update_NotFound(t *testing.T) {
 	f := newItemFixture(t)
 	update := &domain.Item{ID: domain.NewItemID(), Name: "Ghost", Quantity: 1}
-	err := f.repo.Update(testCtx(t), update)
+	err := f.repo.Update(testCtx(t), f.household, update)
 	if !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("Update(unknown) = %v, want ErrItemNotFound", err)
 	}
@@ -350,7 +354,7 @@ func TestItemRepository_Move_BinToHolderToBin(t *testing.T) {
 	// Postgres timestamptz has microsecond resolution; a short sleep keeps
 	// each move's now() strictly after the previous one on fast hardware.
 	time.Sleep(2 * time.Millisecond)
-	affected, err := f.repo.Move(testCtx(t), it.ID, domain.PlacementHeldBy(holder))
+	affected, err := f.repo.Move(testCtx(t), f.household, it.ID, domain.PlacementHeldBy(holder))
 	if err != nil {
 		t.Fatalf("Move(to holder): %v", err)
 	}
@@ -359,6 +363,7 @@ func TestItemRepository_Move_BinToHolderToBin(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after Move(to holder): %v", err)
@@ -375,7 +380,7 @@ func TestItemRepository_Move_BinToHolderToBin(t *testing.T) {
 	afterHeld := got.PlacementChangedAt
 
 	time.Sleep(2 * time.Millisecond)
-	affected, err = f.repo.Move(testCtx(t), it.ID, domain.PlacementInBin(binB))
+	affected, err = f.repo.Move(testCtx(t), f.household, it.ID, domain.PlacementInBin(binB))
 	if err != nil {
 		t.Fatalf("Move(to binB): %v", err)
 	}
@@ -402,7 +407,7 @@ func TestItemRepository_Move_NotFound(t *testing.T) {
 	f := newItemFixture(t)
 	holder := f.seedUser(t, identity.RoleAdult)
 
-	affected, err := f.repo.Move(testCtx(t), domain.NewItemID(), domain.PlacementHeldBy(holder))
+	affected, err := f.repo.Move(testCtx(t), f.household, domain.NewItemID(), domain.PlacementHeldBy(holder))
 	if !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("Move(unknown) = %v, want ErrItemNotFound", err)
 	}
@@ -421,7 +426,7 @@ func TestItemRepository_Move_InvalidPlacementRejected(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	affected, err := f.repo.Move(testCtx(t), it.ID, domain.Placement{})
+	affected, err := f.repo.Move(testCtx(t), f.household, it.ID, domain.Placement{})
 	if !errors.Is(err, domain.ErrInvalidPlacement) {
 		t.Errorf("Move(empty placement) = %v, want ErrInvalidPlacement", err)
 	}
@@ -440,7 +445,7 @@ func TestItemRepository_Move_UnknownBinRejected(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	_, err := f.repo.Move(testCtx(t), it.ID, domain.PlacementInBin(domain.NewBinID()))
+	_, err := f.repo.Move(testCtx(t), f.household, it.ID, domain.PlacementInBin(domain.NewBinID()))
 	if !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("Move(unknown bin) = %v, want ErrBinNotFound", err)
 	}
@@ -456,7 +461,7 @@ func TestItemRepository_Move_UnknownHolderRejected(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	_, err := f.repo.Move(testCtx(t), it.ID, domain.PlacementHeldBy(identity.NewUserID()))
+	_, err := f.repo.Move(testCtx(t), f.household, it.ID, domain.PlacementHeldBy(identity.NewUserID()))
 	if !errors.Is(err, identity.ErrUserNotFound) {
 		t.Errorf("Move(unknown holder) = %v, want identity.ErrUserNotFound", err)
 	}
@@ -472,11 +477,12 @@ func TestItemRepository_Delete(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := f.repo.Delete(testCtx(t), it.ID); err != nil {
+	if err := f.repo.Delete(testCtx(t), f.household, it.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	if _, err := f.repo.Get(testCtx(t), viewer, it.ID); !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("Get after Delete = %v, want ErrItemNotFound", err)
 	}
@@ -484,7 +490,7 @@ func TestItemRepository_Delete(t *testing.T) {
 
 func TestItemRepository_Delete_NotFound(t *testing.T) {
 	f := newItemFixture(t)
-	err := f.repo.Delete(testCtx(t), domain.NewItemID())
+	err := f.repo.Delete(testCtx(t), f.household, domain.NewItemID())
 	if !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("Delete(unknown) = %v, want ErrItemNotFound", err)
 	}
@@ -505,6 +511,7 @@ func TestBinRepository_Delete_WithItemRejected(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	err := f.bins.Delete(testCtx(t), viewer, bin)
 	if !errors.Is(err, domain.ErrBinNotEmpty) {
 		t.Fatalf("Delete(bin with an item) = %v, want ErrBinNotEmpty", err)
@@ -522,7 +529,19 @@ func TestBinRepository_Delete_WithItemRejected(t *testing.T) {
 // TestItemRepository_VisibilityMatrix mirrors bin_postgres_gated_test.go's
 // TestBinRepository_PrivateBin_ScopedToCreatorAndAdmin, extended with the
 // held-item exception: an item with no current bin (HeldBy set) is always
-// visible, regardless of principal, because it has nothing to gate on.
+// visible to a same-household principal, because it has nothing to gate on.
+//
+// The "anonymous" principal (the zero identity.Principal) carries the zero
+// identity.HouseholdID too, which — since NSTR-131 — never matches a real
+// household's row. This is a deliberate behavior change from before this
+// ticket: "public" now means "visible to every member of the SAME
+// household," not "visible to any caller in the system regardless of
+// household," so anonymous no longer sees the public or held item either,
+// even though both were unconditionally visible pre-NSTR-131. The
+// "integration" principal, by contrast, is a real household's own
+// account-scoped API key (see CLAUDE.md's Auth (Nestorage) decision) and so
+// is given f.household below, exactly as a real request-scoped one would
+// carry in production.
 func TestItemRepository_VisibilityMatrix(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
@@ -542,21 +561,41 @@ func TestItemRepository_VisibilityMatrix(t *testing.T) {
 		}
 	}
 
+	adminPrincipal := identity.NewUserPrincipal(admin, identity.RoleOwner, "Admin")
+	adminPrincipal.HouseholdID = f.household
+	creatorPrincipal := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorPrincipal.HouseholdID = f.household
+	otherPrincipal := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherPrincipal.HouseholdID = f.household
+	integrationPrincipal := identity.NewIntegrationPrincipal("Nestova")
+	integrationPrincipal.HouseholdID = f.household
+
 	principals := []struct {
 		name string
 		p    identity.Principal
 	}{
-		{"admin", identity.NewUserPrincipal(admin, identity.RoleOwner, "Admin")},
-		{"creator", identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")},
-		{"non-creator member", identity.NewUserPrincipal(other, identity.RoleAdult, "Other")},
-		{"integration", identity.NewIntegrationPrincipal("Nestova")},
+		{"admin", adminPrincipal},
+		{"creator", creatorPrincipal},
+		{"non-creator member", otherPrincipal},
+		{"integration", integrationPrincipal},
 		{"anonymous", identity.Principal{}},
 	}
 
+	// visible reports whether principalName should see an item, given
+	// baseVisible (the pre-NSTR-131 rule for same-household principals):
+	// "anonymous" never sees anything post-NSTR-131 (see the type doc above)
+	// regardless of what baseVisible says.
+	visible := func(principalName string, baseVisible bool) bool {
+		if principalName == "anonymous" {
+			return false
+		}
+		return baseVisible
+	}
+
 	cases := []struct {
-		itemName string
-		item     *domain.Item
-		visible  func(principalName string) bool
+		itemName    string
+		item        *domain.Item
+		baseVisible func(principalName string) bool
 	}{
 		{"public bin item", publicItem, func(string) bool { return true }},
 		{"private bin item", privateItem, func(n string) bool { return n == "admin" || n == "creator" }},
@@ -567,7 +606,7 @@ func TestItemRepository_VisibilityMatrix(t *testing.T) {
 		for _, pr := range principals {
 			t.Run(c.itemName+"/"+pr.name, func(t *testing.T) {
 				_, err := f.repo.Get(testCtx(t), pr.p, c.item.ID)
-				assertItemVisibility(t, err, c.visible(pr.name), pr.name, c.itemName)
+				assertItemVisibility(t, err, visible(pr.name, c.baseVisible(pr.name)), pr.name, c.itemName)
 			})
 		}
 	}
@@ -604,7 +643,9 @@ func TestItemRepository_ListByBin_ScopedToVisibility(t *testing.T) {
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 
 	got, err := f.repo.ListByBin(testCtx(t), otherViewer, privateBin)
 	if err != nil {
@@ -647,7 +688,9 @@ func TestItemRepository_ListVisible(t *testing.T) {
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 
 	t.Run("unfiltered excludes another member's private bin item", func(t *testing.T) {
 		got, err := f.repo.ListVisible(testCtx(t), otherViewer, domain.ItemFilter{})
@@ -725,7 +768,7 @@ func TestItemRepository_GetForUpdate(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := f.repo.GetForUpdate(testCtx(t), it.ID)
+	got, err := f.repo.GetForUpdate(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("GetForUpdate: %v", err)
 	}
@@ -736,7 +779,7 @@ func TestItemRepository_GetForUpdate(t *testing.T) {
 
 func TestItemRepository_GetForUpdate_NotFound(t *testing.T) {
 	f := newItemFixture(t)
-	_, err := f.repo.GetForUpdate(testCtx(t), domain.NewItemID())
+	_, err := f.repo.GetForUpdate(testCtx(t), f.household, domain.NewItemID())
 	if !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("GetForUpdate(unknown) = %v, want ErrItemNotFound", err)
 	}
@@ -764,7 +807,7 @@ func TestItemRepository_GetForUpdate_LocksWithinTransaction(t *testing.T) {
 	defer func() { _ = tx1.Rollback(context.Background()) }()
 
 	repo1 := adapter.NewItemRepository(tx1)
-	if _, err := repo1.GetForUpdate(testCtx(t), it.ID); err != nil {
+	if _, err := repo1.GetForUpdate(testCtx(t), f.household, it.ID); err != nil {
 		t.Fatalf("GetForUpdate(tx1): %v", err)
 	}
 
@@ -779,7 +822,7 @@ func TestItemRepository_GetForUpdate_LocksWithinTransaction(t *testing.T) {
 	go func() {
 		lockCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_, err := repo2.GetForUpdate(lockCtx, it.ID)
+		_, err := repo2.GetForUpdate(lockCtx, f.household, it.ID)
 		done <- err
 	}()
 
@@ -829,6 +872,7 @@ func TestItemRepository_CountsByBin(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	counts, err := f.repo.CountsByBin(testCtx(t), viewer)
 	if err != nil {
 		t.Fatalf("CountsByBin: %v", err)
@@ -857,6 +901,7 @@ func TestItemRepository_CountsByBin_ExcludesPrivateBinForNonOwner(t *testing.T) 
 	}
 
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 	counts, err := f.repo.CountsByBin(testCtx(t), otherViewer)
 	if err != nil {
 		t.Fatalf("CountsByBin: %v", err)

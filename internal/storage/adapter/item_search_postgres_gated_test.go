@@ -24,6 +24,7 @@ func TestItemRepository_FindVisibleDetail_InBin(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.FindVisibleDetail(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("FindVisibleDetail: %v", err)
@@ -59,6 +60,7 @@ func TestItemRepository_FindVisibleDetail_CheckedOut(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.FindVisibleDetail(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("FindVisibleDetail: %v", err)
@@ -78,6 +80,7 @@ func TestItemRepository_FindVisibleDetail_NotFound(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 
 	_, err := f.repo.FindVisibleDetail(testCtx(t), viewer, domain.NewItemID())
 	if !errors.Is(err, domain.ErrItemNotFound) {
@@ -100,15 +103,28 @@ func TestItemRepository_FindVisibleDetail_VisibilityMatrix(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
+	adminPrincipal := identity.NewUserPrincipal(admin, identity.RoleOwner, "Admin")
+	adminPrincipal.HouseholdID = f.household
+	creatorPrincipal := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorPrincipal.HouseholdID = f.household
+	otherPrincipal := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherPrincipal.HouseholdID = f.household
+	integrationPrincipal := identity.NewIntegrationPrincipal("Nestova")
+	integrationPrincipal.HouseholdID = f.household
+
 	principals := []struct {
 		name    string
 		p       identity.Principal
 		visible bool
 	}{
-		{"admin", identity.NewUserPrincipal(admin, identity.RoleOwner, "Admin"), true},
-		{"creator", identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator"), true},
-		{"non-creator member", identity.NewUserPrincipal(other, identity.RoleAdult, "Other"), false},
-		{"integration", identity.NewIntegrationPrincipal("Nestova"), false},
+		{"admin", adminPrincipal, true},
+		{"creator", creatorPrincipal, true},
+		{"non-creator member", otherPrincipal, false},
+		{"integration", integrationPrincipal, false},
+		// anonymous (the zero identity.Principal) carries the zero
+		// identity.HouseholdID, which never matches f.household — since
+		// NSTR-131, this is excluded by the household predicate before
+		// CanSeeBin's own privacy rule is ever consulted.
 		{"anonymous", identity.Principal{}, false},
 	}
 	for _, pr := range principals {
@@ -141,6 +157,7 @@ func TestItemRepository_SearchVisible_MatchesByItemName(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "stove", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -174,6 +191,7 @@ func TestItemRepository_SearchVisible_MatchesByBinName(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "Holiday Decorations", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -200,6 +218,7 @@ func TestItemRepository_SearchVisible_MatchesByLocationName(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "Attic Storage", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -222,6 +241,7 @@ func TestItemRepository_SearchVisible_HeldItemMatchesOwnNameOnly(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "Flashlight", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -256,6 +276,7 @@ func TestItemRepository_SearchVisible_ExcludesPrivateBinForNonOwner(t *testing.T
 	}
 
 	otherViewer := identity.NewUserPrincipal(other, identity.RoleAdult, "Other")
+	otherViewer.HouseholdID = f.household
 	got, err := f.repo.SearchVisible(testCtx(t), otherViewer, "Private Widget", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible(non-owner): %v", err)
@@ -265,6 +286,7 @@ func TestItemRepository_SearchVisible_ExcludesPrivateBinForNonOwner(t *testing.T
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	got, err = f.repo.SearchVisible(testCtx(t), creatorViewer, "Private Widget", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible(creator): %v", err)
@@ -294,6 +316,7 @@ func TestItemRepository_SearchVisible_EscapesWildcardCharacters(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "100%_Cotton", 10)
 	if err != nil {
 		t.Fatalf("SearchVisible: %v", err)
@@ -307,6 +330,7 @@ func TestItemRepository_SearchVisible_NoMatchIsEmptySlice(t *testing.T) {
 	f := newItemFixture(t)
 	creator := f.seedUser(t, identity.RoleAdult)
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 
 	got, err := f.repo.SearchVisible(testCtx(t), viewer, "nonexistent-zzz", 10)
 	if err != nil {

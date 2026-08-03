@@ -12,11 +12,11 @@ import (
 // itemLinkRepository is the narrow port (ISP) ItemLinkService depends on,
 // satisfied by domain.ItemLinkRepository (a superset) and by test fakes.
 type itemLinkRepository interface {
-	Create(ctx context.Context, l *domain.ItemLink) error
-	Update(ctx context.Context, itemID domain.ItemID, id domain.ItemLinkID, label, rawURL string) error
-	Delete(ctx context.Context, itemID domain.ItemID, id domain.ItemLinkID) error
-	ListByItem(ctx context.Context, itemID domain.ItemID) ([]domain.ItemLink, error)
-	NextPosition(ctx context.Context, itemID domain.ItemID) (int, error)
+	Create(ctx context.Context, householdID identity.HouseholdID, l *domain.ItemLink) error
+	Update(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID, id domain.ItemLinkID, label, rawURL string) error
+	Delete(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID, id domain.ItemLinkID) error
+	ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID) ([]domain.ItemLink, error)
+	NextPosition(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID) (int, error)
 }
 
 // itemLinkItemGetter is the narrow port (ISP) ItemLinkService depends on to
@@ -73,7 +73,7 @@ func (s *ItemLinkService) Add(ctx context.Context, viewer identity.Principal, it
 		return nil, fmt.Errorf("app: add item link: %w", err)
 	}
 
-	position, err := s.links.NextPosition(ctx, itemID)
+	position, err := s.links.NextPosition(ctx, viewer.HouseholdID, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("app: add item link: next position: %w", err)
 	}
@@ -85,7 +85,7 @@ func (s *ItemLinkService) Add(ctx context.Context, viewer identity.Principal, it
 		URL:      validURL,
 		Position: position,
 	}
-	if err := s.links.Create(ctx, l); err != nil {
+	if err := s.links.Create(ctx, viewer.HouseholdID, l); err != nil {
 		return nil, fmt.Errorf("app: add item link: %w", err)
 	}
 	s.logAction(ctx, "item link added", itemID, l.ID)
@@ -108,7 +108,7 @@ func (s *ItemLinkService) Edit(ctx context.Context, viewer identity.Principal, i
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return fmt.Errorf("app: edit item link: %w", err)
 	}
-	if err := s.links.Update(ctx, itemID, linkID, label, validURL); err != nil {
+	if err := s.links.Update(ctx, viewer.HouseholdID, itemID, linkID, label, validURL); err != nil {
 		return fmt.Errorf("app: edit item link: %w", err)
 	}
 	s.logAction(ctx, "item link edited", itemID, linkID)
@@ -121,7 +121,7 @@ func (s *ItemLinkService) Remove(ctx context.Context, viewer identity.Principal,
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return fmt.Errorf("app: remove item link: %w", err)
 	}
-	if err := s.links.Delete(ctx, itemID, linkID); err != nil {
+	if err := s.links.Delete(ctx, viewer.HouseholdID, itemID, linkID); err != nil {
 		return fmt.Errorf("app: remove item link: %w", err)
 	}
 	s.logAction(ctx, "item link removed", itemID, linkID)
@@ -136,7 +136,7 @@ func (s *ItemLinkService) ListForItem(ctx context.Context, viewer identity.Princ
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return nil, fmt.Errorf("app: list item links: %w", err)
 	}
-	links, err := s.links.ListByItem(ctx, itemID)
+	links, err := s.links.ListByItem(ctx, viewer.HouseholdID, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("app: list item links: %w", err)
 	}

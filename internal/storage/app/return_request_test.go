@@ -46,7 +46,7 @@ func (f *fakeReturnRequestRepo) Create(_ context.Context, r *domain.ReturnReques
 	return nil
 }
 
-func (f *fakeReturnRequestRepo) Cancel(_ context.Context, id domain.ReturnRequestID, requesterID identity.UserID) (*domain.ReturnRequest, error) {
+func (f *fakeReturnRequestRepo) Cancel(_ context.Context, _ identity.HouseholdID, id domain.ReturnRequestID, requesterID identity.UserID) (*domain.ReturnRequest, error) {
 	if f.cancelErr != nil {
 		return nil, f.cancelErr
 	}
@@ -61,7 +61,7 @@ func (f *fakeReturnRequestRepo) Cancel(_ context.Context, id domain.ReturnReques
 	return &cp, nil
 }
 
-func (f *fakeReturnRequestRepo) ListByItem(_ context.Context, itemID domain.ItemID) ([]domain.ReturnRequest, error) {
+func (f *fakeReturnRequestRepo) ListByItem(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID) ([]domain.ReturnRequest, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}

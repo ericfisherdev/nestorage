@@ -23,7 +23,7 @@ type fakeBinStore struct {
 	moveCalls       int
 }
 
-func (f *fakeBinStore) GetForUpdate(_ context.Context, id domain.BinID) (*domain.Bin, error) {
+func (f *fakeBinStore) GetForUpdate(_ context.Context, _ identity.HouseholdID, id domain.BinID) (*domain.Bin, error) {
 	if f.getForUpdateErr != nil {
 		return nil, f.getForUpdateErr
 	}
@@ -34,7 +34,7 @@ func (f *fakeBinStore) GetForUpdate(_ context.Context, id domain.BinID) (*domain
 	return &cp, nil
 }
 
-func (f *fakeBinStore) Move(_ context.Context, id domain.BinID, target domain.LocationID, now time.Time) (int64, error) {
+func (f *fakeBinStore) Move(_ context.Context, _ identity.HouseholdID, id domain.BinID, target domain.LocationID, now time.Time) (int64, error) {
 	f.moveCalls++
 	if f.moveErr != nil {
 		return 0, f.moveErr
@@ -55,7 +55,7 @@ type fakeBinItemIDLister struct {
 	listErr error
 }
 
-func (f *fakeBinItemIDLister) ListIDsByBin(_ context.Context, _ domain.BinID) ([]domain.ItemRef, error) {
+func (f *fakeBinItemIDLister) ListIDsByBin(_ context.Context, _ identity.HouseholdID, _ domain.BinID) ([]domain.ItemRef, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}

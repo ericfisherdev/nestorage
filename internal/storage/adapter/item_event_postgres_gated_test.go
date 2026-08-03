@@ -88,7 +88,7 @@ func TestItemEventRepository_Append_UserActorRoundTrips(t *testing.T) {
 		t.Error("Append left a timestamp zero")
 	}
 
-	got, err := f.repo.ListByItem(testCtx(t), e.ItemID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByItem(testCtx(t), f.household, e.ItemID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -106,6 +106,7 @@ func TestItemEventRepository_Append_UserActorRoundTrips(t *testing.T) {
 func TestItemEventRepository_Append_IntegrationActorRoundTrips(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 	if err := e.Validate(); err != nil {
@@ -116,7 +117,7 @@ func TestItemEventRepository_Append_IntegrationActorRoundTrips(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	got, err := f.repo.ListByItem(testCtx(t), e.ItemID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByItem(testCtx(t), f.household, e.ItemID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestItemEventRepository_Append_MovedEventRoundTripsLocations(t *testing.T) 
 		t.Fatalf("Append: %v", err)
 	}
 
-	got, err := f.repo.ListByItem(testCtx(t), e.ItemID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByItem(testCtx(t), f.household, e.ItemID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -182,7 +183,7 @@ func TestItemEventRepository_Append_EditedEventRoundTripsChangedFields(t *testin
 		t.Fatalf("Append: %v", err)
 	}
 
-	got, err := f.repo.ListByItem(testCtx(t), e.ItemID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByItem(testCtx(t), f.household, e.ItemID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -204,6 +205,7 @@ func TestItemEventRepository_Append_EditedEventRoundTripsChangedFields(t *testin
 func TestItemEventRepository_Append_EditedEventEmptyChangedFieldsRejected(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventEdited, actor)
 
 	err := f.repo.Append(testCtx(t), &e)
@@ -218,6 +220,7 @@ func TestItemEventRepository_Append_EditedEventEmptyChangedFieldsRejected(t *tes
 func TestItemEventRepository_Append_ChangedFieldOutsideAllowedSetRejected(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventEdited, actor)
 	e.ChangedFields = []domain.EditedField{domain.EditedField("color")}
 
@@ -233,6 +236,7 @@ func TestItemEventRepository_Append_ChangedFieldOutsideAllowedSetRejected(t *tes
 func TestItemEventRepository_Append_NonEditedEventCarryingChangedFieldsRejected(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 	e.ChangedFields = []domain.EditedField{domain.FieldName}
 
@@ -248,6 +252,7 @@ func TestItemEventRepository_Append_NonEditedEventCarryingChangedFieldsRejected(
 func TestItemEventRepository_Append_UnknownKindRejected(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventKind("archived"), actor)
 
 	err := f.repo.Append(testCtx(t), &e)
@@ -309,7 +314,7 @@ func TestItemEventRepository_Append_DeactivatedUserStillResolves(t *testing.T) {
 		t.Fatalf("SetActive(false): %v", err)
 	}
 
-	got, err := f.repo.ListByItem(testCtx(t), e.ItemID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByItem(testCtx(t), f.household, e.ItemID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem after deactivation: %v", err)
 	}
@@ -325,6 +330,7 @@ func TestItemEventRepository_Append_DeactivatedUserStillResolves(t *testing.T) {
 func TestItemEventRepository_ListByItem_NewestFirst(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	itemID := domain.NewItemID()
 
 	for _, kind := range []domain.EventKind{domain.EventCreated, domain.EventAdded, domain.EventRemoved} {
@@ -339,7 +345,7 @@ func TestItemEventRepository_ListByItem_NewestFirst(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	got, err := f.repo.ListByItem(testCtx(t), itemID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByItem(testCtx(t), f.household, itemID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -359,6 +365,7 @@ func TestItemEventRepository_ListByItem_NewestFirst(t *testing.T) {
 func TestItemEventRepository_ListByItem_KeysetPaging(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	itemID := domain.NewItemID()
 
 	for i := 0; i < 3; i++ {
@@ -369,7 +376,7 @@ func TestItemEventRepository_ListByItem_KeysetPaging(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	firstPage, err := f.repo.ListByItem(testCtx(t), itemID, domain.HistoryPage{Limit: 2})
+	firstPage, err := f.repo.ListByItem(testCtx(t), f.household, itemID, domain.HistoryPage{Limit: 2})
 	if err != nil {
 		t.Fatalf("ListByItem(page 1): %v", err)
 	}
@@ -378,7 +385,7 @@ func TestItemEventRepository_ListByItem_KeysetPaging(t *testing.T) {
 	}
 
 	cursor := domain.HistoryCursor{OccurredAt: firstPage[1].OccurredAt, ID: firstPage[1].ID}
-	secondPage, err := f.repo.ListByItem(testCtx(t), itemID, domain.HistoryPage{Limit: 2, Before: &cursor})
+	secondPage, err := f.repo.ListByItem(testCtx(t), f.household, itemID, domain.HistoryPage{Limit: 2, Before: &cursor})
 	if err != nil {
 		t.Fatalf("ListByItem(page 2): %v", err)
 	}
@@ -398,6 +405,7 @@ func TestItemEventRepository_ListByItem_KeysetPaging(t *testing.T) {
 func TestItemEventRepository_ListByItem_KeysetPaging_StableAcrossIdenticalOccurredAt(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	itemID := domain.NewItemID()
 
 	tx, err := f.pool.Begin(testCtx(t))
@@ -424,7 +432,7 @@ func TestItemEventRepository_ListByItem_KeysetPaging_StableAcrossIdenticalOccurr
 		t.Fatalf("Commit: %v", err)
 	}
 
-	got, err := f.repo.ListByItem(testCtx(t), itemID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByItem(testCtx(t), f.household, itemID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -442,7 +450,7 @@ func TestItemEventRepository_ListByItem_KeysetPaging_StableAcrossIdenticalOccurr
 
 func TestItemEventRepository_ListByItem_Empty(t *testing.T) {
 	f := newItemEventFixture(t)
-	got, err := f.repo.ListByItem(testCtx(t), domain.NewItemID(), domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByItem(testCtx(t), f.household, domain.NewItemID(), domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -457,6 +465,7 @@ func TestItemEventRepository_ListByItem_Empty(t *testing.T) {
 func TestItemEventRepository_ListByBin_IncludesAddedAndRemoved(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	binID := domain.NewBinID()
 
 	added := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventAdded, actor)
@@ -472,7 +481,7 @@ func TestItemEventRepository_ListByBin_IncludesAddedAndRemoved(t *testing.T) {
 		t.Fatalf("Append(removed): %v", err)
 	}
 
-	got, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByBin(testCtx(t), f.household, binID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByBin: %v", err)
 	}
@@ -487,6 +496,7 @@ func TestItemEventRepository_ListByBin_IncludesAddedAndRemoved(t *testing.T) {
 func TestItemEventRepository_ListByBin_ExcludesNoBinEvents(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	binID := domain.NewBinID()
 
 	edited := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventEdited, actor)
@@ -495,7 +505,7 @@ func TestItemEventRepository_ListByBin_ExcludesNoBinEvents(t *testing.T) {
 		t.Fatalf("Append(edited): %v", err)
 	}
 
-	got, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByBin(testCtx(t), f.household, binID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByBin: %v", err)
 	}
@@ -506,7 +516,7 @@ func TestItemEventRepository_ListByBin_ExcludesNoBinEvents(t *testing.T) {
 
 func TestItemEventRepository_ListByBin_Empty(t *testing.T) {
 	f := newItemEventFixture(t)
-	got, err := f.repo.ListByBin(testCtx(t), domain.NewBinID(), domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByBin(testCtx(t), f.household, domain.NewBinID(), domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByBin: %v", err)
 	}
@@ -523,6 +533,7 @@ func TestItemEventRepository_ListByBin_Empty(t *testing.T) {
 func TestItemEventRepository_ListByBin_KeysetPaging(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	binID := domain.NewBinID()
 
 	for i := 0; i < 3; i++ {
@@ -534,7 +545,7 @@ func TestItemEventRepository_ListByBin_KeysetPaging(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	firstPage, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 2})
+	firstPage, err := f.repo.ListByBin(testCtx(t), f.household, binID, domain.HistoryPage{Limit: 2})
 	if err != nil {
 		t.Fatalf("ListByBin(page 1): %v", err)
 	}
@@ -543,7 +554,7 @@ func TestItemEventRepository_ListByBin_KeysetPaging(t *testing.T) {
 	}
 
 	cursor := domain.HistoryCursor{OccurredAt: firstPage[1].OccurredAt, ID: firstPage[1].ID}
-	secondPage, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 2, Before: &cursor})
+	secondPage, err := f.repo.ListByBin(testCtx(t), f.household, binID, domain.HistoryPage{Limit: 2, Before: &cursor})
 	if err != nil {
 		t.Fatalf("ListByBin(page 2): %v", err)
 	}
@@ -565,6 +576,7 @@ func TestItemEventRepository_ListByBin_KeysetPaging(t *testing.T) {
 func TestItemEventRepository_ListByBin_KeysetPaging_StableAcrossIdenticalOccurredAt(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	binID := domain.NewBinID()
 
 	tx, err := f.pool.Begin(testCtx(t))
@@ -591,7 +603,7 @@ func TestItemEventRepository_ListByBin_KeysetPaging_StableAcrossIdenticalOccurre
 		t.Fatalf("Commit: %v", err)
 	}
 
-	got, err := f.repo.ListByBin(testCtx(t), binID, domain.HistoryPage{Limit: 10})
+	got, err := f.repo.ListByBin(testCtx(t), f.household, binID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByBin: %v", err)
 	}
@@ -616,6 +628,7 @@ func TestItemEventRepository_ListByBin_KeysetPaging_StableAcrossIdenticalOccurre
 func TestItemEventTable_RawUpdateRejected(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 	if err := f.repo.Append(testCtx(t), &e); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -630,6 +643,7 @@ func TestItemEventTable_RawUpdateRejected(t *testing.T) {
 func TestItemEventTable_RawDeleteRejected(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 	if err := f.repo.Append(testCtx(t), &e); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -644,6 +658,7 @@ func TestItemEventTable_RawDeleteRejected(t *testing.T) {
 func TestItemEventTable_RawTruncateRejected(t *testing.T) {
 	f := newItemEventFixture(t)
 	actor := identity.NewIntegrationPrincipal("Nestova")
+	actor.HouseholdID = f.household
 	e := domain.NewItemEvent(domain.NewItemEventID(), domain.NewItemID(), "Stove", domain.EventCreated, actor)
 	if err := f.repo.Append(testCtx(t), &e); err != nil {
 		t.Fatalf("Append: %v", err)

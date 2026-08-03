@@ -63,35 +63,32 @@ func (r *LocationRepository) Create(ctx context.Context, l *domain.Location) err
 	return nil
 }
 
-// FindByID returns the location, or domain.ErrLocationNotFound.
-func (r *LocationRepository) FindByID(ctx context.Context, id domain.LocationID) (*domain.Location, error) {
-	l, err := scanLocation(r.dbtx.QueryRow(ctx, locationColumns+` WHERE id = $1`, id.String()))
+// FindVisibleByID returns the location, scoped to viewer's household — see
+// domain.LocationRepository.FindVisibleByID's own doc for why no further
+// per-viewer privacy check applies (Location carries no privacy field yet,
+// unlike Bin's Visibility). Returns domain.ErrLocationNotFound when id is
+// unknown or belongs to a different household.
+func (r *LocationRepository) FindVisibleByID(ctx context.Context, viewer identity.Principal, id domain.LocationID) (*domain.Location, error) {
+	q := locationColumns + ` WHERE id = $1 AND ` + householdWhere(1)
+	args := append([]any{id.String()}, householdArgs(viewer)...)
+
+	l, err := scanLocation(r.dbtx.QueryRow(ctx, q, args...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrLocationNotFound
 		}
-		return nil, fmt.Errorf("find location by id: %w", err)
+		return nil, fmt.Errorf("find visible location by id: %w", err)
 	}
 	return l, nil
 }
 
-// FindVisibleByID returns the location, scoped to what viewer may see — see
-// domain.LocationRepository.FindVisibleByID's own doc for why every
-// principal currently sees every location (Location carries no privacy
-// field yet, unlike Bin's Visibility). viewer is accepted but not yet
-// filtered on for that reason: the parameter is the forward-compatible seam,
-// unused today, kept named in the interface (not the receiver here) so a
-// reader can see at a glance what a later privacy check would bind to.
-// Returns domain.ErrLocationNotFound when id is unknown.
-func (r *LocationRepository) FindVisibleByID(ctx context.Context, _ identity.Principal, id domain.LocationID) (*domain.Location, error) {
-	return r.FindByID(ctx, id)
-}
+// List returns every location in viewer's household, ordered by name,
+// tie-broken by id for a stable order between rows sharing a name. Returns
+// an empty slice, not an error, when viewer's household has no locations.
+func (r *LocationRepository) List(ctx context.Context, viewer identity.Principal) ([]domain.Location, error) {
+	q := locationColumns + ` WHERE ` + householdWhere(0) + ` ORDER BY name, id`
 
-// List returns every location ordered by name, tie-broken by id for a
-// stable order between rows sharing a name. Returns an empty slice, not an
-// error, when no locations exist.
-func (r *LocationRepository) List(ctx context.Context) ([]domain.Location, error) {
-	rows, err := r.dbtx.Query(ctx, locationColumns+` ORDER BY name, id`)
+	rows, err := r.dbtx.Query(ctx, q, householdArgs(viewer)...)
 	if err != nil {
 		return nil, fmt.Errorf("list locations: %w", err)
 	}
@@ -111,11 +108,14 @@ func (r *LocationRepository) List(ctx context.Context) ([]domain.Location, error
 	return locations, nil
 }
 
-// Rename overwrites id's name with a caller-validated name. Returns
-// domain.ErrLocationNotFound when id is unknown.
-func (r *LocationRepository) Rename(ctx context.Context, id domain.LocationID, name string) error {
-	const q = `UPDATE location SET name = $2, updated_at = now() WHERE id = $1`
-	tag, err := r.dbtx.Exec(ctx, q, id.String(), name)
+// Rename overwrites id's name with a caller-validated name, scoped to
+// viewer's household. Returns domain.ErrLocationNotFound when id is unknown
+// or belongs to a different household.
+func (r *LocationRepository) Rename(ctx context.Context, viewer identity.Principal, id domain.LocationID, name string) error {
+	q := `UPDATE location SET name = $2, updated_at = now() WHERE id = $1 AND ` + householdWhere(2)
+	args := append([]any{id.String(), name}, householdArgs(viewer)...)
+
+	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("rename location: %w", err)
 	}
@@ -125,13 +125,16 @@ func (r *LocationRepository) Rename(ctx context.Context, id domain.LocationID, n
 	return nil
 }
 
-// Delete removes the location. Returns domain.ErrLocationNotFound when id is
-// unknown, or domain.ErrLocationNotEmpty when a dependent row (a child
+// Delete removes the location, scoped to viewer's household. Returns
+// domain.ErrLocationNotFound when id is unknown or belongs to a different
+// household, or domain.ErrLocationNotEmpty when a dependent row (a child
 // location today; a bin once NSTR-27 lands) still references it — enforced
 // at the database by parent_id's ON DELETE RESTRICT foreign key.
-func (r *LocationRepository) Delete(ctx context.Context, id domain.LocationID) error {
-	const q = `DELETE FROM location WHERE id = $1`
-	tag, err := r.dbtx.Exec(ctx, q, id.String())
+func (r *LocationRepository) Delete(ctx context.Context, viewer identity.Principal, id domain.LocationID) error {
+	q := `DELETE FROM location WHERE id = $1 AND ` + householdWhere(1)
+	args := append([]any{id.String()}, householdArgs(viewer)...)
+
+	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			return domain.ErrLocationNotEmpty
@@ -161,6 +164,26 @@ func parentIDParam(id *domain.LocationID) any {
 func isForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation
+}
+
+// householdWhere returns the SQL fragment scoping a query to a single
+// household — household_id = $N — parameterized at paramOffset+1.
+// householdArgs supplies the one argument that placeholder binds to; every
+// caller appends householdArgs(viewer) (or the bare householdID a
+// transaction-bound method carries) immediately after its own params, the
+// same paramOffset-threading convention visibilityWhere/viewerArgs establish
+// for Bin/Item. NSTR-131's household-scoping sweep: every repository read,
+// update, and delete gains this predicate (or the household-only equivalent
+// on a table with no separate visibility concept, like Location), so a
+// cross-household id is indistinguishable from an unknown one.
+func householdWhere(paramOffset int) string {
+	return fmt.Sprintf("household_id = $%d", paramOffset+1)
+}
+
+// householdArgs returns the one argument householdWhere's placeholder binds
+// to: viewer's own household id.
+func householdArgs(viewer identity.Principal) []any {
+	return []any{viewer.HouseholdID.String()}
 }
 
 // scanner abstracts pgx.Row and pgx.Rows for the shared scan helper.

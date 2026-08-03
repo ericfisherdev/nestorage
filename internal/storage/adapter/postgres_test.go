@@ -95,6 +95,8 @@ func newLocation(household identity.HouseholdID, createdBy identity.UserID, name
 func TestLocationRepository_CreateAndFindByID(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
+	viewer := identity.NewUserPrincipal(owner, identity.RoleAdult, "Owner")
+	viewer.HouseholdID = f.household
 	loc := newLocation(f.household, owner, "Garage")
 	loc.Description = "Attached two-car garage"
 
@@ -105,21 +107,23 @@ func TestLocationRepository_CreateAndFindByID(t *testing.T) {
 		t.Error("Create left CreatedAt/UpdatedAt zero")
 	}
 
-	got, err := f.repo.FindByID(testCtx(t), loc.ID)
+	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, loc.ID)
 	if err != nil {
-		t.Fatalf("FindByID: %v", err)
+		t.Fatalf("FindVisibleByID: %v", err)
 	}
 	if got.ID != loc.ID || got.Name != "Garage" || got.Description != loc.Description || got.CreatedBy != owner {
-		t.Errorf("FindByID = %+v, want it to match the created location", got)
+		t.Errorf("FindVisibleByID = %+v, want it to match the created location", got)
 	}
 	if got.ParentID != nil {
-		t.Errorf("FindByID.ParentID = %v, want nil for a top-level location", got.ParentID)
+		t.Errorf("FindVisibleByID.ParentID = %v, want nil for a top-level location", got.ParentID)
 	}
 }
 
 func TestLocationRepository_CreateWithParent(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
+	viewer := identity.NewUserPrincipal(owner, identity.RoleAdult, "Owner")
+	viewer.HouseholdID = f.household
 	parent := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), parent); err != nil {
 		t.Fatalf("Create(parent): %v", err)
@@ -131,26 +135,31 @@ func TestLocationRepository_CreateWithParent(t *testing.T) {
 		t.Fatalf("Create(child): %v", err)
 	}
 
-	got, err := f.repo.FindByID(testCtx(t), child.ID)
+	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, child.ID)
 	if err != nil {
-		t.Fatalf("FindByID(child): %v", err)
+		t.Fatalf("FindVisibleByID(child): %v", err)
 	}
 	if got.ParentID == nil || *got.ParentID != parent.ID {
-		t.Errorf("FindByID(child).ParentID = %v, want %v", got.ParentID, parent.ID)
+		t.Errorf("FindVisibleByID(child).ParentID = %v, want %v", got.ParentID, parent.ID)
 	}
 }
 
 func TestLocationRepository_FindByID_NotFound(t *testing.T) {
 	f := newLocationFixture(t)
-	_, err := f.repo.FindByID(testCtx(t), domain.NewLocationID())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Anyone")
+	viewer.HouseholdID = f.household
+	_, err := f.repo.FindVisibleByID(testCtx(t), viewer, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotFound) {
-		t.Errorf("FindByID(unknown) = %v, want ErrLocationNotFound", err)
+		t.Errorf("FindVisibleByID(unknown) = %v, want ErrLocationNotFound", err)
 	}
 }
 
 // TestLocationRepository_FindVisibleByID proves NSTR-30's new port method
-// returns the same row FindByID does — see the port's own doc for why every
-// principal currently sees every location.
+// returns the same row FindByID did — see the port's own doc for why every
+// principal in viewer's OWN household currently sees every location in it
+// (household scoping, NSTR-131, is what makes membership matter here: an
+// unrelated principal identity still resolves the row as long as
+// HouseholdID matches).
 func TestLocationRepository_FindVisibleByID(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
@@ -160,6 +169,7 @@ func TestLocationRepository_FindVisibleByID(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Anyone")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, loc.ID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID: %v", err)
@@ -182,6 +192,8 @@ func TestLocationRepository_FindVisibleByID_NotFound(t *testing.T) {
 func TestLocationRepository_List_Ordered(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
+	viewer := identity.NewUserPrincipal(owner, identity.RoleAdult, "Owner")
+	viewer.HouseholdID = f.household
 	if err := f.repo.Create(testCtx(t), newLocation(f.household, owner, "Hall closet")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -189,7 +201,7 @@ func TestLocationRepository_List_Ordered(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := f.repo.List(testCtx(t))
+	got, err := f.repo.List(testCtx(t), viewer)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -203,7 +215,9 @@ func TestLocationRepository_List_Ordered(t *testing.T) {
 
 func TestLocationRepository_List_Empty(t *testing.T) {
 	f := newLocationFixture(t)
-	got, err := f.repo.List(testCtx(t))
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Anyone")
+	viewer.HouseholdID = f.household
+	got, err := f.repo.List(testCtx(t), viewer)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -215,18 +229,20 @@ func TestLocationRepository_List_Empty(t *testing.T) {
 func TestLocationRepository_Rename(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
+	viewer := identity.NewUserPrincipal(owner, identity.RoleAdult, "Owner")
+	viewer.HouseholdID = f.household
 	loc := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), loc); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := f.repo.Rename(testCtx(t), loc.ID, "Attached garage"); err != nil {
+	if err := f.repo.Rename(testCtx(t), viewer, loc.ID, "Attached garage"); err != nil {
 		t.Fatalf("Rename: %v", err)
 	}
 
-	got, err := f.repo.FindByID(testCtx(t), loc.ID)
+	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, loc.ID)
 	if err != nil {
-		t.Fatalf("FindByID after Rename: %v", err)
+		t.Fatalf("FindVisibleByID after Rename: %v", err)
 	}
 	if got.Name != "Attached garage" {
 		t.Errorf("Name after Rename = %q, want %q", got.Name, "Attached garage")
@@ -235,7 +251,9 @@ func TestLocationRepository_Rename(t *testing.T) {
 
 func TestLocationRepository_Rename_NotFound(t *testing.T) {
 	f := newLocationFixture(t)
-	err := f.repo.Rename(testCtx(t), domain.NewLocationID(), "Ghost")
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Anyone")
+	viewer.HouseholdID = f.household
+	err := f.repo.Rename(testCtx(t), viewer, domain.NewLocationID(), "Ghost")
 	if !errors.Is(err, domain.ErrLocationNotFound) {
 		t.Errorf("Rename(unknown) = %v, want ErrLocationNotFound", err)
 	}
@@ -244,24 +262,28 @@ func TestLocationRepository_Rename_NotFound(t *testing.T) {
 func TestLocationRepository_Delete(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
+	viewer := identity.NewUserPrincipal(owner, identity.RoleAdult, "Owner")
+	viewer.HouseholdID = f.household
 	loc := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), loc); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := f.repo.Delete(testCtx(t), loc.ID); err != nil {
+	if err := f.repo.Delete(testCtx(t), viewer, loc.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	_, err := f.repo.FindByID(testCtx(t), loc.ID)
+	_, err := f.repo.FindVisibleByID(testCtx(t), viewer, loc.ID)
 	if !errors.Is(err, domain.ErrLocationNotFound) {
-		t.Errorf("FindByID after Delete = %v, want ErrLocationNotFound", err)
+		t.Errorf("FindVisibleByID after Delete = %v, want ErrLocationNotFound", err)
 	}
 }
 
 func TestLocationRepository_Delete_NotFound(t *testing.T) {
 	f := newLocationFixture(t)
-	err := f.repo.Delete(testCtx(t), domain.NewLocationID())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Anyone")
+	viewer.HouseholdID = f.household
+	err := f.repo.Delete(testCtx(t), viewer, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotFound) {
 		t.Errorf("Delete(unknown) = %v, want ErrLocationNotFound", err)
 	}
@@ -273,6 +295,8 @@ func TestLocationRepository_Delete_NotFound(t *testing.T) {
 func TestLocationRepository_Delete_WithChildRejected(t *testing.T) {
 	f := newLocationFixture(t)
 	owner := f.seedOwner(t)
+	viewer := identity.NewUserPrincipal(owner, identity.RoleAdult, "Owner")
+	viewer.HouseholdID = f.household
 	parent := newLocation(f.household, owner, "Garage")
 	if err := f.repo.Create(testCtx(t), parent); err != nil {
 		t.Fatalf("Create(parent): %v", err)
@@ -283,14 +307,14 @@ func TestLocationRepository_Delete_WithChildRejected(t *testing.T) {
 		t.Fatalf("Create(child): %v", err)
 	}
 
-	err := f.repo.Delete(testCtx(t), parent.ID)
+	err := f.repo.Delete(testCtx(t), viewer, parent.ID)
 	if !errors.Is(err, domain.ErrLocationNotEmpty) {
 		t.Fatalf("Delete(parent with a child) = %v, want ErrLocationNotEmpty", err)
 	}
 
-	got, err := f.repo.FindByID(testCtx(t), parent.ID)
+	got, err := f.repo.FindVisibleByID(testCtx(t), viewer, parent.ID)
 	if err != nil {
-		t.Fatalf("FindByID(parent) after rejected delete: %v", err)
+		t.Fatalf("FindVisibleByID(parent) after rejected delete: %v", err)
 	}
 	if got == nil {
 		t.Error("Delete(parent with a child) must leave the parent row in place")

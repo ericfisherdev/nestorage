@@ -32,7 +32,7 @@ func TestBinRepository_GetForUpdate(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
-	got, err := f.bins.GetForUpdate(testCtx(t), binID)
+	got, err := f.bins.GetForUpdate(testCtx(t), f.household, binID)
 	if err != nil {
 		t.Fatalf("GetForUpdate: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestBinRepository_GetForUpdate(t *testing.T) {
 
 func TestBinRepository_GetForUpdate_NotFound(t *testing.T) {
 	f := newItemFixture(t)
-	_, err := f.bins.GetForUpdate(testCtx(t), domain.NewBinID())
+	_, err := f.bins.GetForUpdate(testCtx(t), f.household, domain.NewBinID())
 	if !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("GetForUpdate(unknown) = %v, want ErrBinNotFound", err)
 	}
@@ -57,6 +57,7 @@ func TestBinRepository_Move(t *testing.T) {
 	binID := f.seedBin(t, creator, from, domain.VisibilityPublic)
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	before, err := f.bins.FindVisibleByID(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID before Move: %v", err)
@@ -66,7 +67,7 @@ func TestBinRepository_Move(t *testing.T) {
 	// precision — so the round trip compares equal, matching the identity
 	// adapter's own gated tests (e.g. api_key_postgres_gated_test.go).
 	now := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
-	affected, err := f.bins.Move(testCtx(t), binID, to, now)
+	affected, err := f.bins.Move(testCtx(t), f.household, binID, to, now)
 	if err != nil {
 		t.Fatalf("Move: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestBinRepository_Move_NotFound(t *testing.T) {
 	creator := f.seedUser(t, identity.RoleAdult)
 	loc := f.seedLocation(t, creator)
 
-	_, err := f.bins.Move(testCtx(t), domain.NewBinID(), loc, time.Now())
+	_, err := f.bins.Move(testCtx(t), f.household, domain.NewBinID(), loc, time.Now())
 	if !errors.Is(err, domain.ErrBinNotFound) {
 		t.Errorf("Move(unknown bin) = %v, want ErrBinNotFound", err)
 	}
@@ -106,12 +107,13 @@ func TestBinRepository_Move_UnknownLocationRejected(t *testing.T) {
 	loc := f.seedLocation(t, creator)
 	binID := f.seedBin(t, creator, loc, domain.VisibilityPublic)
 
-	_, err := f.bins.Move(testCtx(t), binID, domain.NewLocationID(), time.Now())
+	_, err := f.bins.Move(testCtx(t), f.household, binID, domain.NewLocationID(), time.Now())
 	if !errors.Is(err, domain.ErrLocationNotFound) {
 		t.Errorf("Move(unknown location) = %v, want ErrLocationNotFound", err)
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.bins.FindVisibleByID(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID after rejected Move: %v", err)
@@ -143,6 +145,7 @@ func TestBinMover_Move_RelocatesBin(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.bins.FindVisibleByID(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID after Move: %v", err)
@@ -215,6 +218,7 @@ func TestBinMover_Move_InvisiblePrivateBinRejected(t *testing.T) {
 	}
 
 	creatorViewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	creatorViewer.HouseholdID = f.household
 	got, err := f.bins.FindVisibleByID(testCtx(t), creatorViewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID after rejected Move: %v", err)
@@ -249,6 +253,7 @@ func TestBinMover_Move_ItemsUnaffectedByMove(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	items, err := f.repo.ListByBin(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("ListByBin after Move: %v", err)
@@ -316,6 +321,7 @@ func TestBinMover_Move_ConcurrentAttemptsOnlyOneWins(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.bins.FindVisibleByID(testCtx(t), viewer, binID)
 	if err != nil {
 		t.Fatalf("FindVisibleByID after concurrent Move: %v", err)
@@ -385,11 +391,11 @@ func TestBinMoveFanOutCommitsAtomically(t *testing.T) {
 		t.Fatalf("concurrent Move: succeeded=%d failed=%d, want exactly one of each", succeeded, failed)
 	}
 
-	gotA, err := f.events.ListByItem(testCtx(t), itemA.ID, domain.HistoryPage{Limit: 10})
+	gotA, err := f.events.ListByItem(testCtx(t), f.household, itemA.ID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem(itemA): %v", err)
 	}
-	gotB, err := f.events.ListByItem(testCtx(t), itemB.ID, domain.HistoryPage{Limit: 10})
+	gotB, err := f.events.ListByItem(testCtx(t), f.household, itemB.ID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem(itemB): %v", err)
 	}

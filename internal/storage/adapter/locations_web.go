@@ -25,8 +25,8 @@ type locationQueryCommandService interface {
 	List(ctx context.Context, viewer identity.Principal) ([]app.LocationSummary, error)
 	Get(ctx context.Context, viewer identity.Principal, id domain.LocationID) (*domain.Location, error)
 	Create(ctx context.Context, name, description string, parentID *domain.LocationID, viewer identity.Principal) (*domain.Location, error)
-	Rename(ctx context.Context, id domain.LocationID, name string) error
-	Delete(ctx context.Context, id domain.LocationID) error
+	Rename(ctx context.Context, viewer identity.Principal, id domain.LocationID, name string) error
+	Delete(ctx context.Context, viewer identity.Principal, id domain.LocationID) error
 }
 
 // locationBinLister is the narrow port (ISP) LocationsWebHandlers depends
@@ -150,8 +150,9 @@ func (h *LocationsWebHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if !verifyRequest(w, r, h.sm) {
 		return
 	}
+	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
 	name := strings.TrimSpace(r.FormValue("name"))
-	if err := h.locations.Rename(r.Context(), id, name); err != nil {
+	if err := h.locations.Rename(r.Context(), viewer, id, name); err != nil {
 		status, msg, ok := mapLocationError(err)
 		if !ok {
 			h.logger.ErrorContext(r.Context(), "locations: update", "error", err)
@@ -179,7 +180,7 @@ func (h *LocationsWebHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
 
-	if err := h.locations.Delete(r.Context(), id); err != nil {
+	if err := h.locations.Delete(r.Context(), viewer, id); err != nil {
 		status, msg, ok := mapLocationError(err)
 		if !ok {
 			h.logger.ErrorContext(r.Context(), "locations: delete", "error", err)

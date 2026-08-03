@@ -28,7 +28,7 @@ type returnRequestItemGetter interface {
 // same reason itemEventRepo is constructed twice in cmd/server/main.go —
 // once pool-bound for reads, once per-transaction for writers.
 type returnRequestLister interface {
-	ListByItem(ctx context.Context, itemID domain.ItemID) ([]domain.ReturnRequest, error)
+	ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID) ([]domain.ReturnRequest, error)
 }
 
 // ReturnRequestLifecycleStore is the narrow port (ISP)
@@ -42,7 +42,7 @@ type returnRequestLister interface {
 // name to construct ReturnRequestTxStores.
 type ReturnRequestLifecycleStore interface {
 	Create(ctx context.Context, r *domain.ReturnRequest) error
-	Cancel(ctx context.Context, id domain.ReturnRequestID, requesterID identity.UserID) (*domain.ReturnRequest, error)
+	Cancel(ctx context.Context, householdID identity.HouseholdID, id domain.ReturnRequestID, requesterID identity.UserID) (*domain.ReturnRequest, error)
 }
 
 // ReturnRequestTxStores bundles the tx-bound stores a returnRequestTransactor's
@@ -185,7 +185,7 @@ func (s *ReturnRequestService) Cancel(ctx context.Context, actor identity.Princi
 	}
 
 	err = s.uow.WithinReturnRequestTx(ctx, func(stores ReturnRequestTxStores) error {
-		cancelled, txErr := stores.ReturnRequests.Cancel(ctx, requestID, actor.UserID)
+		cancelled, txErr := stores.ReturnRequests.Cancel(ctx, actor.HouseholdID, requestID, actor.UserID)
 		if txErr != nil {
 			return txErr
 		}
@@ -214,7 +214,7 @@ func (s *ReturnRequestService) ListForItem(ctx context.Context, viewer identity.
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return nil, fmt.Errorf("app: list return requests: %w", err)
 	}
-	reqs, err := s.requests.ListByItem(ctx, itemID)
+	reqs, err := s.requests.ListByItem(ctx, viewer.HouseholdID, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("app: list return requests: %w", err)
 	}

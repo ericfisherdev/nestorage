@@ -44,11 +44,12 @@ func TestDeletedItemEventSurvivesItemDelete(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	if _, err := f.repo.Get(testCtx(t), viewer, it.ID); !errors.Is(err, domain.ErrItemNotFound) {
 		t.Fatalf("Get after Delete = %v, want ErrItemNotFound", err)
 	}
 
-	events, err := f.events.ListByItem(testCtx(t), it.ID, domain.HistoryPage{Limit: 10})
+	events, err := f.events.ListByItem(testCtx(t), f.household, it.ID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem after Delete: %v", err)
 	}
@@ -79,11 +80,12 @@ func TestCreateAndEventCommitTogether(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	if _, err := f.repo.Get(testCtx(t), viewer, it.ID); err != nil {
 		t.Fatalf("Get after Create: %v", err)
 	}
 
-	events, err := f.events.ListByItem(testCtx(t), it.ID, domain.HistoryPage{Limit: 10})
+	events, err := f.events.ListByItem(testCtx(t), f.household, it.ID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -115,6 +117,7 @@ func TestEditAndEventCommitTogether(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after Edit: %v", err)
@@ -123,7 +126,7 @@ func TestEditAndEventCommitTogether(t *testing.T) {
 		t.Errorf("Edit did not persist: %+v", got)
 	}
 
-	events, err := f.events.ListByItem(testCtx(t), it.ID, domain.HistoryPage{Limit: 10})
+	events, err := f.events.ListByItem(testCtx(t), f.household, it.ID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -160,7 +163,7 @@ func TestEditAndEventRollBackTogether(t *testing.T) {
 		t.Fatalf("Edit(unknown item) = %v, want wrapped ErrItemNotFound", err)
 	}
 
-	events, err := f.events.ListByItem(testCtx(t), unknownID, domain.HistoryPage{Limit: 10})
+	events, err := f.events.ListByItem(testCtx(t), f.household, unknownID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}

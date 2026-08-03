@@ -65,7 +65,7 @@ type fakeEventLister struct {
 	binCalls  int
 }
 
-func (f *fakeEventLister) ListByItem(_ context.Context, _ domain.ItemID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
+func (f *fakeEventLister) ListByItem(_ context.Context, _ identity.HouseholdID, _ domain.ItemID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
 	f.itemCalls = append(f.itemCalls, page)
 	if f.itemErr != nil {
 		return nil, f.itemErr
@@ -76,7 +76,7 @@ func (f *fakeEventLister) ListByItem(_ context.Context, _ domain.ItemID, page do
 	return f.itemEvents, nil
 }
 
-func (f *fakeEventLister) ListByBin(_ context.Context, _ domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
+func (f *fakeEventLister) ListByBin(_ context.Context, _ identity.HouseholdID, _ domain.BinID, page domain.HistoryPage) ([]domain.ItemEvent, error) {
 	f.binCalls++
 	if f.binErr != nil {
 		return nil, f.binErr

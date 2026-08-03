@@ -94,7 +94,7 @@ func (f *fakeLocationService) Create(_ context.Context, name, _ string, _ *domai
 	return &l, nil
 }
 
-func (f *fakeLocationService) Rename(_ context.Context, id domain.LocationID, name string) error {
+func (f *fakeLocationService) Rename(_ context.Context, _ identity.Principal, id domain.LocationID, name string) error {
 	if f.renameErr != nil {
 		return f.renameErr
 	}
@@ -107,7 +107,7 @@ func (f *fakeLocationService) Rename(_ context.Context, id domain.LocationID, na
 	return nil
 }
 
-func (f *fakeLocationService) Delete(_ context.Context, id domain.LocationID) error {
+func (f *fakeLocationService) Delete(_ context.Context, _ identity.Principal, id domain.LocationID) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}

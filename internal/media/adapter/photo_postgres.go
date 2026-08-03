@@ -114,9 +114,9 @@ func (r *PhotoRepository) Create(ctx context.Context, photo *domain.Photo) error
 // junction (see domain.PhotoRepository.GetForItem's own doc). Returns
 // domain.ErrPhotoNotFound both when id is unknown and when it exists but is
 // not attached to itemID.
-func (r *PhotoRepository) GetForItem(ctx context.Context, itemID storagedomain.ItemID, id domain.PhotoID) (*domain.Photo, error) {
-	q := itemPhotoJoinColumns + ` WHERE ip.item_id = $1 AND p.id = $2`
-	photo, err := scanPhoto(r.dbtx.QueryRow(ctx, q, itemID.String(), id.String()))
+func (r *PhotoRepository) GetForItem(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, id domain.PhotoID) (*domain.Photo, error) {
+	q := itemPhotoJoinColumns + ` WHERE ip.item_id = $1 AND p.id = $2 AND p.household_id = $3`
+	photo, err := scanPhoto(r.dbtx.QueryRow(ctx, q, itemID.String(), id.String(), householdID.String()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrPhotoNotFound
@@ -129,8 +129,8 @@ func (r *PhotoRepository) GetForItem(ctx context.Context, itemID storagedomain.I
 // FindByStorageRef returns the photo carrying ref, or
 // domain.ErrPhotoNotFound — the expected "not a duplicate" outcome for a
 // genuinely new upload.
-func (r *PhotoRepository) FindByStorageRef(ctx context.Context, ref domain.StorageRef) (*domain.Photo, error) {
-	photo, err := scanPhoto(r.dbtx.QueryRow(ctx, photoColumns+` WHERE storage_ref = $1`, ref.String()))
+func (r *PhotoRepository) FindByStorageRef(ctx context.Context, householdID identity.HouseholdID, ref domain.StorageRef) (*domain.Photo, error) {
+	photo, err := scanPhoto(r.dbtx.QueryRow(ctx, photoColumns+` WHERE storage_ref = $1 AND household_id = $2`, ref.String(), householdID.String()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrPhotoNotFound
@@ -143,9 +143,13 @@ func (r *PhotoRepository) FindByStorageRef(ctx context.Context, ref domain.Stora
 // AttachToItem inserts the item_photo row joining photoID to itemID.
 // Returns storagedomain.ErrItemNotFound when itemID is unknown, or
 // domain.ErrPhotoNotFound when photoID is unknown.
-func (r *PhotoRepository) AttachToItem(ctx context.Context, itemID storagedomain.ItemID, photoID domain.PhotoID, position int, isPrimary bool) error {
-	const q = `INSERT INTO item_photo (item_id, photo_id, position, is_primary) VALUES ($1, $2, $3, $4)`
-	_, err := r.dbtx.Exec(ctx, q, itemID.String(), photoID.String(), position, isPrimary)
+func (r *PhotoRepository) AttachToItem(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, photoID domain.PhotoID, position int, isPrimary bool) error {
+	const q = `
+		INSERT INTO item_photo (item_id, photo_id, position, is_primary)
+		SELECT $1, $2, $3, $4
+		WHERE EXISTS (SELECT 1 FROM item WHERE id = $1 AND household_id = $5)
+		  AND EXISTS (SELECT 1 FROM photo WHERE id = $2 AND household_id = $5)`
+	tag, err := r.dbtx.Exec(ctx, q, itemID.String(), photoID.String(), position, isPrimary, householdID.String())
 	if err != nil {
 		switch {
 		case isPgConstraint(err, foreignKeyViolation, itemPhotoItemFKConstraint):
@@ -155,19 +159,42 @@ func (r *PhotoRepository) AttachToItem(ctx context.Context, itemID storagedomain
 		}
 		return fmt.Errorf("attach photo to item: %w", err)
 	}
+	if tag.RowsAffected() == 0 {
+		return r.attachNotFoundReason(ctx, householdID, itemID)
+	}
 	return nil
+}
+
+// attachNotFoundReason resolves AttachToItem's ambiguous zero-rows case (the
+// EXISTS guards matched no row, silently, rather than tripping a foreign-key
+// violation): a cheap follow-up read tells an unknown-or-cross-household
+// itemID apart from an unknown-or-cross-household photoID, so the right
+// sentinel — storagedomain.ErrItemNotFound or domain.ErrPhotoNotFound —
+// reaches the caller instead of a generic error. Only itemID is checked
+// directly: if it exists in householdID, the photoID guard is the only one
+// that could have failed, so domain.ErrPhotoNotFound follows by elimination
+// without a second query.
+func (r *PhotoRepository) attachNotFoundReason(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID) error {
+	var itemExists bool
+	if err := r.dbtx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM item WHERE id = $1 AND household_id = $2)`, itemID.String(), householdID.String()).Scan(&itemExists); err != nil {
+		return fmt.Errorf("attach photo to item: check item: %w", err)
+	}
+	if !itemExists {
+		return storagedomain.ErrItemNotFound
+	}
+	return domain.ErrPhotoNotFound
 }
 
 // ListByItem returns itemID's attached photos ordered by position, or an
 // empty slice when none are attached.
-func (r *PhotoRepository) ListByItem(ctx context.Context, itemID storagedomain.ItemID) ([]domain.ItemPhoto, error) {
+func (r *PhotoRepository) ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID) ([]domain.ItemPhoto, error) {
 	q := `
 		SELECT ` + photoJoinSelectColumns + `, ip.position, ip.is_primary
 		FROM photo p
 		JOIN item_photo ip ON ip.photo_id = p.id
-		WHERE ip.item_id = $1
+		WHERE ip.item_id = $1 AND p.household_id = $2
 		ORDER BY ip.position`
-	rows, err := r.dbtx.Query(ctx, q, itemID.String())
+	rows, err := r.dbtx.Query(ctx, q, itemID.String(), householdID.String())
 	if err != nil {
 		return nil, fmt.Errorf("list item photos: %w", err)
 	}
@@ -193,11 +220,15 @@ func (r *PhotoRepository) ListByItem(ctx context.Context, itemID storagedomain.I
 // in that order (see domain.PhotoRepository's own doc for why itemID scopes
 // which junction row is removed). Returns domain.ErrPhotoNotFound when id
 // is unknown.
-func (r *PhotoRepository) Delete(ctx context.Context, itemID storagedomain.ItemID, id domain.PhotoID) error {
-	if _, err := r.dbtx.Exec(ctx, `DELETE FROM item_photo WHERE item_id = $1 AND photo_id = $2`, itemID.String(), id.String()); err != nil {
+func (r *PhotoRepository) Delete(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, id domain.PhotoID) error {
+	const unlinkQ = `
+		DELETE FROM item_photo
+		WHERE item_id = $1 AND photo_id = $2
+		  AND EXISTS (SELECT 1 FROM photo WHERE id = $2 AND household_id = $3)`
+	if _, err := r.dbtx.Exec(ctx, unlinkQ, itemID.String(), id.String(), householdID.String()); err != nil {
 		return fmt.Errorf("delete item photo link: %w", err)
 	}
-	tag, err := r.dbtx.Exec(ctx, `DELETE FROM photo WHERE id = $1`, id.String())
+	tag, err := r.dbtx.Exec(ctx, `DELETE FROM photo WHERE id = $1 AND household_id = $2`, id.String(), householdID.String())
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			// The item_photo_photo_id_fkey guard tripped: a second junction
@@ -218,11 +249,19 @@ func (r *PhotoRepository) Delete(ctx context.Context, itemID storagedomain.ItemI
 // SetPrimary clears itemID's current primary photo (if any) and marks
 // photoID primary instead. Returns domain.ErrPhotoNotFound when photoID is
 // not attached to itemID.
-func (r *PhotoRepository) SetPrimary(ctx context.Context, itemID storagedomain.ItemID, photoID domain.PhotoID) error {
-	if _, err := r.dbtx.Exec(ctx, `UPDATE item_photo SET is_primary = false WHERE item_id = $1 AND is_primary = true`, itemID.String()); err != nil {
+func (r *PhotoRepository) SetPrimary(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, photoID domain.PhotoID) error {
+	const clearQ = `
+		UPDATE item_photo SET is_primary = false
+		WHERE item_id = $1 AND is_primary = true
+		  AND EXISTS (SELECT 1 FROM item WHERE id = $1 AND household_id = $2)`
+	if _, err := r.dbtx.Exec(ctx, clearQ, itemID.String(), householdID.String()); err != nil {
 		return fmt.Errorf("clear primary photo: %w", err)
 	}
-	tag, err := r.dbtx.Exec(ctx, `UPDATE item_photo SET is_primary = true WHERE item_id = $1 AND photo_id = $2`, itemID.String(), photoID.String())
+	const setQ = `
+		UPDATE item_photo SET is_primary = true
+		WHERE item_id = $1 AND photo_id = $2
+		  AND EXISTS (SELECT 1 FROM photo WHERE id = $2 AND household_id = $3)`
+	tag, err := r.dbtx.Exec(ctx, setQ, itemID.String(), photoID.String(), householdID.String())
 	if err != nil {
 		return fmt.Errorf("set primary photo: %w", err)
 	}
@@ -241,19 +280,22 @@ func (r *PhotoRepository) SetPrimary(ctx context.Context, itemID storagedomain.I
 // temporary range must stay >= 0 to satisfy item_photo_position_check, so a
 // negative-offset trick (the usual way to dodge a unique constraint during
 // a reorder) is not available here.
-func (r *PhotoRepository) Reorder(ctx context.Context, itemID storagedomain.ItemID, order []domain.PhotoID) error {
+func (r *PhotoRepository) Reorder(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, order []domain.PhotoID) error {
 	if len(order) == 0 {
 		return nil
 	}
-	const q = `UPDATE item_photo SET position = $3 WHERE item_id = $1 AND photo_id = $2`
+	const q = `
+		UPDATE item_photo SET position = $3
+		WHERE item_id = $1 AND photo_id = $2
+		  AND EXISTS (SELECT 1 FROM photo WHERE id = $2 AND household_id = $4)`
 	tempBase := len(order)
 	for i, photoID := range order {
-		if _, err := r.dbtx.Exec(ctx, q, itemID.String(), photoID.String(), tempBase+i); err != nil {
+		if _, err := r.dbtx.Exec(ctx, q, itemID.String(), photoID.String(), tempBase+i, householdID.String()); err != nil {
 			return fmt.Errorf("reorder item photos: stage: %w", err)
 		}
 	}
 	for i, photoID := range order {
-		if _, err := r.dbtx.Exec(ctx, q, itemID.String(), photoID.String(), i); err != nil {
+		if _, err := r.dbtx.Exec(ctx, q, itemID.String(), photoID.String(), i, householdID.String()); err != nil {
 			return fmt.Errorf("reorder item photos: finalize: %w", err)
 		}
 	}

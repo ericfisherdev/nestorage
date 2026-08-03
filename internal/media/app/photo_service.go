@@ -148,7 +148,7 @@ func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, it
 		return nil, err
 	}
 
-	if existing, findErr := s.photos.FindByStorageRef(ctx, ref); findErr == nil {
+	if existing, findErr := s.photos.FindByStorageRef(ctx, viewer.HouseholdID, ref); findErr == nil {
 		return existing, nil
 	} else if !errors.Is(findErr, domain.ErrPhotoNotFound) {
 		return nil, fmt.Errorf("media/app: check duplicate photo: %w", findErr)
@@ -175,7 +175,7 @@ func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, it
 			// Lost a race with a concurrent upload of the same bytes to the
 			// same item: fetch and return the winner's row instead of
 			// surfacing an error.
-			existing, findErr := s.photos.FindByStorageRef(ctx, ref)
+			existing, findErr := s.photos.FindByStorageRef(ctx, viewer.HouseholdID, ref)
 			if findErr != nil {
 				return nil, fmt.Errorf("media/app: resolve concurrent duplicate: %w", findErr)
 			}
@@ -184,13 +184,13 @@ func (s *PhotoService) Upload(ctx context.Context, viewer identity.Principal, it
 		return nil, err
 	}
 
-	existing, err := s.photos.ListByItem(ctx, itemID)
+	existing, err := s.photos.ListByItem(ctx, viewer.HouseholdID, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("media/app: list existing item photos: %w", err)
 	}
 	position := len(existing)
 	isPrimary := position == 0
-	if err := s.photos.AttachToItem(ctx, itemID, photo.ID, position, isPrimary); err != nil {
+	if err := s.photos.AttachToItem(ctx, viewer.HouseholdID, itemID, photo.ID, position, isPrimary); err != nil {
 		return nil, err
 	}
 
@@ -204,7 +204,7 @@ func (s *PhotoService) ListForItem(ctx context.Context, viewer identity.Principa
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return nil, err
 	}
-	photos, err := s.photos.ListByItem(ctx, itemID)
+	photos, err := s.photos.ListByItem(ctx, viewer.HouseholdID, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("media/app: list item photos: %w", err)
 	}
@@ -288,7 +288,7 @@ func (s *PhotoService) Delete(ctx context.Context, viewer identity.Principal, it
 	if err != nil {
 		return err
 	}
-	if err := s.photos.Delete(ctx, itemID, photoID); err != nil {
+	if err := s.photos.Delete(ctx, viewer.HouseholdID, itemID, photoID); err != nil {
 		return err
 	}
 	if photo.ThumbnailRef != nil {
@@ -309,7 +309,7 @@ func (s *PhotoService) SetPrimary(ctx context.Context, viewer identity.Principal
 	if _, err := s.viewablePhoto(ctx, viewer, itemID, photoID); err != nil {
 		return err
 	}
-	if err := s.photos.SetPrimary(ctx, itemID, photoID); err != nil {
+	if err := s.photos.SetPrimary(ctx, viewer.HouseholdID, itemID, photoID); err != nil {
 		return err
 	}
 	s.logAction(ctx, "photo set primary", itemID, photoID)
@@ -325,7 +325,7 @@ func (s *PhotoService) Reorder(ctx context.Context, viewer identity.Principal, i
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return err
 	}
-	if err := s.photos.Reorder(ctx, itemID, order); err != nil {
+	if err := s.photos.Reorder(ctx, viewer.HouseholdID, itemID, order); err != nil {
 		return err
 	}
 	s.logAction(ctx, "photos reordered", itemID, domain.PhotoID{})
@@ -375,7 +375,7 @@ func (s *PhotoService) viewablePhoto(ctx context.Context, viewer identity.Princi
 	if _, err := s.items.Get(ctx, viewer, itemID); err != nil {
 		return nil, err
 	}
-	photo, err := s.photos.GetForItem(ctx, itemID, photoID)
+	photo, err := s.photos.GetForItem(ctx, viewer.HouseholdID, itemID, photoID)
 	if err != nil {
 		return nil, err
 	}

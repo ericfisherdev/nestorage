@@ -63,7 +63,7 @@ func (f *fakeItemRepo) Get(_ context.Context, _ identity.Principal, id domain.It
 	return &cp, nil
 }
 
-func (f *fakeItemRepo) GetForUpdate(_ context.Context, id domain.ItemID) (*domain.Item, error) {
+func (f *fakeItemRepo) GetForUpdate(_ context.Context, _ identity.HouseholdID, id domain.ItemID) (*domain.Item, error) {
 	if f.getForUpdateErr != nil {
 		return nil, f.getForUpdateErr
 	}
@@ -75,7 +75,7 @@ func (f *fakeItemRepo) GetForUpdate(_ context.Context, id domain.ItemID) (*domai
 	return &cp, nil
 }
 
-func (f *fakeItemRepo) Update(_ context.Context, it *domain.Item) error {
+func (f *fakeItemRepo) Update(_ context.Context, _ identity.HouseholdID, it *domain.Item) error {
 	if f.updateErr != nil {
 		return f.updateErr
 	}
@@ -128,7 +128,7 @@ func (f *fakeItemRepo) ListVisible(_ context.Context, _ identity.Principal, filt
 	return items, nil
 }
 
-func (f *fakeItemRepo) Delete(_ context.Context, id domain.ItemID) error {
+func (f *fakeItemRepo) Delete(_ context.Context, _ identity.HouseholdID, id domain.ItemID) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}

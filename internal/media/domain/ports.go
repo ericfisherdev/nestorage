@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	storagedomain "github.com/ericfisherdev/nestorage/internal/storage/domain"
 )
 
@@ -166,26 +167,26 @@ type PhotoRepository interface {
 	// itemID. Every PhotoService method that reads or mutates one photo
 	// calls this (never a bare, unscoped Get) after first confirming itemID
 	// itself is visible to the viewer.
-	GetForItem(ctx context.Context, itemID storagedomain.ItemID, id PhotoID) (*Photo, error)
+	GetForItem(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, id PhotoID) (*Photo, error)
 
 	// FindByStorageRef returns the photo carrying ref, or ErrPhotoNotFound —
 	// the expected "not a duplicate" outcome for a genuinely new upload, not
 	// an exceptional one. Deliberately NOT item-scoped: PhotoService.Upload
 	// calls this immediately after PhotoStore.Put, before any item_photo row
 	// exists yet to scope through.
-	FindByStorageRef(ctx context.Context, ref StorageRef) (*Photo, error)
+	FindByStorageRef(ctx context.Context, householdID identity.HouseholdID, ref StorageRef) (*Photo, error)
 
 	// AttachToItem inserts the item_photo row joining photoID to itemID at
 	// position, marked primary or not. Returns storagedomain.ErrItemNotFound
 	// when itemID is unknown, or ErrPhotoNotFound when photoID is unknown
 	// (both mapped from the junction's foreign keys).
-	AttachToItem(ctx context.Context, itemID storagedomain.ItemID, photoID PhotoID, position int, isPrimary bool) error
+	AttachToItem(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, photoID PhotoID, position int, isPrimary bool) error
 
 	// ListByItem returns itemID's attached photos ordered by position, or an
 	// empty slice when none are attached. Not itself visibility-scoped —
 	// PhotoService.ListForItem confirms itemID is visible to the viewer
 	// first.
-	ListByItem(ctx context.Context, itemID storagedomain.ItemID) ([]ItemPhoto, error)
+	ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID) ([]ItemPhoto, error)
 
 	// Delete removes the (itemID, id) item_photo row and then id's photo
 	// row, in that order (see the type doc). itemID scopes WHICH junction
@@ -199,13 +200,13 @@ type PhotoRepository interface {
 	// visibility-scoped: the caller (PhotoService.Delete) is responsible for
 	// authorizing the delete via a preceding GetForItem, mirroring
 	// storagedomain.ItemRepository.Delete's identical contract.
-	Delete(ctx context.Context, itemID storagedomain.ItemID, id PhotoID) error
+	Delete(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, id PhotoID) error
 
 	// SetPrimary clears itemID's current primary photo (if any) and marks
 	// photoID primary instead — a thin method over the item_photo_primary_uniq
 	// partial unique index (at most one primary per item). Returns
 	// ErrPhotoNotFound when photoID is not attached to itemID.
-	SetPrimary(ctx context.Context, itemID storagedomain.ItemID, photoID PhotoID) error
+	SetPrimary(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, photoID PhotoID) error
 
 	// Reorder rewrites itemID's attached photos' positions to match order's
 	// sequence (order[i] becomes position i). order must list every photo
@@ -213,7 +214,7 @@ type PhotoRepository interface {
 	// leaves those rows' positions unchanged relative to items order omits,
 	// which callers must not rely on — PhotoService.Reorder always builds
 	// order from a preceding ListForItem.
-	Reorder(ctx context.Context, itemID storagedomain.ItemID, order []PhotoID) error
+	Reorder(ctx context.Context, householdID identity.HouseholdID, itemID storagedomain.ItemID, order []PhotoID) error
 
 	// SetThumbnailRef records ref as photoID's thumbnail variant. Used only
 	// by cmd/backfill-thumbs (NSTR-84): the upload path instead populates

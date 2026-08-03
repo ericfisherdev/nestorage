@@ -69,10 +69,13 @@ func (stubLocationService) Create(context.Context, string, string, *storagedomai
 	return nil, nil
 }
 
-func (stubLocationService) Rename(context.Context, storagedomain.LocationID, string) error {
+func (stubLocationService) Rename(context.Context, identity.Principal, storagedomain.LocationID, string) error {
 	return nil
 }
-func (stubLocationService) Delete(context.Context, storagedomain.LocationID) error { return nil }
+
+func (stubLocationService) Delete(context.Context, identity.Principal, storagedomain.LocationID) error {
+	return nil
+}
 
 // stubBinService satisfies both binAPIService (BinsAPIHandlers) and
 // binDetailReader (HistoryAPIHandlers) — binDetailReader's own GetByID has
@@ -170,13 +173,13 @@ func (stubItemDetailReader) Detail(context.Context, identity.Principal, storaged
 
 type stubItemEventLister struct{}
 
-func (stubItemEventLister) ListByItem(context.Context, storagedomain.ItemID, storagedomain.HistoryPage) ([]storagedomain.ItemEvent, error) {
+func (stubItemEventLister) ListByItem(context.Context, identity.HouseholdID, storagedomain.ItemID, storagedomain.HistoryPage) ([]storagedomain.ItemEvent, error) {
 	return nil, nil
 }
 
 type stubBinActivityLister struct{}
 
-func (stubBinActivityLister) ListByBin(context.Context, storagedomain.BinID, storagedomain.HistoryPage) ([]storagedomain.ItemEvent, error) {
+func (stubBinActivityLister) ListByBin(context.Context, identity.HouseholdID, storagedomain.BinID, storagedomain.HistoryPage) ([]storagedomain.ItemEvent, error) {
 	return nil, nil
 }
 

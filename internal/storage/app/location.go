@@ -14,9 +14,9 @@ import (
 type locationRepository interface {
 	Create(ctx context.Context, l *domain.Location) error
 	FindVisibleByID(ctx context.Context, viewer identity.Principal, id domain.LocationID) (*domain.Location, error)
-	List(ctx context.Context) ([]domain.Location, error)
-	Rename(ctx context.Context, id domain.LocationID, name string) error
-	Delete(ctx context.Context, id domain.LocationID) error
+	List(ctx context.Context, viewer identity.Principal) ([]domain.Location, error)
+	Rename(ctx context.Context, viewer identity.Principal, id domain.LocationID, name string) error
+	Delete(ctx context.Context, viewer identity.Principal, id domain.LocationID) error
 }
 
 // binLister is the narrow port (ISP) LocationService depends on to compute
@@ -68,7 +68,7 @@ func NewLocationService(locations locationRepository, bins binLister, logger *sl
 // List returns every location ordered by name, each carrying how many bins
 // viewer may see inside it.
 func (s *LocationService) List(ctx context.Context, viewer identity.Principal) ([]LocationSummary, error) {
-	locations, err := s.locations.List(ctx)
+	locations, err := s.locations.List(ctx, viewer)
 	if err != nil {
 		return nil, fmt.Errorf("app: list locations: %w", err)
 	}
@@ -123,26 +123,28 @@ func (s *LocationService) Create(ctx context.Context, name, description string, 
 	return l, nil
 }
 
-// Rename validates and overwrites id's name. Returns a wrapped
-// domain.ErrInvalidLocationName for a blank/over-long name, or a wrapped
-// domain.ErrLocationNotFound when id is unknown.
-func (s *LocationService) Rename(ctx context.Context, id domain.LocationID, name string) error {
+// Rename validates and overwrites id's name, scoped to viewer's household.
+// Returns a wrapped domain.ErrInvalidLocationName for a blank/over-long name,
+// or a wrapped domain.ErrLocationNotFound when id is unknown or belongs to a
+// different household.
+func (s *LocationService) Rename(ctx context.Context, viewer identity.Principal, id domain.LocationID, name string) error {
 	validName, err := domain.ValidateLocationName(name)
 	if err != nil {
 		return err
 	}
-	if err := s.locations.Rename(ctx, id, validName); err != nil {
+	if err := s.locations.Rename(ctx, viewer, id, validName); err != nil {
 		return fmt.Errorf("app: rename location: %w", err)
 	}
 	s.logAction(ctx, "location renamed", id)
 	return nil
 }
 
-// Delete removes id. Returns a wrapped domain.ErrLocationNotFound when id is
-// unknown, or domain.ErrLocationNotEmpty when a dependent row (a child
+// Delete removes id, scoped to viewer's household. Returns a wrapped
+// domain.ErrLocationNotFound when id is unknown or belongs to a different
+// household, or domain.ErrLocationNotEmpty when a dependent row (a child
 // location or a bin) still references it.
-func (s *LocationService) Delete(ctx context.Context, id domain.LocationID) error {
-	if err := s.locations.Delete(ctx, id); err != nil {
+func (s *LocationService) Delete(ctx context.Context, viewer identity.Principal, id domain.LocationID) error {
+	if err := s.locations.Delete(ctx, viewer, id); err != nil {
 		return fmt.Errorf("app: delete location: %w", err)
 	}
 	s.logAction(ctx, "location deleted", id)

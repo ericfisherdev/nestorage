@@ -20,8 +20,8 @@ import (
 // adapter.PostgresUnitOfWork must spell it by name to construct
 // BinTxStores.
 type BinStore interface {
-	GetForUpdate(ctx context.Context, id domain.BinID) (*domain.Bin, error)
-	Move(ctx context.Context, id domain.BinID, target domain.LocationID, now time.Time) (int64, error)
+	GetForUpdate(ctx context.Context, householdID identity.HouseholdID, id domain.BinID) (*domain.Bin, error)
+	Move(ctx context.Context, householdID identity.HouseholdID, id domain.BinID, target domain.LocationID, now time.Time) (int64, error)
 }
 
 // BinItemIDLister is the narrow port (ISP) BinTxStores.Items exposes to fan
@@ -35,7 +35,7 @@ type BinStore interface {
 // already carries a name — is barred here because it is visibility-scoped.
 // Satisfied by *domain.ItemRepository (a superset).
 type BinItemIDLister interface {
-	ListIDsByBin(ctx context.Context, binID domain.BinID) ([]domain.ItemRef, error)
+	ListIDsByBin(ctx context.Context, householdID identity.HouseholdID, binID domain.BinID) ([]domain.ItemRef, error)
 }
 
 // BinTxStores bundles the tx-bound stores a binTransactor's closure
@@ -164,14 +164,14 @@ func (m *BinMover) Move(ctx context.Context, actor identity.Principal, binID dom
 
 	now := m.clock()
 	err = m.uow.WithinBinTx(ctx, func(stores BinTxStores) error {
-		locked, txErr := stores.Bins.GetForUpdate(ctx, binID)
+		locked, txErr := stores.Bins.GetForUpdate(ctx, actor.HouseholdID, binID)
 		if txErr != nil {
 			return txErr
 		}
 		if txErr = locked.MoveTo(target); txErr != nil {
 			return txErr
 		}
-		if _, txErr = stores.Bins.Move(ctx, binID, target, now); txErr != nil {
+		if _, txErr = stores.Bins.Move(ctx, actor.HouseholdID, binID, target, now); txErr != nil {
 			return txErr
 		}
 		return m.appendMoveEvents(ctx, stores, actor, bin, from, fromLoc, target, toLoc)
@@ -197,7 +197,7 @@ func (m *BinMover) Move(ctx context.Context, actor identity.Principal, binID dom
 // include every item in the bin, not only what the mover's own
 // visibility-scoped reads would show (see BinItemIDLister's own doc).
 func (m *BinMover) appendMoveEvents(ctx context.Context, stores BinTxStores, actor identity.Principal, bin *domain.Bin, from domain.LocationID, fromLoc *domain.Location, to domain.LocationID, toLoc *domain.Location) error {
-	refs, err := stores.Items.ListIDsByBin(ctx, bin.ID)
+	refs, err := stores.Items.ListIDsByBin(ctx, actor.HouseholdID, bin.ID)
 	if err != nil {
 		return err
 	}

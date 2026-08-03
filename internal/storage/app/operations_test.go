@@ -24,7 +24,7 @@ type fakeItemStore struct {
 	moveErr         error
 }
 
-func (f *fakeItemStore) GetForUpdate(_ context.Context, id domain.ItemID) (*domain.Item, error) {
+func (f *fakeItemStore) GetForUpdate(_ context.Context, _ identity.HouseholdID, id domain.ItemID) (*domain.Item, error) {
 	if f.getForUpdateErr != nil {
 		return nil, f.getForUpdateErr
 	}
@@ -35,7 +35,7 @@ func (f *fakeItemStore) GetForUpdate(_ context.Context, id domain.ItemID) (*doma
 	return &cp, nil
 }
 
-func (f *fakeItemStore) Move(_ context.Context, id domain.ItemID, dst domain.Placement) (int64, error) {
+func (f *fakeItemStore) Move(_ context.Context, _ identity.HouseholdID, id domain.ItemID, dst domain.Placement) (int64, error) {
 	if f.moveErr != nil {
 		return 0, f.moveErr
 	}
@@ -106,7 +106,7 @@ type fakeReturnRequestFulfiller struct {
 	fulfillErr error
 }
 
-func (f *fakeReturnRequestFulfiller) FulfillOpenForItem(_ context.Context, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error) {
+func (f *fakeReturnRequestFulfiller) FulfillOpenForItem(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error) {
 	if f.fulfillErr != nil {
 		return nil, f.fulfillErr
 	}
