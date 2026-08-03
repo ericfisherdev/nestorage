@@ -544,3 +544,36 @@ func TestEnsureProfile_ConcurrentDifferentUsers_NoColorCollision(t *testing.T) {
 		t.Errorf("both concurrently provisioned users got color %v, want two distinct colors", results[0].Color)
 	}
 }
+
+// TestEnsureProfile_ConcurrentSameUser_Idempotent covers the race a
+// double-dispatched request would actually produce in production — two
+// tabs completing first login over the same shared session at once
+// (NSTR-117) — proving the ON CONFLICT (member_id) DO NOTHING insert plus
+// the post-commit re-fetch make two concurrent calls for the SAME
+// profile-less user converge on one color rather than erroring or
+// disagreeing.
+func TestEnsureProfile_ConcurrentSameUser_Idempotent(t *testing.T) {
+	repo, pool, household := newTestRepoWithPool(t)
+	id := seedProfilelessMember(t, pool, household, "Solo", "solo@example.com")
+
+	var wg sync.WaitGroup
+	results := make([]*domain.User, 2)
+	errs := make([]error, 2)
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = repo.EnsureProfile(testCtx(t), id)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("EnsureProfile(%d): %v", i, err)
+		}
+	}
+	if results[0].Color != results[1].Color {
+		t.Errorf("same user got two different colors: %v vs %v", results[0].Color, results[1].Color)
+	}
+}

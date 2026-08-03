@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -58,6 +59,41 @@ func (h *sessionRoundTripHarness) get(t *testing.T, path string) {
 	_ = resp.Body.Close()
 }
 
+// cookie returns h's client jar's current session cookie for the server —
+// used by TestNew_DestroyDeletesTheRow to capture the pre-Destroy token
+// before the jar auto-replaces it with whatever Destroy's response sets.
+func (h *sessionRoundTripHarness) cookie(t *testing.T) *http.Cookie {
+	t.Helper()
+	serverURL, err := url.Parse(h.server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
+	cookies := h.client.Jar.Cookies(serverURL)
+	if len(cookies) != 1 {
+		t.Fatalf("session cookie count = %d, want 1", len(cookies))
+	}
+	return cookies[0]
+}
+
+// getWithCookie sends path a cookie explicitly, on a client with NO jar of
+// its own — used to replay a captured cookie after the harness's own jar has
+// already moved on to a different (post-Destroy) cookie, so the request
+// actually carries the token under test rather than whatever the jar most
+// recently learned.
+func (h *sessionRoundTripHarness) getWithCookie(t *testing.T, path string, cookie *http.Cookie) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, h.server.URL+path, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.AddCookie(cookie)
+	resp, err := h.server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	_ = resp.Body.Close()
+}
+
 // TestNew_CommitsAndFindsAgainstRealDatabase proves the shared store's
 // Commit/Find round trip through a real identity.sessions row: a value put
 // in one request is read back in a later request sharing the same session
@@ -84,8 +120,13 @@ func TestNew_CommitsAndFindsAgainstRealDatabase(t *testing.T) {
 }
 
 // TestNew_DestroyDeletesTheRow proves the store's Delete: destroying a
-// session, then reloading the same cookie, must not resurrect any of its
-// data — the row is really gone, not just marked.
+// session, then RE-PRESENTING THE SAME PRE-DESTROY TOKEN, must not resurrect
+// any of its data — the row is really gone, not just marked. Replaying the
+// captured token explicitly (rather than letting the harness's own cookie
+// jar carry whatever new cookie Destroy's response set) matters: the jar
+// would otherwise send a brand-new, already-empty session on /read
+// regardless of whether Destroy actually deleted the old row, so the
+// assertion below would hold even if Delete were silently a no-op.
 func TestNew_DestroyDeletesTheRow(t *testing.T) {
 	sm := newGatedSessionManager(t)
 
@@ -105,11 +146,12 @@ func TestNew_DestroyDeletesTheRow(t *testing.T) {
 
 	h := newSessionRoundTripHarness(t, sm, mux)
 	h.get(t, "/write")
+	preDestroyCookie := h.cookie(t)
 	h.get(t, "/destroy")
-	h.get(t, "/read")
+	h.getWithCookie(t, "/read", preDestroyCookie)
 
 	if readBack != "" {
-		t.Errorf("GetString after Destroy = %q, want empty (the row must actually be deleted)", readBack)
+		t.Errorf("GetString after Destroy, replaying the pre-Destroy token = %q, want empty (the row must actually be deleted)", readBack)
 	}
 }
 
