@@ -33,17 +33,36 @@ func NewSessionRevoker(sm *scs.SessionManager) *SessionRevoker {
 
 // RevokeAll iterates every active session in the store and destroys the ones
 // belonging to id. sm.Iterate requires the store to implement
-// scs.IterableStore — verified against internal/platform/session's own
-// identityStore (it defines AllCtx) — and panics if it does not, which is a
-// wiring bug the composition root should catch immediately, not a runtime
-// condition this method needs to guard against.
+// scs.IterableStore — verified against nestcore's identity/session store
+// (it defines AllCtx) — and panics if it does not, which is a wiring bug the
+// composition root should catch immediately, not a runtime condition this
+// method needs to guard against.
+//
+// This deletes via r.sm.Store directly (r.sm.Token(ctx), the key scs.Iterate
+// already read out of the store) rather than calling r.sm.Destroy(ctx): with
+// HashTokenInStore set (required for the shared store — see nestcore's
+// identity/session package doc), scs's own Iterate populates the iterated
+// context's token from the store's ALREADY-HASHED key, but Destroy hashes
+// whatever token it is given AGAIN before deleting — verified against
+// alexedwards/scs v2.9.0's doStoreDelete. Calling Destroy from inside
+// Iterate's callback therefore looks up a hash-of-a-hash that matches no
+// row, silently deleting nothing. Deleting through the store directly with
+// the token Iterate already gave us — no second hash — is what actually
+// works. Prefers DeleteCtx when the store supports it (mirroring scs's own
+// doStoreDelete fallback), falling back to the plain Store.Delete so this
+// also works against test doubles built on scs.New()'s default in-memory
+// store, which implements only the non-context Store interface.
 func (r *SessionRevoker) RevokeAll(ctx context.Context, id domain.UserID) error {
 	target := id.String()
 	err := r.sm.Iterate(ctx, func(ctx context.Context) error {
 		if r.sm.GetString(ctx, session.KeyUserID) != target {
 			return nil
 		}
-		return r.sm.Destroy(ctx)
+		token := r.sm.Token(ctx)
+		if c, ok := r.sm.Store.(scs.CtxStore); ok {
+			return c.DeleteCtx(ctx, token)
+		}
+		return r.sm.Store.Delete(token)
 	})
 	if err != nil {
 		return fmt.Errorf("session revoker: revoke all: %w", err)
