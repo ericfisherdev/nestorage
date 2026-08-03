@@ -58,6 +58,16 @@ type UserRepository interface {
 	// NSTR-19's first-run guard to decide whether the initial-admin setup
 	// flow should be shown, without loading every row on every request.
 	HasAnyUser(ctx context.Context) (bool, error)
+	// EnsureProfile behaves like FindByID, but additionally creates the
+	// user's profile row (color assigned via NextColor against colors
+	// already used in the household) when one does not exist yet. This is
+	// the create-if-missing step for a user authenticated through a session
+	// this app did not originate — first login on this app via a session
+	// carried over from Nestova (NSTR-117) — so a user already provisioned
+	// in one app gets a real profile row in the other on first arrival,
+	// rather than only ever rendering a display-time default. Returns
+	// ErrUserNotFound when id is unknown, exactly like FindByID.
+	EnsureProfile(ctx context.Context, id UserID) (*User, error)
 }
 
 // HouseholdRepository is the outbound port backing NSTR-116's household

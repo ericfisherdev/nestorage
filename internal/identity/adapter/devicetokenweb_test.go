@@ -22,9 +22,10 @@ import (
 	"github.com/ericfisherdev/nestorage/internal/platform/session"
 )
 
-// fakeCurrentUserFinder is a minimal currentUserFinder fake (FindByID only)
-// so adapter.Authenticate can resolve a seeded session into a *domain.User
-// without a database.
+// fakeCurrentUserFinder is a minimal currentUserFinder fake so
+// adapter.Authenticate can resolve a seeded session into a *domain.User
+// without a database. EnsureProfile just delegates to FindByID: this fake
+// has no profile-provisioning concept to exercise.
 type fakeCurrentUserFinder struct {
 	users map[domain.UserID]*domain.User
 }
@@ -35,6 +36,10 @@ func (f *fakeCurrentUserFinder) FindByID(_ context.Context, id domain.UserID) (*
 		return nil, domain.ErrUserNotFound
 	}
 	return u, nil
+}
+
+func (f *fakeCurrentUserFinder) EnsureProfile(ctx context.Context, id domain.UserID) (*domain.User, error) {
+	return f.FindByID(ctx, id)
 }
 
 // fakeDeviceTokenWebService is a configurable deviceTokenWebService fake.

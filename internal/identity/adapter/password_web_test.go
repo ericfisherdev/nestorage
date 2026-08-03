@@ -365,7 +365,7 @@ func TestPasswordWeb_Change_FullNavigation_Redirects(t *testing.T) {
 }
 
 // fakePasswordWebRepo is an in-memory fake satisfying BOTH currentUserFinder
-// (FindByID, for adapter.Authenticate) and app's own passwordChanger
+// (EnsureProfile, for adapter.Authenticate) and app's own passwordChanger
 // (FindByID + SetPasswordHash, for identityapp.NewPasswordService) — the one
 // fake realServicePasswordWebFixture needs to wire the REAL
 // app.PasswordService end to end with no database.
@@ -379,6 +379,10 @@ func (f *fakePasswordWebRepo) FindByID(_ context.Context, id domain.UserID) (*do
 		return nil, domain.ErrUserNotFound
 	}
 	return u, nil
+}
+
+func (f *fakePasswordWebRepo) EnsureProfile(ctx context.Context, id domain.UserID) (*domain.User, error) {
+	return f.FindByID(ctx, id)
 }
 
 func (f *fakePasswordWebRepo) SetPasswordHash(_ context.Context, id domain.UserID, hash string) error {
