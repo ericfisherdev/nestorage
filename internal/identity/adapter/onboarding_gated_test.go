@@ -29,7 +29,8 @@ func newWizardServer(t *testing.T) (*httptest.Server, *adapter.UserRepository) {
 	pool := dbtest.Harness.NewIsolatedPool(t, "identity")
 	repo := adapter.NewUserRepository(pool)
 	provisioner := adapter.NewProvisioner(pool)
-	sm := session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour}, testLogger())
+	sm, stop := session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour})
+	t.Cleanup(stop)
 	handlers := adapter.NewOnboardingHandlers(repo, provisioner, sm, testLogger())
 
 	mux := http.NewServeMux()

@@ -2,7 +2,6 @@ package session_test
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -20,11 +19,14 @@ import (
 // newGatedSessionManager returns a session.SessionManager over this
 // package's own derived database (dbtest.Harness.NewIsolatedPool must be
 // called exactly once per test), exercising the real identity.sessions
-// store (identity_store.go) rather than an in-memory fake.
+// store via nestcore's identity/session.NewManager (NSTR-117) rather than
+// an in-memory fake.
 func newGatedSessionManager(t *testing.T) *scs.SessionManager {
 	t.Helper()
 	pool := dbtest.Harness.NewIsolatedPool(t, "session")
-	return session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour}, slog.New(slog.DiscardHandler))
+	sm, stop := session.New(pool, corecfg.SessionConfig{Lifetime: time.Hour})
+	t.Cleanup(stop)
+	return sm
 }
 
 // sessionRoundTripHarness drives a real HTTP round trip with a cookie jar
@@ -56,7 +58,7 @@ func (h *sessionRoundTripHarness) get(t *testing.T, path string) {
 	_ = resp.Body.Close()
 }
 
-// TestNew_CommitsAndFindsAgainstRealDatabase proves identityStore's
+// TestNew_CommitsAndFindsAgainstRealDatabase proves the shared store's
 // Commit/Find round trip through a real identity.sessions row: a value put
 // in one request is read back in a later request sharing the same session
 // cookie.
@@ -81,7 +83,7 @@ func TestNew_CommitsAndFindsAgainstRealDatabase(t *testing.T) {
 	}
 }
 
-// TestNew_DestroyDeletesTheRow proves identityStore.Delete: destroying a
+// TestNew_DestroyDeletesTheRow proves the store's Delete: destroying a
 // session, then reloading the same cookie, must not resurrect any of its
 // data — the row is really gone, not just marked.
 func TestNew_DestroyDeletesTheRow(t *testing.T) {
@@ -111,7 +113,7 @@ func TestNew_DestroyDeletesTheRow(t *testing.T) {
 	}
 }
 
-// TestNew_IterateVisitsEveryActiveSession proves identityStore.AllCtx (via
+// TestNew_IterateVisitsEveryActiveSession proves the store's AllCtx (via
 // sm.Iterate): two independent sessions written through two independent
 // cookie jars are both visited and destroyable, which is exactly what
 // identity/adapter's SessionRevoker depends on for RevokeAll.
