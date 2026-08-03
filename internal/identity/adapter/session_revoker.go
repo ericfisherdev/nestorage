@@ -48,10 +48,12 @@ func NewSessionRevoker(sm *scs.SessionManager) *SessionRevoker {
 // Iterate's callback therefore looks up a hash-of-a-hash that matches no
 // row, silently deleting nothing. Deleting through the store directly with
 // the token Iterate already gave us — no second hash — is what actually
-// works. Prefers DeleteCtx when the store supports it (mirroring scs's own
-// doStoreDelete fallback), falling back to the plain Store.Delete so this
-// also works against test doubles built on scs.New()'s default in-memory
-// store, which implements only the non-context Store interface.
+// works. Checks for DeleteCtx alone (mirroring scs's own doStoreDelete,
+// which checks this same narrower interface) rather than the full
+// scs.CtxStore — a store implementing DeleteCtx but not FindCtx/CommitCtx
+// would otherwise wrongly fall through to the plain Store.Delete path
+// below, which is only there for test doubles built on scs.New()'s default
+// in-memory store, which implements just the non-context Store interface.
 func (r *SessionRevoker) RevokeAll(ctx context.Context, id domain.UserID) error {
 	target := id.String()
 	err := r.sm.Iterate(ctx, func(ctx context.Context) error {
@@ -59,7 +61,9 @@ func (r *SessionRevoker) RevokeAll(ctx context.Context, id domain.UserID) error 
 			return nil
 		}
 		token := r.sm.Token(ctx)
-		if c, ok := r.sm.Store.(scs.CtxStore); ok {
+		if c, ok := r.sm.Store.(interface {
+			DeleteCtx(context.Context, string) error
+		}); ok {
 			return c.DeleteCtx(ctx, token)
 		}
 		return r.sm.Store.Delete(token)
