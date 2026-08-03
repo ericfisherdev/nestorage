@@ -37,6 +37,16 @@ type fakeLocationService struct {
 	deleteErr error
 
 	createCalls int
+
+	// lastRenamePrincipal/lastDeletePrincipal record the viewer
+	// LocationsWebHandlers actually passed through to Rename/Delete — NSTR-131
+	// threaded a viewer identity.Principal onto both so household scoping
+	// could reach the repository; without recording it here, this fake would
+	// silently accept a handler regression that dropped or zeroed the viewer
+	// before calling Rename/Delete (see TestLocationsWebHandlers_Update_Success_Redirects/
+	// TestLocationsWebHandlers_Delete_Success_Redirects, which assert against these).
+	lastRenamePrincipal identity.Principal
+	lastDeletePrincipal identity.Principal
 }
 
 func newFakeLocationService() *fakeLocationService {
@@ -94,7 +104,8 @@ func (f *fakeLocationService) Create(_ context.Context, name, _ string, _ *domai
 	return &l, nil
 }
 
-func (f *fakeLocationService) Rename(_ context.Context, _ identity.Principal, id domain.LocationID, name string) error {
+func (f *fakeLocationService) Rename(_ context.Context, viewer identity.Principal, id domain.LocationID, name string) error {
+	f.lastRenamePrincipal = viewer
 	if f.renameErr != nil {
 		return f.renameErr
 	}
@@ -107,7 +118,8 @@ func (f *fakeLocationService) Rename(_ context.Context, _ identity.Principal, id
 	return nil
 }
 
-func (f *fakeLocationService) Delete(_ context.Context, _ identity.Principal, id domain.LocationID) error {
+func (f *fakeLocationService) Delete(_ context.Context, viewer identity.Principal, id domain.LocationID) error {
+	f.lastDeletePrincipal = viewer
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
@@ -448,7 +460,8 @@ func TestLocationsWebHandlers_Update_Success_Redirects(t *testing.T) {
 	locations := newFakeLocationService()
 	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
 	locations.locations[loc.ID] = loc
-	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	viewer := testViewer()
+	h := newLocationsWebHarness(t, viewer, locations, &fakeBinsByLocation{})
 	csrf := h.getCSRF(t, "/locations/"+loc.ID.String()+"/edit")
 
 	resp, _ := h.postForm(t, "/locations/"+loc.ID.String(), url.Values{"csrf_token": {csrf}, "name": {"Attic"}}, false)
@@ -460,6 +473,12 @@ func TestLocationsWebHandlers_Update_Success_Redirects(t *testing.T) {
 	}
 	if locations.locations[loc.ID].Name != "Attic" {
 		t.Errorf("Update did not rename the location: %+v", locations.locations[loc.ID])
+	}
+	// NSTR-131: the handler must pass the request's OWN authenticated
+	// principal to Rename, never a zero/different one, since Rename's
+	// household scoping depends entirely on this argument.
+	if locations.lastRenamePrincipal != viewer {
+		t.Errorf("Rename's viewer = %+v, want the request's own principal %+v", locations.lastRenamePrincipal, viewer)
 	}
 }
 
@@ -595,7 +614,8 @@ func TestLocationsWebHandlers_Delete_Success_Redirects(t *testing.T) {
 	locations := newFakeLocationService()
 	loc := domain.Location{ID: domain.NewLocationID(), Name: "Garage"}
 	locations.locations[loc.ID] = loc
-	h := newLocationsWebHarness(t, testViewer(), locations, &fakeBinsByLocation{})
+	viewer := testViewer()
+	h := newLocationsWebHarness(t, viewer, locations, &fakeBinsByLocation{})
 	csrf := h.getCSRF(t, "/locations/"+loc.ID.String())
 
 	resp, _ := h.postForm(t, "/locations/"+loc.ID.String()+"/delete", url.Values{"csrf_token": {csrf}}, false)
@@ -604,5 +624,11 @@ func TestLocationsWebHandlers_Delete_Success_Redirects(t *testing.T) {
 	}
 	if got := resp.Header.Get("Location"); got != "/locations" {
 		t.Errorf("Location = %q, want %q", got, "/locations")
+	}
+	// NSTR-131: the handler must pass the request's OWN authenticated
+	// principal to Delete, never a zero/different one, since Delete's
+	// household scoping depends entirely on this argument.
+	if locations.lastDeletePrincipal != viewer {
+		t.Errorf("Delete's viewer = %+v, want the request's own principal %+v", locations.lastDeletePrincipal, viewer)
 	}
 }

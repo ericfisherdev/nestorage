@@ -22,9 +22,20 @@ type fakeItemStore struct {
 	item            *domain.Item
 	getForUpdateErr error
 	moveErr         error
+
+	// lastGetForUpdateHouseholdID/lastMoveHouseholdID record the householdID
+	// OperationService.transition actually passed through — NSTR-131 threads
+	// householdID into both calls (see transition's own doc); recording it
+	// here, rather than silently accepting-and-ignoring it, is what lets
+	// TestOperationService_AddToBin_Success and friends catch a regression
+	// that dropped or zeroed that argument before it ever reaches a real
+	// ItemRepository.
+	lastGetForUpdateHouseholdID identity.HouseholdID
+	lastMoveHouseholdID         identity.HouseholdID
 }
 
-func (f *fakeItemStore) GetForUpdate(_ context.Context, _ identity.HouseholdID, id domain.ItemID) (*domain.Item, error) {
+func (f *fakeItemStore) GetForUpdate(_ context.Context, householdID identity.HouseholdID, id domain.ItemID) (*domain.Item, error) {
+	f.lastGetForUpdateHouseholdID = householdID
 	if f.getForUpdateErr != nil {
 		return nil, f.getForUpdateErr
 	}
@@ -35,7 +46,8 @@ func (f *fakeItemStore) GetForUpdate(_ context.Context, _ identity.HouseholdID, 
 	return &cp, nil
 }
 
-func (f *fakeItemStore) Move(_ context.Context, _ identity.HouseholdID, id domain.ItemID, dst domain.Placement) (int64, error) {
+func (f *fakeItemStore) Move(_ context.Context, householdID identity.HouseholdID, id domain.ItemID, dst domain.Placement) (int64, error) {
+	f.lastMoveHouseholdID = householdID
 	if f.moveErr != nil {
 		return 0, f.moveErr
 	}
@@ -104,9 +116,14 @@ func (u *fakeUnitOfWork) WithinTx(_ context.Context, fn func(app.OperationStores
 type fakeReturnRequestFulfiller struct {
 	requests   []domain.ReturnRequest
 	fulfillErr error
+
+	// lastHouseholdID records the householdID transition actually passed —
+	// see fakeItemStore's identical rationale above.
+	lastHouseholdID identity.HouseholdID
 }
 
-func (f *fakeReturnRequestFulfiller) FulfillOpenForItem(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error) {
+func (f *fakeReturnRequestFulfiller) FulfillOpenForItem(_ context.Context, householdID identity.HouseholdID, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error) {
+	f.lastHouseholdID = householdID
 	if f.fulfillErr != nil {
 		return nil, f.fulfillErr
 	}
@@ -261,6 +278,7 @@ func TestOperationService_AddToBin(t *testing.T) {
 	bins.bin = &domain.Bin{ID: destBinID, Code: "B2", Name: "Bin B"}
 	svc, _ := newTestOperationService(store, bins)
 	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
+	actor.HouseholdID = identity.NewHouseholdID()
 
 	op, err := svc.AddToBin(context.Background(), actor, store.item.ID, destBinID)
 	if err != nil {
@@ -280,6 +298,14 @@ func TestOperationService_AddToBin(t *testing.T) {
 	}
 	if op.Actor != actor.Actor() || op.UserID != actor.UserID {
 		t.Errorf("AddToBin: Actor/UserID = %q/%v, want %q/%v", op.Actor, op.UserID, actor.Actor(), actor.UserID)
+	}
+	// NSTR-131: transition must pass actor's own household through to both
+	// the tx-bound GetForUpdate and Move calls.
+	if store.lastGetForUpdateHouseholdID != actor.HouseholdID {
+		t.Errorf("GetForUpdate's householdID = %v, want actor's own %v", store.lastGetForUpdateHouseholdID, actor.HouseholdID)
+	}
+	if store.lastMoveHouseholdID != actor.HouseholdID {
+		t.Errorf("Move's householdID = %v, want actor's own %v", store.lastMoveHouseholdID, actor.HouseholdID)
 	}
 }
 
@@ -667,8 +693,9 @@ func TestOperationService_AddToBin_FulfilsOpenReturnRequests(t *testing.T) {
 	requester := identity.NewUserID()
 	open := openReturnRequestOn(store.item.ID, requester, holder)
 	users := map[identity.UserID]*identity.User{requester: {ID: requester, DisplayName: "Riley"}}
-	svc, _, _, notifier := newTestOperationServiceWithReturnRequests(store, bins, []domain.ReturnRequest{open}, users)
+	svc, _, requests, notifier := newTestOperationServiceWithReturnRequests(store, bins, []domain.ReturnRequest{open}, users)
 	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
+	actor.HouseholdID = identity.NewHouseholdID()
 
 	op, err := svc.AddToBin(context.Background(), actor, store.item.ID, destBinID)
 	if err != nil {
@@ -677,6 +704,11 @@ func TestOperationService_AddToBin_FulfilsOpenReturnRequests(t *testing.T) {
 
 	if len(op.FulfilledReturnRequests) != 1 {
 		t.Fatalf("Operation.FulfilledReturnRequests = %d requests, want exactly 1", len(op.FulfilledReturnRequests))
+	}
+	// NSTR-131: transition must pass actor's own household through to
+	// FulfillOpenForItem too, not only GetForUpdate/Move.
+	if requests.lastHouseholdID != actor.HouseholdID {
+		t.Errorf("FulfillOpenForItem's householdID = %v, want actor's own %v", requests.lastHouseholdID, actor.HouseholdID)
 	}
 	got := op.FulfilledReturnRequests[0]
 	if got.ID != open.ID || got.Status != domain.ReturnRequestStatusFulfilled || got.ResolvedAt == nil {
