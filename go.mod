@@ -17,7 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.35
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.66.0
-	github.com/ericfisherdev/nestcore v0.2.0
+	github.com/ericfisherdev/nestcore v0.2.1-0.20260803135241-89edcefa949b
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/pb33f/libopenapi v0.38.7
@@ -36,6 +36,7 @@ require (
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
 	github.com/alessio/shellescape v1.4.1 // indirect
+	github.com/alexedwards/scs/pgxstore v0.0.0-20251002162104-209de6e426de // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.31 // indirect
@@ -75,6 +76,7 @@ require (
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fogleman/gg v1.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.10-rc1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.6.2 // indirect
@@ -82,15 +84,19 @@ require (
 	github.com/go-json-experiment/json v0.0.0-20250910080747-cc2cfa0554c3 // indirect
 	github.com/go-openapi/jsonpointer v0.23.2 // indirect
 	github.com/go-openapi/swag/jsonname v0.26.1 // indirect
-	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/go-webauthn/webauthn v0.17.4 // indirect
+	github.com/go-webauthn/x v0.2.6 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golangci/misspell v0.4.1 // indirect
 	github.com/google/go-github/v60 v60.0.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -126,6 +132,7 @@ require (
 	github.com/pb33f/jsonpath v0.8.2 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/phpdave11/gofpdi v1.0.14-0.20211212211723-1f10f9844311 // indirect
 	github.com/pjbgf/sha1cd v0.3.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -143,6 +150,8 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cobra v1.10.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/tinylib/msgp v1.6.4 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yeqown/go-qrcode/v2 v2.2.5 // indirect

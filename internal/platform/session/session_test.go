@@ -2,7 +2,6 @@ package session_test
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -194,7 +193,8 @@ func TestNew_AppliesCookieSettings(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	sm := session.New(pool, cfg, slog.New(slog.DiscardHandler))
+	sm, stop := session.New(pool, cfg)
+	defer stop()
 
 	if !sm.Cookie.HttpOnly {
 		t.Error("Cookie.HttpOnly = false, want true")
@@ -216,5 +216,8 @@ func TestNew_AppliesCookieSettings(t *testing.T) {
 	}
 	if sm.IdleTimeout != cfg.Lifetime/2 {
 		t.Errorf("IdleTimeout = %v, want half of Lifetime (%v)", sm.IdleTimeout, cfg.Lifetime/2)
+	}
+	if !sm.HashTokenInStore {
+		t.Error("HashTokenInStore = false, want true (NSTR-117: both apps must hash identically for a shared session to be readable by either)")
 	}
 }
