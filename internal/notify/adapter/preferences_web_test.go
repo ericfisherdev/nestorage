@@ -97,6 +97,10 @@ func (f *fakeCurrentUserFinder) FindByID(_ context.Context, id identity.UserID) 
 	return u, nil
 }
 
+func (f *fakeCurrentUserFinder) EnsureProfile(ctx context.Context, id identity.UserID) (*identity.User, error) {
+	return f.FindByID(ctx, id)
+}
+
 func newPreferencesWebFixture(t *testing.T, user *identity.User) *preferencesWebFixture {
 	t.Helper()
 	sm := scs.New()

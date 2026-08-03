@@ -36,6 +36,10 @@ func (f *fakeCurrentUserRepo) FindByID(_ context.Context, id domain.UserID) (*do
 	return u, nil
 }
 
+func (f *fakeCurrentUserRepo) EnsureProfile(ctx context.Context, id domain.UserID) (*domain.User, error) {
+	return f.FindByID(ctx, id)
+}
+
 // protectedHandler reports the CurrentUser resolved into the request
 // context, so a test can assert both that RequireUser let the request
 // through AND that Authenticate resolved the right user.
