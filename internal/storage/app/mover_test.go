@@ -21,9 +21,21 @@ type fakeBinStore struct {
 	getForUpdateErr error
 	moveErr         error
 	moveCalls       int
+
+	// lastGetForUpdateHouseholdID/lastMoveHouseholdID record the householdID
+	// BinMover actually passed through — NSTR-131 threads actor.HouseholdID
+	// into both calls so the tx-bound store's own household predicate has
+	// something to bind to; recording it here (rather than silently
+	// accepting-and-ignoring it) is what lets
+	// TestBinMover_Move_Success/TestBinMoveEmitsMovedEventPerItem catch a
+	// regression that dropped or zeroed that argument before it ever reaches
+	// a real BinRepository.
+	lastGetForUpdateHouseholdID identity.HouseholdID
+	lastMoveHouseholdID         identity.HouseholdID
 }
 
-func (f *fakeBinStore) GetForUpdate(_ context.Context, _ identity.HouseholdID, id domain.BinID) (*domain.Bin, error) {
+func (f *fakeBinStore) GetForUpdate(_ context.Context, householdID identity.HouseholdID, id domain.BinID) (*domain.Bin, error) {
+	f.lastGetForUpdateHouseholdID = householdID
 	if f.getForUpdateErr != nil {
 		return nil, f.getForUpdateErr
 	}
@@ -34,8 +46,9 @@ func (f *fakeBinStore) GetForUpdate(_ context.Context, _ identity.HouseholdID, i
 	return &cp, nil
 }
 
-func (f *fakeBinStore) Move(_ context.Context, _ identity.HouseholdID, id domain.BinID, target domain.LocationID, now time.Time) (int64, error) {
+func (f *fakeBinStore) Move(_ context.Context, householdID identity.HouseholdID, id domain.BinID, target domain.LocationID, now time.Time) (int64, error) {
 	f.moveCalls++
+	f.lastMoveHouseholdID = householdID
 	if f.moveErr != nil {
 		return 0, f.moveErr
 	}
@@ -53,9 +66,14 @@ func (f *fakeBinStore) Move(_ context.Context, _ identity.HouseholdID, id domain
 type fakeBinItemIDLister struct {
 	refs    []domain.ItemRef
 	listErr error
+
+	// lastHouseholdID records the householdID BinMover's moved-event fan-out
+	// actually passed — see fakeBinStore's identical rationale above.
+	lastHouseholdID identity.HouseholdID
 }
 
-func (f *fakeBinItemIDLister) ListIDsByBin(_ context.Context, _ identity.HouseholdID, _ domain.BinID) ([]domain.ItemRef, error) {
+func (f *fakeBinItemIDLister) ListIDsByBin(_ context.Context, householdID identity.HouseholdID, _ domain.BinID) ([]domain.ItemRef, error) {
+	f.lastHouseholdID = householdID
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -180,6 +198,7 @@ func TestBinMover_Move_Success(t *testing.T) {
 
 	holder := identity.NewUserID()
 	actor := identity.NewUserPrincipal(holder, identity.RoleAdult, "Alice")
+	actor.HouseholdID = identity.NewHouseholdID()
 
 	result, err := mover.Move(context.Background(), actor, binID, to)
 	if err != nil {
@@ -206,6 +225,12 @@ func TestBinMover_Move_Success(t *testing.T) {
 	if store.moveCalls != 1 {
 		t.Errorf("Move called %d times, want exactly 1", store.moveCalls)
 	}
+	if store.lastGetForUpdateHouseholdID != actor.HouseholdID {
+		t.Errorf("GetForUpdate's householdID = %v, want actor's own %v", store.lastGetForUpdateHouseholdID, actor.HouseholdID)
+	}
+	if store.lastMoveHouseholdID != actor.HouseholdID {
+		t.Errorf("Move's householdID = %v, want actor's own %v", store.lastMoveHouseholdID, actor.HouseholdID)
+	}
 }
 
 // TestBinMoveEmitsMovedEventPerItem proves NSTR-41's fan-out contract:
@@ -220,9 +245,11 @@ func TestBinMoveEmitsMovedEventPerItem(t *testing.T) {
 	itemA := domain.ItemRef{ID: domain.NewItemID(), Name: "Stove"}
 	itemB := domain.ItemRef{ID: domain.NewItemID(), Name: "Lantern"}
 	events := &fakeEventAppender{}
-	uow := &fakeBinUnitOfWork{store: store, items: &fakeBinItemIDLister{refs: []domain.ItemRef{itemA, itemB}}, events: events}
+	items := &fakeBinItemIDLister{refs: []domain.ItemRef{itemA, itemB}}
+	uow := &fakeBinUnitOfWork{store: store, items: items, events: events}
 	mover := app.NewBinMover(uow, bins, locs, fixedClock(time.Now()), testLogger())
 	actor := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Alice")
+	actor.HouseholdID = identity.NewHouseholdID()
 
 	if _, err := mover.Move(context.Background(), actor, binID, to); err != nil {
 		t.Fatalf("Move: %v", err)
@@ -230,6 +257,9 @@ func TestBinMoveEmitsMovedEventPerItem(t *testing.T) {
 
 	if len(events.events) != 2 {
 		t.Fatalf("Move appended %d events, want exactly 2 (one per item)", len(events.events))
+	}
+	if items.lastHouseholdID != actor.HouseholdID {
+		t.Errorf("ListIDsByBin's householdID = %v, want actor's own %v", items.lastHouseholdID, actor.HouseholdID)
 	}
 	for i, want := range []domain.ItemRef{itemA, itemB} {
 		got := events.events[i]

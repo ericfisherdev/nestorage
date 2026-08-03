@@ -46,12 +46,20 @@ func (f *fakeReturnRequestRepo) Create(_ context.Context, r *domain.ReturnReques
 	return nil
 }
 
-func (f *fakeReturnRequestRepo) Cancel(_ context.Context, _ identity.HouseholdID, id domain.ReturnRequestID, requesterID identity.UserID) (*domain.ReturnRequest, error) {
+// Cancel and ListByItem both enforce householdID against the stored row's
+// own HouseholdID — NSTR-131's household predicate, mirrored here (not just
+// accepted-and-ignored) so a regression that dropped or zeroed
+// actor.HouseholdID before it reached ReturnRequestLifecycleStore.Cancel/
+// returnRequestLister.ListByItem would fail these unit tests, not only the
+// real adapter's own gated leak suite
+// (household_scoping_gated_test.go's TestReturnRequestRepository_
+// Cancel_CrossHouseholdRejected/ListByItem_CrossHouseholdEmpty).
+func (f *fakeReturnRequestRepo) Cancel(_ context.Context, householdID identity.HouseholdID, id domain.ReturnRequestID, requesterID identity.UserID) (*domain.ReturnRequest, error) {
 	if f.cancelErr != nil {
 		return nil, f.cancelErr
 	}
 	existing, ok := f.requests[id]
-	if !ok || existing.RequesterID != requesterID {
+	if !ok || existing.RequesterID != requesterID || existing.HouseholdID != householdID {
 		return nil, domain.ErrReturnRequestNotFound
 	}
 	if err := existing.Cancel(time.Now()); err != nil {
@@ -61,13 +69,13 @@ func (f *fakeReturnRequestRepo) Cancel(_ context.Context, _ identity.HouseholdID
 	return &cp, nil
 }
 
-func (f *fakeReturnRequestRepo) ListByItem(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID) ([]domain.ReturnRequest, error) {
+func (f *fakeReturnRequestRepo) ListByItem(_ context.Context, householdID identity.HouseholdID, itemID domain.ItemID) ([]domain.ReturnRequest, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
 	reqs := make([]domain.ReturnRequest, 0)
 	for _, r := range f.requests {
-		if r.ItemID == itemID {
+		if r.ItemID == itemID && r.HouseholdID == householdID {
 			reqs = append(reqs, *r)
 		}
 	}

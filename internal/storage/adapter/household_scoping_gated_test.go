@@ -404,6 +404,12 @@ func TestBinRepository_Create_CrossHouseholdCreatedByRejected(t *testing.T) {
 //
 // LocationRepository (postgres.go):
 //
+//	Create           -> excluded; Create takes a household from the caller's
+//	                    own *Location value, never resolves a household by an
+//	                    existing id, so there is no cross-household READ/
+//	                    MUTATE-by-id vector to prove here — see
+//	                    TestLocationRepository_Create_CrossHouseholdParentRejected
+//	                    above for its own cross-household FK proof instead.
 //	FindVisibleByID -> TestLocationRepository_FindVisibleByID_CrossHouseholdRejected
 //	List             -> TestLocationRepository_List_ExcludesOtherHousehold
 //	Rename           -> TestLocationRepository_Rename_CrossHouseholdRejected
@@ -411,6 +417,9 @@ func TestBinRepository_Create_CrossHouseholdCreatedByRejected(t *testing.T) {
 //
 // BinRepository (bin_postgres.go):
 //
+//	Create                -> excluded, same reasoning as LocationRepository.Create
+//	                         above — see TestBinRepository_Create_CrossHouseholdLocationRejected/
+//	                         TestBinRepository_Create_CrossHouseholdCreatedByRejected above.
 //	FindVisibleByID       -> TestBinRepository_FindVisibleByID_CrossHouseholdRejected
 //	FindVisibleByCode     -> covered above, see TestBinRepository_FindVisibleByCode_ScopedToHouseholdEvenWhenCodesCollide
 //	ListVisible           -> TestBinRepository_ListVisible_ExcludesOtherHousehold
@@ -423,6 +432,8 @@ func TestBinRepository_Create_CrossHouseholdCreatedByRejected(t *testing.T) {
 //
 // ItemRepository (item_postgres.go, item_search_postgres.go):
 //
+//	Create            -> excluded, same reasoning as LocationRepository.Create
+//	                     above — see TestItemRepository_Create_CrossHouseholdBinRejected above.
 //	Get               -> TestItemRepository_Get_CrossHouseholdRejected
 //	GetForUpdate      -> TestItemRepository_GetForUpdate_CrossHouseholdRejected
 //	Update            -> TestItemRepository_Update_CrossHouseholdRejected

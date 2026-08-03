@@ -124,9 +124,10 @@ func (s *LocationService) Create(ctx context.Context, name, description string, 
 }
 
 // Rename validates and overwrites id's name, scoped to viewer's household.
-// Returns a wrapped domain.ErrInvalidLocationName for a blank/over-long name,
-// or a wrapped domain.ErrLocationNotFound when id is unknown or belongs to a
-// different household.
+// Returns domain.ErrInvalidLocationName (unwrapped, from
+// domain.ValidateLocationName) for a blank/over-long name, or a wrapped
+// domain.ErrLocationNotFound when id is unknown or belongs to a different
+// household.
 func (s *LocationService) Rename(ctx context.Context, viewer identity.Principal, id domain.LocationID, name string) error {
 	validName, err := domain.ValidateLocationName(name)
 	if err != nil {

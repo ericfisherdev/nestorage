@@ -45,6 +45,24 @@ import (
 //	SetPrimary       -> TestPhotoRepository_SetPrimary_CrossHouseholdRejected
 //	Reorder          -> TestPhotoRepository_Reorder_CrossHouseholdNoop
 //
+// Three remaining exported methods carry no household predicate at all, by
+// design, and are excluded from this leak suite because no handler ever
+// reaches them with a viewer-controlled id (verified: `grep -rn
+// "SetThumbnailRef\|ListMissingThumbnail\|ListPrimaryForItems"` outside this
+// file and ports.go turns up only cmd/backfill-thumbs and
+// PhotoService.ListPrimaryThumbRefs):
+//
+//	SetThumbnailRef      -> cmd/backfill-thumbs only (a trusted systemd-timer
+//	                        batch job, never a web/API handler) — see its
+//	                        own doc in ports.go.
+//	ListMissingThumbnail -> same trusted-batch-job caller as SetThumbnailRef.
+//	ListPrimaryForItems  -> called only by PhotoService.ListPrimaryThumbRefs
+//	                        with itemIDs already scoped by the CALLER's own
+//	                        household+visibility-scoped query (SearchVisible/
+//	                        ListVisible) before it ever reaches this method
+//	                        — see ListPrimaryForItems' own doc in ports.go
+//	                        for why itemIDs is trusted pre-scoped input.
+//
 // ---------------------------------------------------------------------------
 
 // photoHouseholdScopingFixture wires a PhotoRepository alongside the

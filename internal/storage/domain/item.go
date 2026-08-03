@@ -172,6 +172,11 @@ type ItemRepository interface {
 	// statement. Not visibility-scoped: NSTR-29 calls this only after a
 	// prior Get has already confirmed the principal may see the item.
 	GetForUpdate(ctx context.Context, householdID identity.HouseholdID, id ItemID) (*Item, error)
+	// Update overwrites it.Name/it.Description/it.Quantity, scoped to
+	// householdID alone — it.HouseholdID (if the caller happened to set it)
+	// is never read; the WHERE clause binds only the householdID parameter,
+	// so a caller must pass the same household the row actually belongs to,
+	// not rely on the *Item value carrying it.
 	Update(ctx context.Context, householdID identity.HouseholdID, it *Item) error
 	// Move is the placement primitive NSTR-29's add/remove/return build on:
 	// it swaps current_bin_id/held_by to match dst in one statement,
