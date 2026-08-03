@@ -186,6 +186,18 @@ func householdArgs(viewer identity.Principal) []any {
 	return []any{viewer.HouseholdID.String()}
 }
 
+// scopedArgs appends householdArgs(viewer) then viewerArgs(viewer) onto
+// prefix, in that order, the exact sequence a query built as `<own predicates>
+// AND householdWhere(offset) AND visibilityWhere(offset+1)` expects its
+// arguments in. Every BinRepository method that combines both predicates
+// builds its args this way; factored out here (rather than repeating the
+// two-append pattern at each call site) so a future edit cannot miscount a
+// paramOffset by getting the argument order wrong.
+func scopedArgs(prefix []any, viewer identity.Principal) []any {
+	args := append(prefix, householdArgs(viewer)...)
+	return append(args, viewerArgs(viewer)...)
+}
+
 // scanner abstracts pgx.Row and pgx.Rows for the shared scan helper.
 type scanner interface {
 	Scan(dest ...any) error

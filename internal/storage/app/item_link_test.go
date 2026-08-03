@@ -20,13 +20,24 @@ type fakeItemLinkRepo struct {
 	deleteErr       error
 	listErr         error
 	nextPositionErr error
+
+	// lastHouseholdID records the householdID ItemLinkService actually
+	// passed through on the most recent call — ItemLink carries no
+	// HouseholdID field of its own to enforce against (it inherits scope via
+	// item_id, see domain.ItemLinkRepository's own doc), so this fake
+	// records rather than enforces, mirroring fakeBinStore's identical
+	// rationale (mover_test.go): a regression that dropped or zeroed
+	// viewer.HouseholdID before it reached itemLinkRepository would
+	// otherwise go undetected here.
+	lastHouseholdID identity.HouseholdID
 }
 
 func newFakeItemLinkRepo() *fakeItemLinkRepo {
 	return &fakeItemLinkRepo{links: make(map[domain.ItemLinkID]*domain.ItemLink)}
 }
 
-func (f *fakeItemLinkRepo) Create(_ context.Context, _ identity.HouseholdID, l *domain.ItemLink) error {
+func (f *fakeItemLinkRepo) Create(_ context.Context, householdID identity.HouseholdID, l *domain.ItemLink) error {
+	f.lastHouseholdID = householdID
 	if f.createErr != nil {
 		return f.createErr
 	}
@@ -35,7 +46,8 @@ func (f *fakeItemLinkRepo) Create(_ context.Context, _ identity.HouseholdID, l *
 	return nil
 }
 
-func (f *fakeItemLinkRepo) Update(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID, id domain.ItemLinkID, label, rawURL string) error {
+func (f *fakeItemLinkRepo) Update(_ context.Context, householdID identity.HouseholdID, itemID domain.ItemID, id domain.ItemLinkID, label, rawURL string) error {
+	f.lastHouseholdID = householdID
 	if f.updateErr != nil {
 		return f.updateErr
 	}
@@ -47,7 +59,8 @@ func (f *fakeItemLinkRepo) Update(_ context.Context, _ identity.HouseholdID, ite
 	return nil
 }
 
-func (f *fakeItemLinkRepo) Delete(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID, id domain.ItemLinkID) error {
+func (f *fakeItemLinkRepo) Delete(_ context.Context, householdID identity.HouseholdID, itemID domain.ItemID, id domain.ItemLinkID) error {
+	f.lastHouseholdID = householdID
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
@@ -59,7 +72,8 @@ func (f *fakeItemLinkRepo) Delete(_ context.Context, _ identity.HouseholdID, ite
 	return nil
 }
 
-func (f *fakeItemLinkRepo) ListByItem(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID) ([]domain.ItemLink, error) {
+func (f *fakeItemLinkRepo) ListByItem(_ context.Context, householdID identity.HouseholdID, itemID domain.ItemID) ([]domain.ItemLink, error) {
+	f.lastHouseholdID = householdID
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -72,7 +86,8 @@ func (f *fakeItemLinkRepo) ListByItem(_ context.Context, _ identity.HouseholdID,
 	return links, nil
 }
 
-func (f *fakeItemLinkRepo) NextPosition(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID) (int, error) {
+func (f *fakeItemLinkRepo) NextPosition(_ context.Context, householdID identity.HouseholdID, itemID domain.ItemID) (int, error) {
+	f.lastHouseholdID = householdID
 	if f.nextPositionErr != nil {
 		return 0, f.nextPositionErr
 	}
@@ -134,6 +149,7 @@ func TestItemLinkService_Add(t *testing.T) {
 	svc := app.NewItemLinkService(repo, items, testLogger())
 	itemID := domain.NewItemID()
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
+	viewer.HouseholdID = identity.NewHouseholdID()
 
 	l, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com/manual.pdf")
 	if err != nil {
@@ -148,6 +164,9 @@ func TestItemLinkService_Add(t *testing.T) {
 	if items.getCalls != 1 {
 		t.Errorf("Add must authorize via the item getter exactly once, got %d calls", items.getCalls)
 	}
+	if repo.lastHouseholdID != viewer.HouseholdID {
+		t.Errorf("Create's householdID = %v, want viewer's own %v", repo.lastHouseholdID, viewer.HouseholdID)
+	}
 }
 
 func TestItemLinkService_Add_AssignsNextPosition(t *testing.T) {
@@ -155,6 +174,7 @@ func TestItemLinkService_Add_AssignsNextPosition(t *testing.T) {
 	svc := app.NewItemLinkService(repo, &fakeItemLinkItemGetter{}, testLogger())
 	itemID := domain.NewItemID()
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
+	viewer.HouseholdID = identity.NewHouseholdID()
 
 	first, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com/manual")
 	if err != nil {
@@ -166,6 +186,9 @@ func TestItemLinkService_Add_AssignsNextPosition(t *testing.T) {
 	}
 	if first.Position != 0 || second.Position != 1 {
 		t.Errorf("positions = [%d, %d], want [0, 1]", first.Position, second.Position)
+	}
+	if repo.lastHouseholdID != viewer.HouseholdID {
+		t.Errorf("NextPosition's householdID = %v, want viewer's own %v", repo.lastHouseholdID, viewer.HouseholdID)
 	}
 }
 
@@ -220,6 +243,7 @@ func TestItemLinkService_Edit(t *testing.T) {
 	svc := app.NewItemLinkService(repo, &fakeItemLinkItemGetter{}, testLogger())
 	itemID := domain.NewItemID()
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
+	viewer.HouseholdID = identity.NewHouseholdID()
 
 	l, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com/old")
 	if err != nil {
@@ -232,6 +256,9 @@ func TestItemLinkService_Edit(t *testing.T) {
 	got := repo.links[l.ID]
 	if got.Label != "Owner's manual" || got.URL != "https://example.com/new" {
 		t.Errorf("Edit did not update the link: %+v", got)
+	}
+	if repo.lastHouseholdID != viewer.HouseholdID {
+		t.Errorf("Update's householdID = %v, want viewer's own %v", repo.lastHouseholdID, viewer.HouseholdID)
 	}
 }
 
@@ -270,6 +297,7 @@ func TestItemLinkService_Remove(t *testing.T) {
 	svc := app.NewItemLinkService(repo, &fakeItemLinkItemGetter{}, testLogger())
 	itemID := domain.NewItemID()
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
+	viewer.HouseholdID = identity.NewHouseholdID()
 
 	l, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com")
 	if err != nil {
@@ -280,6 +308,9 @@ func TestItemLinkService_Remove(t *testing.T) {
 	}
 	if _, ok := repo.links[l.ID]; ok {
 		t.Error("Remove did not delete the link from the repository")
+	}
+	if repo.lastHouseholdID != viewer.HouseholdID {
+		t.Errorf("Delete's householdID = %v, want viewer's own %v", repo.lastHouseholdID, viewer.HouseholdID)
 	}
 }
 
@@ -308,6 +339,7 @@ func TestItemLinkService_ListForItem(t *testing.T) {
 	svc := app.NewItemLinkService(repo, &fakeItemLinkItemGetter{}, testLogger())
 	itemID := domain.NewItemID()
 	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
+	viewer.HouseholdID = identity.NewHouseholdID()
 
 	if _, err := svc.Add(context.Background(), viewer, itemID, "Manual", "https://example.com"); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -322,6 +354,9 @@ func TestItemLinkService_ListForItem(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Label != "Manual" {
 		t.Errorf("ListForItem(%v) = %+v, want exactly the one link on that item", itemID, got)
+	}
+	if repo.lastHouseholdID != viewer.HouseholdID {
+		t.Errorf("ListByItem's householdID = %v, want viewer's own %v", repo.lastHouseholdID, viewer.HouseholdID)
 	}
 }
 

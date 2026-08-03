@@ -63,24 +63,30 @@ func (f *fakeItemRepo) Get(_ context.Context, _ identity.Principal, id domain.It
 	return &cp, nil
 }
 
-func (f *fakeItemRepo) GetForUpdate(_ context.Context, _ identity.HouseholdID, id domain.ItemID) (*domain.Item, error) {
+// GetForUpdate, Update, and Delete all enforce householdID against the
+// stored item's own HouseholdID — NSTR-131's household predicate, mirrored
+// here (not just accepted-and-ignored) so a regression that dropped or
+// zeroed actor.HouseholdID before it reached ItemLifecycleStore would fail
+// these hermetic unit tests too, not only the real adapter's own gated leak
+// suite.
+func (f *fakeItemRepo) GetForUpdate(_ context.Context, householdID identity.HouseholdID, id domain.ItemID) (*domain.Item, error) {
 	if f.getForUpdateErr != nil {
 		return nil, f.getForUpdateErr
 	}
 	it, ok := f.items[id]
-	if !ok {
+	if !ok || it.HouseholdID != householdID {
 		return nil, domain.ErrItemNotFound
 	}
 	cp := *it
 	return &cp, nil
 }
 
-func (f *fakeItemRepo) Update(_ context.Context, _ identity.HouseholdID, it *domain.Item) error {
+func (f *fakeItemRepo) Update(_ context.Context, householdID identity.HouseholdID, it *domain.Item) error {
 	if f.updateErr != nil {
 		return f.updateErr
 	}
 	existing, ok := f.items[it.ID]
-	if !ok {
+	if !ok || existing.HouseholdID != householdID {
 		return domain.ErrItemNotFound
 	}
 	existing.Name, existing.Description, existing.Quantity = it.Name, it.Description, it.Quantity
@@ -128,11 +134,12 @@ func (f *fakeItemRepo) ListVisible(_ context.Context, _ identity.Principal, filt
 	return items, nil
 }
 
-func (f *fakeItemRepo) Delete(_ context.Context, _ identity.HouseholdID, id domain.ItemID) error {
+func (f *fakeItemRepo) Delete(_ context.Context, householdID identity.HouseholdID, id domain.ItemID) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
-	if _, ok := f.items[id]; !ok {
+	it, ok := f.items[id]
+	if !ok || it.HouseholdID != householdID {
 		return domain.ErrItemNotFound
 	}
 	delete(f.items, id)

@@ -71,11 +71,16 @@ func (r *ItemRepository) FindVisibleDetail(ctx context.Context, viewer identity.
 // Returns an empty slice, not an error, when nothing matches.
 func (r *ItemRepository) SearchVisible(ctx context.Context, viewer identity.Principal, query string, limit int) ([]domain.ItemSearchResult, error) {
 	pattern := "%" + escapeLikeTerm(query) + "%"
-	q := itemSearchColumns + ` WHERE i.household_id = $1 AND ` + itemVisibilityWhere(1) + `
-		AND (i.name ILIKE $4 OR i.description ILIKE $4 OR b.name ILIKE $4 OR l.name ILIKE $4)
-		ORDER BY i.name, i.id
-		LIMIT $5`
 	args := append(householdArgs(viewer), viewerArgs(viewer)...)
+	// patternIdx/limitIdx are derived from len(args) rather than hardcoded,
+	// so a future change to householdArgs/viewerArgs' arity cannot silently
+	// misalign these two placeholders against the query string below — it
+	// would show up as a mismatched argument count instead.
+	patternIdx, limitIdx := len(args)+1, len(args)+2
+	q := itemSearchColumns + ` WHERE i.household_id = $1 AND ` + itemVisibilityWhere(1) + fmt.Sprintf(`
+		AND (i.name ILIKE $%[1]d OR i.description ILIKE $%[1]d OR b.name ILIKE $%[1]d OR l.name ILIKE $%[1]d)
+		ORDER BY i.name, i.id
+		LIMIT $%[2]d`, patternIdx, limitIdx)
 	args = append(args, pattern, limit)
 
 	rows, err := r.dbtx.Query(ctx, q, args...)
