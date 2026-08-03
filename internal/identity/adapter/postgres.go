@@ -34,7 +34,8 @@ const (
 // join) still count it.
 const userColumns = `
 	SELECT m.id, m.household_id, m.display_name, m.email, m.password_hash, m.role,
-	       COALESCE(p.color, 'indigo') AS color, m.active, m.created_at, m.updated_at
+	       COALESCE(p.color, 'indigo') AS color, m.active, m.created_at, m.updated_at,
+	       p.color IS NOT NULL
 	  FROM identity.member m
 	  LEFT JOIN profile p ON p.member_id = m.id`
 
@@ -107,20 +108,28 @@ func (r *UserRepository) Create(ctx context.Context, u *domain.User) error {
 
 // FindByID returns the user, or domain.ErrUserNotFound.
 func (r *UserRepository) FindByID(ctx context.Context, id domain.UserID) (*domain.User, error) {
-	u, err := scanUser(r.dbtx.QueryRow(ctx, userColumns+` WHERE m.id = $1`, id.String()))
+	u, _, err := r.findByIDRow(ctx, id)
+	return u, err
+}
+
+// findByIDRow is FindByID's shared implementation, additionally reporting
+// whether a profile row already existed — EnsureProfile needs that signal to
+// decide whether provisioning is necessary; FindByID itself discards it.
+func (r *UserRepository) findByIDRow(ctx context.Context, id domain.UserID) (*domain.User, bool, error) {
+	u, hadProfile, err := scanUser(r.dbtx.QueryRow(ctx, userColumns+` WHERE m.id = $1`, id.String()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrUserNotFound
+			return nil, false, domain.ErrUserNotFound
 		}
-		return nil, fmt.Errorf("find user by id: %w", err)
+		return nil, false, fmt.Errorf("find user by id: %w", err)
 	}
-	return u, nil
+	return u, hadProfile, nil
 }
 
 // FindByEmail returns the user, or domain.ErrUserNotFound. The comparison is
 // case-insensitive: email is a citext column.
 func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
-	u, err := scanUser(r.dbtx.QueryRow(ctx, userColumns+` WHERE m.email = $1`, email))
+	u, _, err := scanUser(r.dbtx.QueryRow(ctx, userColumns+` WHERE m.email = $1`, email))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrUserNotFound
@@ -142,7 +151,7 @@ func (r *UserRepository) List(ctx context.Context) ([]domain.User, error) {
 
 	users := make([]domain.User, 0)
 	for rows.Next() {
-		u, err := scanUser(rows)
+		u, _, err := scanUser(rows)
 		if err != nil {
 			return nil, fmt.Errorf("list users: scan: %w", err)
 		}
@@ -152,6 +161,90 @@ func (r *UserRepository) List(ctx context.Context) ([]domain.User, error) {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
 	return users, nil
+}
+
+// EnsureProfile implements domain.UserRepository.EnsureProfile. It is
+// idempotent: a user with an existing profile row is returned unchanged, at
+// the cost of one extra (cheap, indexed) query per call — a deliberate
+// simplicity trade-off over caching "already provisioned" state, since
+// provisioning only ever happens once per user in this app's lifetime and
+// this codebase has no existing per-request cache to hang that off of.
+//
+// The used-colors read and the insert run inside a transaction holding a
+// household-scoped advisory lock, mirroring this file's own
+// lastAdminGuardedUpdate convention: without it, two different profile-less
+// users of the same household provisioned concurrently could both read the
+// same "unused" color set and both assign the household's Nth color, since
+// profile has no per-household color-uniqueness constraint to catch that at
+// the database level.
+func (r *UserRepository) EnsureProfile(ctx context.Context, id domain.UserID) (*domain.User, error) {
+	u, hadProfile, err := r.findByIDRow(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if hadProfile {
+		return u, nil
+	}
+
+	beginner, ok := r.dbtx.(userTxBeginner)
+	if !ok {
+		return nil, errors.New("ensure profile: executor does not support transactions")
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ensure profile: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, u.HouseholdID.String()); err != nil {
+		return nil, fmt.Errorf("ensure profile: lock household: %w", err)
+	}
+
+	const usedColorsQ = `
+		SELECT p.color
+		  FROM profile p
+		  JOIN identity.member hm ON hm.id = p.member_id
+		 WHERE hm.household_id = $1`
+	rows, err := tx.Query(ctx, usedColorsQ, u.HouseholdID.String())
+	if err != nil {
+		return nil, fmt.Errorf("ensure profile: used colors: %w", err)
+	}
+	defer rows.Close()
+	used := make([]domain.UserColor, 0)
+	for rows.Next() {
+		var colorStr string
+		if err := rows.Scan(&colorStr); err != nil {
+			return nil, fmt.Errorf("ensure profile: scan color: %w", err)
+		}
+		color, err := domain.ParseUserColor(colorStr)
+		if err != nil {
+			return nil, fmt.Errorf("ensure profile: parse color: %w", err)
+		}
+		used = append(used, color)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ensure profile: used colors: %w", err)
+	}
+
+	const insertProfile = `
+		INSERT INTO profile (member_id, color) VALUES ($1, $2)
+		ON CONFLICT (member_id) DO NOTHING`
+	if _, err := tx.Exec(ctx, insertProfile, u.ID.String(), domain.NextColor(used).String()); err != nil {
+		return nil, fmt.Errorf("ensure profile: insert: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("ensure profile: commit: %w", err)
+	}
+
+	// Re-fetch outside the transaction: the advisory lock already serialized
+	// the used-colors read and insert against other users of this
+	// household, so the committed row's color is final by this point.
+	u, _, err = r.findByIDRow(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 // Update rewrites the user's mutable profile fields: display name, email,
@@ -386,33 +479,34 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanUser(r scanner) (*domain.User, error) {
+func scanUser(r scanner) (*domain.User, bool, error) {
 	var (
 		u            domain.User
 		idStr        string
 		householdStr string
 		role         string
 		color        string
+		hadProfile   bool
 	)
-	if err := r.Scan(&idStr, &householdStr, &u.DisplayName, &u.Email, &u.PasswordHash, &role, &color, &u.Active, &u.CreatedAt, &u.UpdatedAt); err != nil {
-		return nil, err
+	if err := r.Scan(&idStr, &householdStr, &u.DisplayName, &u.Email, &u.PasswordHash, &role, &color, &u.Active, &u.CreatedAt, &u.UpdatedAt, &hadProfile); err != nil {
+		return nil, false, err
 	}
 	id, err := domain.ParseUserID(idStr)
 	if err != nil {
-		return nil, fmt.Errorf("scan user: %w", err)
+		return nil, false, fmt.Errorf("scan user: %w", err)
 	}
 	householdID, err := domain.ParseHouseholdID(householdStr)
 	if err != nil {
-		return nil, fmt.Errorf("scan user: %w", err)
+		return nil, false, fmt.Errorf("scan user: %w", err)
 	}
 	parsedRole, err := domain.ParseRole(role)
 	if err != nil {
-		return nil, fmt.Errorf("scan user: %w", err)
+		return nil, false, fmt.Errorf("scan user: %w", err)
 	}
 	parsedColor, err := domain.ParseUserColor(color)
 	if err != nil {
-		return nil, fmt.Errorf("scan user: %w", err)
+		return nil, false, fmt.Errorf("scan user: %w", err)
 	}
 	u.ID, u.HouseholdID, u.Role, u.Color = id, householdID, parsedRole, parsedColor
-	return &u, nil
+	return &u, hadProfile, nil
 }

@@ -22,9 +22,13 @@ type currentUserContextKey struct{}
 
 // currentUserFinder is the narrow read port (ISP) Authenticate depends on:
 // only the by-id lookup it needs, satisfied by domain.UserRepository (a
-// superset) and by test fakes.
+// superset) and by test fakes. It resolves via EnsureProfile rather than a
+// bare FindByID: a session naming a user this app has never seen — a first
+// arrival via a session carried over from Nestova (NSTR-117) — must get its
+// profile row provisioned on the spot, not merely rendered with a
+// display-time default.
 type currentUserFinder interface {
-	FindByID(ctx context.Context, id domain.UserID) (*domain.User, error)
+	EnsureProfile(ctx context.Context, id domain.UserID) (*domain.User, error)
 }
 
 // CurrentUser returns the User Authenticate placed in ctx, and false when no
@@ -49,7 +53,7 @@ func resolveSessionUser(ctx context.Context, sm *scs.SessionManager, repo curren
 		return nil, false
 	}
 
-	u, err = repo.FindByID(ctx, id)
+	u, err = repo.EnsureProfile(ctx, id)
 	if err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
 			sm.Remove(ctx, session.KeyUserID)

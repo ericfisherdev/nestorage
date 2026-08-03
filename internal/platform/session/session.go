@@ -10,20 +10,25 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
-	"log/slog"
 	"net/http"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	corecfg "github.com/ericfisherdev/nestcore/config"
+	identitysession "github.com/ericfisherdev/nestcore/identity/session"
 )
 
 // KeyUserID is the session key under which the authenticated user's id is
 // stored. Exported so every consumer (NSTR-19's onboarding wizard, NSTR-20's
 // login, NSTR-24's principal resolution) reads and writes the same key
 // instead of each minting its own unexported string.
-const KeyUserID = "user_id"
+//
+// It aliases nestcore's identity/session.KeyMemberID (NSTR-117) rather than
+// its own private literal ("user_id" before this change): Nestova must read
+// the SAME key for a session shared over identity.sessions to carry a real
+// cross-app login, not just a shared cookie/store.
+const KeyUserID = identitysession.KeyMemberID
 
 // keyCSRF is the session key backing CSRFToken/VerifyCSRF. Unexported: no
 // caller needs the raw session value, only the two functions below.
@@ -32,29 +37,17 @@ const keyCSRF = "csrf_token"
 // csrfTokenLen is the CSRF token length in bytes (64-char hex string).
 const csrfTokenLen = 32
 
-// New constructs an scs.SessionManager backed by Postgres, sharing the pool
-// the rest of the app uses. The store targets identity.sessions (NSTR-116),
-// the shared identity schema's session table — not an app-schema table; see
-// identity_store.go and the 00017_identity_schema migration. logger is
-// required (panics on nil, matching every other constructor in this
-// codebase) — the store's background cleanup goroutine has no other way to
-// surface a failing purge. Cookie settings are derived from cfg: Secure
-// follows the resolved SESSION_COOKIE_SECURE policy (auto → prod-only, or
-// forced true/false), Lifetime from SESSION_LIFETIME.
-func New(pool *pgxpool.Pool, cfg corecfg.SessionConfig, logger *slog.Logger) *scs.SessionManager {
-	sm := scs.New()
-	sm.Store = newIdentityStore(pool, logger)
-	sm.Lifetime = cfg.Lifetime
-	// Expire idle sessions at half the absolute lifetime: active users stay
-	// signed in (each request refreshes idle time) while an abandoned
-	// session is reclaimed well before the hard Lifetime cap.
-	sm.IdleTimeout = cfg.Lifetime / 2
-	sm.Cookie.HttpOnly = true
-	sm.Cookie.SameSite = http.SameSiteLaxMode
-	sm.Cookie.Secure = cfg.Secure
-	sm.Cookie.Path = "/"
-	sm.Cookie.Persist = true
-	return sm
+// New constructs an scs.SessionManager over nestcore's shared
+// identity/session store (NSTR-117), replacing this package's own pre-
+// NSTR-130 identity.sessions shim (see this package's git history for
+// identity_store.go, removed by this change): both apps must build their
+// manager the same way — literal store, cookie name, and cookie attributes
+// — for a session written by one to be readable by the other, not merely an
+// equivalent one built independently. stop terminates the store's
+// background cleanup goroutine; the composition root (cmd/server/main.go)
+// defers it since main returns only at process shutdown.
+func New(pool *pgxpool.Pool, cfg corecfg.SessionConfig) (sm *scs.SessionManager, stop func()) {
+	return identitysession.NewManager(pool, cfg)
 }
 
 // CSRFToken returns the current session's CSRF token, minting a fresh

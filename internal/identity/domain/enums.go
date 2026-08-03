@@ -72,6 +72,37 @@ func (c UserColor) Valid() bool {
 	}
 }
 
+// UserColors returns the assignable palette in canonical assignment order.
+func UserColors() []UserColor {
+	return []UserColor{ColorIndigo, ColorSteel, ColorTeal, ColorPeri}
+}
+
+// NextColor returns the color to assign to a user given the colors already in
+// use, mirroring Nestova's own MemberColor.NextColor rule (NSTR-117): it
+// assigns unused palette colors first (in canonical order), then — once all
+// four are in use — reuses the least-used color, breaking ties by canonical
+// order. The result is deterministic, so a household's Nth user without an
+// explicit color always gets the same one.
+func NextColor(existing []UserColor) UserColor {
+	counts := make(map[UserColor]int, len(UserColors()))
+	for _, c := range UserColors() {
+		counts[c] = 0
+	}
+	for _, c := range existing {
+		if _, ok := counts[c]; ok {
+			counts[c]++
+		}
+	}
+
+	best := UserColors()[0]
+	for _, c := range UserColors() {
+		if counts[c] < counts[best] {
+			best = c
+		}
+	}
+	return best
+}
+
 // String returns the color's stored value.
 func (c UserColor) String() string { return string(c) }
 

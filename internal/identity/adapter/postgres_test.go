@@ -3,6 +3,7 @@ package adapter_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -426,5 +427,153 @@ func TestHasAnyUser(t *testing.T) {
 	}
 	if !has {
 		t.Error("HasAnyUser after seeding a user = false, want true")
+	}
+}
+
+// seedProfilelessMember inserts an identity.member row directly, with no
+// matching profile row — modeling a member provisioned by Nestova (or
+// created directly against the shared identity schema) arriving at
+// Nestorage for the first time over a shared session (NSTR-117).
+func seedProfilelessMember(t *testing.T, pool *pgxpool.Pool, householdID domain.HouseholdID, displayName, email string) domain.UserID {
+	t.Helper()
+	memberID := domain.NewUserID()
+	const memberQ = `
+		INSERT INTO identity.member (id, household_id, display_name, email, password_hash, role)
+		VALUES ($1, $2, $3, $4, 'x', 'adult')`
+	if _, err := pool.Exec(testCtx(t), memberQ, memberID.String(), householdID.String(), displayName, email); err != nil {
+		t.Fatalf("seed member without a profile row: %v", err)
+	}
+	return memberID
+}
+
+// TestEnsureProfile_CreatesRowViaNextColor is the NSTR-117 create-if-missing
+// proof: a member visible through identity.member (as it would be for a
+// member provisioned by Nestova, arriving here for the first time over a
+// shared session) but with no profile row gets one created via NextColor
+// against colors already used in the household, not merely a display-time
+// default.
+func TestEnsureProfile_CreatesRowViaNextColor(t *testing.T) {
+	repo, pool, household := newTestRepoWithPool(t)
+
+	// Two users already have profile rows using indigo and steel.
+	seedUser(t, repo, household, "maya@example.com")
+	second := newUser(household, "daniel@example.com")
+	second.Color = domain.ColorSteel
+	if err := repo.Create(testCtx(t), second); err != nil {
+		t.Fatalf("Create(second): %v", err)
+	}
+
+	crossAppID := seedProfilelessMember(t, pool, household, "Cross App", "cross-app@example.com")
+
+	got, err := repo.EnsureProfile(testCtx(t), crossAppID)
+	if err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+	if got.Color != domain.ColorTeal {
+		t.Errorf("EnsureProfile color = %v, want %v (first unused color in the household)", got.Color, domain.ColorTeal)
+	}
+
+	var persisted string
+	if err := pool.QueryRow(testCtx(t), "SELECT color FROM profile WHERE member_id = $1", crossAppID.String()).Scan(&persisted); err != nil {
+		t.Fatalf("query persisted profile row: %v", err)
+	}
+	if persisted != domain.ColorTeal.String() {
+		t.Errorf("persisted color = %q, want %q", persisted, domain.ColorTeal.String())
+	}
+}
+
+// TestEnsureProfile_ExistingRowIsUnchanged verifies idempotence: a user who
+// already has a profile row is returned exactly as stored, without
+// EnsureProfile reassigning a new color.
+func TestEnsureProfile_ExistingRowIsUnchanged(t *testing.T) {
+	repo, household := newTestRepo(t)
+	u := newUser(household, "maya@example.com")
+	u.Color = domain.ColorPeri
+	if err := repo.Create(testCtx(t), u); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := repo.EnsureProfile(testCtx(t), u.ID)
+	if err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+	if got.Color != domain.ColorPeri {
+		t.Errorf("EnsureProfile color = %v, want unchanged %v", got.Color, domain.ColorPeri)
+	}
+}
+
+// TestEnsureProfile_UnknownUser verifies the documented error contract: an
+// unknown user id reports ErrUserNotFound, exactly like FindByID.
+func TestEnsureProfile_UnknownUser(t *testing.T) {
+	repo, _ := newTestRepo(t)
+	if _, err := repo.EnsureProfile(testCtx(t), domain.NewUserID()); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("EnsureProfile(unknown) error = %v, want ErrUserNotFound", err)
+	}
+}
+
+// TestEnsureProfile_ConcurrentDifferentUsers_NoColorCollision proves the
+// household advisory lock actually closes the race a naive read-then-insert
+// would have: two DIFFERENT profile-less users of the SAME household,
+// provisioned concurrently, must not both land on the same "first unused"
+// color — profile has no per-household color uniqueness constraint to catch
+// that at the database level, so this is the only thing that would.
+func TestEnsureProfile_ConcurrentDifferentUsers_NoColorCollision(t *testing.T) {
+	repo, pool, household := newTestRepoWithPool(t)
+
+	aID := seedProfilelessMember(t, pool, household, "A", "a@example.com")
+	bID := seedProfilelessMember(t, pool, household, "B", "b@example.com")
+
+	var wg sync.WaitGroup
+	results := make([]*domain.User, 2)
+	errs := make([]error, 2)
+	for i, id := range []domain.UserID{aID, bID} {
+		wg.Add(1)
+		go func(i int, id domain.UserID) {
+			defer wg.Done()
+			results[i], errs[i] = repo.EnsureProfile(testCtx(t), id)
+		}(i, id)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("EnsureProfile(%d): %v", i, err)
+		}
+	}
+	if results[0].Color == results[1].Color {
+		t.Errorf("both concurrently provisioned users got color %v, want two distinct colors", results[0].Color)
+	}
+}
+
+// TestEnsureProfile_ConcurrentSameUser_Idempotent covers the race a
+// double-dispatched request would actually produce in production — two
+// tabs completing first login over the same shared session at once
+// (NSTR-117) — proving the ON CONFLICT (member_id) DO NOTHING insert plus
+// the post-commit re-fetch make two concurrent calls for the SAME
+// profile-less user converge on one color rather than erroring or
+// disagreeing.
+func TestEnsureProfile_ConcurrentSameUser_Idempotent(t *testing.T) {
+	repo, pool, household := newTestRepoWithPool(t)
+	id := seedProfilelessMember(t, pool, household, "Solo", "solo@example.com")
+
+	var wg sync.WaitGroup
+	results := make([]*domain.User, 2)
+	errs := make([]error, 2)
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = repo.EnsureProfile(testCtx(t), id)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("EnsureProfile(%d): %v", i, err)
+		}
+	}
+	if results[0].Color != results[1].Color {
+		t.Errorf("same user got two different colors: %v vs %v", results[0].Color, results[1].Color)
 	}
 }
