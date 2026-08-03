@@ -95,9 +95,9 @@ func (r *ReturnRequestRepository) Create(ctx context.Context, req *domain.Return
 // ListByItem returns itemID's requests (every status) newest-first
 // (created_at DESC, id DESC). Returns an empty slice, not an error, when
 // itemID has none.
-func (r *ReturnRequestRepository) ListByItem(ctx context.Context, itemID domain.ItemID) ([]domain.ReturnRequest, error) {
-	q := returnRequestColumns + ` WHERE item_id = $1 ORDER BY created_at DESC, id DESC`
-	rows, err := r.dbtx.Query(ctx, q, itemID.String())
+func (r *ReturnRequestRepository) ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID) ([]domain.ReturnRequest, error) {
+	q := returnRequestColumns + ` WHERE item_id = $1 AND household_id = $2 ORDER BY created_at DESC, id DESC`
+	rows, err := r.dbtx.Query(ctx, q, itemID.String(), householdID.String())
 	if err != nil {
 		return nil, fmt.Errorf("list return requests: %w", err)
 	}
@@ -126,16 +126,16 @@ func (r *ReturnRequestRepository) ListByItem(ctx context.Context, itemID domain.
 // different sentinels (ErrReturnRequestNotFound vs
 // ErrReturnRequestNotOpen) that a single UPDATE...RETURNING cannot
 // distinguish on its own.
-func (r *ReturnRequestRepository) Cancel(ctx context.Context, id domain.ReturnRequestID, requesterID identity.UserID) (*domain.ReturnRequest, error) {
+func (r *ReturnRequestRepository) Cancel(ctx context.Context, householdID identity.HouseholdID, id domain.ReturnRequestID, requesterID identity.UserID) (*domain.ReturnRequest, error) {
 	const q = `
 		UPDATE return_request
 		SET status = 'cancelled', resolved_at = now()
-		WHERE id = $1 AND requester_id = $2 AND status = 'open'
+		WHERE id = $1 AND requester_id = $2 AND household_id = $3 AND status = 'open'
 		RETURNING ` + returnRequestReturningColumns
-	rr, err := scanReturnRequest(r.dbtx.QueryRow(ctx, q, id.String(), requesterID.String()))
+	rr, err := scanReturnRequest(r.dbtx.QueryRow(ctx, q, id.String(), requesterID.String(), householdID.String()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, r.cancelNotFoundOrNotOpen(ctx, id, requesterID)
+			return nil, r.cancelNotFoundOrNotOpen(ctx, householdID, id, requesterID)
 		}
 		return nil, fmt.Errorf("cancel return request: %w", err)
 	}
@@ -144,13 +144,14 @@ func (r *ReturnRequestRepository) Cancel(ctx context.Context, id domain.ReturnRe
 
 // cancelNotFoundOrNotOpen resolves Cancel's own ambiguous zero-rows case: a
 // plain read (no ownership-narrowed UPDATE this time) against the same id +
-// requesterID pair, so an absent row (unknown id, or one belonging to a
-// different requester — masked identically) is told apart from a present,
-// owned, but no-longer-open one.
-func (r *ReturnRequestRepository) cancelNotFoundOrNotOpen(ctx context.Context, id domain.ReturnRequestID, requesterID identity.UserID) error {
-	const q = `SELECT status FROM return_request WHERE id = $1 AND requester_id = $2`
+// requesterID + householdID tuple, so an absent row (unknown id, one
+// belonging to a different requester, or one in a different household —
+// masked identically) is told apart from a present, owned, but no-longer-open
+// one.
+func (r *ReturnRequestRepository) cancelNotFoundOrNotOpen(ctx context.Context, householdID identity.HouseholdID, id domain.ReturnRequestID, requesterID identity.UserID) error {
+	const q = `SELECT status FROM return_request WHERE id = $1 AND requester_id = $2 AND household_id = $3`
 	var status string
-	err := r.dbtx.QueryRow(ctx, q, id.String(), requesterID.String()).Scan(&status)
+	err := r.dbtx.QueryRow(ctx, q, id.String(), requesterID.String(), householdID.String()).Scan(&status)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return domain.ErrReturnRequestNotFound
@@ -165,13 +166,13 @@ func (r *ReturnRequestRepository) cancelNotFoundOrNotOpen(ctx context.Context, i
 // returning the flipped rows so the caller's notifier can fan out without a
 // second query. Returns an empty slice, not an error, when itemID has no
 // open requests.
-func (r *ReturnRequestRepository) FulfillOpenForItem(ctx context.Context, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error) {
+func (r *ReturnRequestRepository) FulfillOpenForItem(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error) {
 	const q = `
 		UPDATE return_request
 		SET status = 'fulfilled', resolved_at = $2
-		WHERE item_id = $1 AND status = 'open'
+		WHERE item_id = $1 AND status = 'open' AND household_id = $3
 		RETURNING ` + returnRequestReturningColumns
-	rows, err := r.dbtx.Query(ctx, q, itemID.String(), at)
+	rows, err := r.dbtx.Query(ctx, q, itemID.String(), at, householdID.String())
 	if err != nil {
 		return nil, fmt.Errorf("fulfill open return requests: %w", err)
 	}

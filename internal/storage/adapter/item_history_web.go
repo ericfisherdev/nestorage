@@ -12,6 +12,7 @@ import (
 	"github.com/ericfisherdev/nestcore/render"
 
 	identityadapter "github.com/ericfisherdev/nestorage/internal/identity/adapter"
+	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 	"github.com/ericfisherdev/nestorage/internal/storage/domain"
 	"github.com/ericfisherdev/nestorage/web/components"
 )
@@ -38,7 +39,7 @@ const historyCursorSeparator = "_"
 // second viewer-scoped check here would be redundant, and NSTR-40's
 // repository takes no viewer.
 type itemEventLister interface {
-	ListByItem(ctx context.Context, itemID domain.ItemID, page domain.HistoryPage) ([]domain.ItemEvent, error)
+	ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID, page domain.HistoryPage) ([]domain.ItemEvent, error)
 }
 
 // Compile-time assurance *ItemEventRepository satisfies itemEventLister —
@@ -73,7 +74,7 @@ func (h *ItemsWebHandlers) History(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, nextCursor, err := h.loadHistoryPage(r.Context(), id, before)
+	events, nextCursor, err := h.loadHistoryPage(r.Context(), viewer.HouseholdID, id, before)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "items: history: list events", "error", err)
 		http.Error(w, errInternalServerError, http.StatusInternalServerError)
@@ -110,8 +111,8 @@ func (h *ItemsWebHandlers) History(w http.ResponseWriter, r *http.Request) {
 // loadHistoryPage requests one row beyond itemHistoryPageSize so it can
 // report whether a next page exists (nextCursor non-empty) without a second
 // round trip, then trims back to itemHistoryPageSize before returning.
-func (h *ItemsWebHandlers) loadHistoryPage(ctx context.Context, id domain.ItemID, before *domain.HistoryCursor) (events []domain.ItemEvent, nextCursor string, err error) {
-	events, err = h.events.ListByItem(ctx, id, domain.HistoryPage{Limit: itemHistoryPageSize + 1, Before: before})
+func (h *ItemsWebHandlers) loadHistoryPage(ctx context.Context, householdID identity.HouseholdID, id domain.ItemID, before *domain.HistoryCursor) (events []domain.ItemEvent, nextCursor string, err error) {
+	events, err = h.events.ListByItem(ctx, householdID, id, domain.HistoryPage{Limit: itemHistoryPageSize + 1, Before: before})
 	if err != nil {
 		return nil, "", err
 	}

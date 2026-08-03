@@ -221,7 +221,7 @@ func (r *fakeRepo) Create(_ context.Context, photo *domain.Photo) error {
 	return nil
 }
 
-func (r *fakeRepo) GetForItem(_ context.Context, itemID storagedomain.ItemID, id domain.PhotoID) (*domain.Photo, error) {
+func (r *fakeRepo) GetForItem(_ context.Context, _ identity.HouseholdID, itemID storagedomain.ItemID, id domain.PhotoID) (*domain.Photo, error) {
 	for _, ip := range r.attachments[itemID] {
 		if ip.Photo.ID == id {
 			p := ip.Photo
@@ -231,7 +231,7 @@ func (r *fakeRepo) GetForItem(_ context.Context, itemID storagedomain.ItemID, id
 	return nil, domain.ErrPhotoNotFound
 }
 
-func (r *fakeRepo) FindByStorageRef(_ context.Context, ref domain.StorageRef) (*domain.Photo, error) {
+func (r *fakeRepo) FindByStorageRef(_ context.Context, _ identity.HouseholdID, ref domain.StorageRef) (*domain.Photo, error) {
 	if r.findErr != nil {
 		return nil, r.findErr
 	}
@@ -242,7 +242,7 @@ func (r *fakeRepo) FindByStorageRef(_ context.Context, ref domain.StorageRef) (*
 	return r.photos[id], nil
 }
 
-func (r *fakeRepo) AttachToItem(_ context.Context, itemID storagedomain.ItemID, photoID domain.PhotoID, position int, isPrimary bool) error {
+func (r *fakeRepo) AttachToItem(_ context.Context, _ identity.HouseholdID, itemID storagedomain.ItemID, photoID domain.PhotoID, position int, isPrimary bool) error {
 	r.log("repo.AttachToItem")
 	if r.attachErr != nil {
 		return r.attachErr
@@ -255,14 +255,14 @@ func (r *fakeRepo) AttachToItem(_ context.Context, itemID storagedomain.ItemID, 
 	return nil
 }
 
-func (r *fakeRepo) ListByItem(_ context.Context, itemID storagedomain.ItemID) ([]domain.ItemPhoto, error) {
+func (r *fakeRepo) ListByItem(_ context.Context, _ identity.HouseholdID, itemID storagedomain.ItemID) ([]domain.ItemPhoto, error) {
 	if r.listErr != nil {
 		return nil, r.listErr
 	}
 	return append([]domain.ItemPhoto(nil), r.attachments[itemID]...), nil
 }
 
-func (r *fakeRepo) Delete(_ context.Context, itemID storagedomain.ItemID, id domain.PhotoID) error {
+func (r *fakeRepo) Delete(_ context.Context, _ identity.HouseholdID, itemID storagedomain.ItemID, id domain.PhotoID) error {
 	r.log("repo.Delete")
 	if _, ok := r.photos[id]; !ok {
 		return domain.ErrPhotoNotFound
@@ -279,7 +279,7 @@ func (r *fakeRepo) Delete(_ context.Context, itemID storagedomain.ItemID, id dom
 	return nil
 }
 
-func (r *fakeRepo) SetPrimary(_ context.Context, itemID storagedomain.ItemID, photoID domain.PhotoID) error {
+func (r *fakeRepo) SetPrimary(_ context.Context, _ identity.HouseholdID, itemID storagedomain.ItemID, photoID domain.PhotoID) error {
 	r.log("repo.SetPrimary")
 	found := false
 	list := r.attachments[itemID]
@@ -297,7 +297,7 @@ func (r *fakeRepo) SetPrimary(_ context.Context, itemID storagedomain.ItemID, ph
 	return nil
 }
 
-func (r *fakeRepo) Reorder(_ context.Context, itemID storagedomain.ItemID, order []domain.PhotoID) error {
+func (r *fakeRepo) Reorder(_ context.Context, _ identity.HouseholdID, itemID storagedomain.ItemID, order []domain.PhotoID) error {
 	r.log("repo.Reorder")
 	byID := make(map[domain.PhotoID]domain.ItemPhoto, len(r.attachments[itemID]))
 	for _, ip := range r.attachments[itemID] {

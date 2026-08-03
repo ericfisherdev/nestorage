@@ -19,8 +19,8 @@ import (
 // because adapter.PostgresUnitOfWork must spell it by name to construct
 // OperationStores.
 type ItemStore interface {
-	GetForUpdate(ctx context.Context, id domain.ItemID) (*domain.Item, error)
-	Move(ctx context.Context, id domain.ItemID, dst domain.Placement) (int64, error)
+	GetForUpdate(ctx context.Context, householdID identity.HouseholdID, id domain.ItemID) (*domain.Item, error)
+	Move(ctx context.Context, householdID identity.HouseholdID, id domain.ItemID, dst domain.Placement) (int64, error)
 }
 
 // binFinder is the narrow port (ISP) OperationService depends on to
@@ -42,7 +42,7 @@ type binFinder interface {
 // transaction. Exported, like ItemStore, because adapter.PostgresUnitOfWork
 // must spell it by name to satisfy transactor.
 type ReturnRequestFulfiller interface {
-	FulfillOpenForItem(ctx context.Context, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error)
+	FulfillOpenForItem(ctx context.Context, householdID identity.HouseholdID, itemID domain.ItemID, at time.Time) ([]domain.ReturnRequest, error)
 }
 
 // userLabelResolver is the narrow port (ISP) OperationService depends on to
@@ -172,7 +172,7 @@ func (s *OperationService) AddToBin(ctx context.Context, actor identity.Principa
 		return Operation{}, fmt.Errorf("storage: add to bin: %w", err)
 	}
 
-	it, fulfilled, err := s.transition(ctx, itemID,
+	it, fulfilled, err := s.transition(ctx, actor.HouseholdID, itemID,
 		func(it *domain.Item) error { return it.EnterBin(bin.ID) },
 		domain.PlacementInBin(bin.ID),
 		func(_ context.Context, _ placementSnapshot, it *domain.Item) (domain.ItemEvent, error) {
@@ -205,7 +205,7 @@ func (s *OperationService) RemoveFromBin(ctx context.Context, actor identity.Pri
 		return Operation{}, domain.ErrHolderRequired
 	}
 
-	it, _, err := s.transition(ctx, itemID,
+	it, _, err := s.transition(ctx, actor.HouseholdID, itemID,
 		func(it *domain.Item) error { return it.CheckOut(actor.UserID) },
 		domain.PlacementHeldBy(actor.UserID),
 		func(ctx context.Context, before placementSnapshot, it *domain.Item) (domain.ItemEvent, error) {
@@ -258,7 +258,7 @@ func (s *OperationService) ReturnToBin(ctx context.Context, actor identity.Princ
 		return Operation{}, fmt.Errorf("storage: return to bin: %w", err)
 	}
 
-	it, fulfilled, err := s.transition(ctx, itemID,
+	it, fulfilled, err := s.transition(ctx, actor.HouseholdID, itemID,
 		func(it *domain.Item) error { return it.ReturnTo(bin.ID) },
 		domain.PlacementInBin(bin.ID),
 		func(_ context.Context, _ placementSnapshot, it *domain.Item) (domain.ItemEvent, error) {
@@ -325,6 +325,7 @@ func snapshotPlacement(it *domain.Item) placementSnapshot {
 // caller for Operation.FulfilledReturnRequests.
 func (s *OperationService) transition(
 	ctx context.Context,
+	householdID identity.HouseholdID,
 	itemID domain.ItemID,
 	guard func(*domain.Item) error,
 	dst domain.Placement,
@@ -334,7 +335,7 @@ func (s *OperationService) transition(
 	var fulfilled []domain.ReturnRequest
 	err := s.uow.WithinTx(ctx, func(stores OperationStores) error {
 		var txErr error
-		it, txErr = stores.Items.GetForUpdate(ctx, itemID)
+		it, txErr = stores.Items.GetForUpdate(ctx, householdID, itemID)
 		if txErr != nil {
 			return txErr
 		}
@@ -342,10 +343,10 @@ func (s *OperationService) transition(
 		if txErr = guard(it); txErr != nil {
 			return txErr
 		}
-		if _, txErr = stores.Items.Move(ctx, itemID, dst); txErr != nil {
+		if _, txErr = stores.Items.Move(ctx, householdID, itemID, dst); txErr != nil {
 			return txErr
 		}
-		it, txErr = stores.Items.GetForUpdate(ctx, itemID)
+		it, txErr = stores.Items.GetForUpdate(ctx, householdID, itemID)
 		if txErr != nil {
 			return txErr
 		}
@@ -362,7 +363,7 @@ func (s *OperationService) transition(
 		}
 
 		if dst.BinID != nil && before.HeldBy != nil {
-			fulfilled, txErr = stores.ReturnRequests.FulfillOpenForItem(ctx, itemID, it.PlacementChangedAt)
+			fulfilled, txErr = stores.ReturnRequests.FulfillOpenForItem(ctx, householdID, itemID, it.PlacementChangedAt)
 			if txErr != nil {
 				return txErr
 			}

@@ -57,7 +57,7 @@ func TestReturnRequestRepository_Create(t *testing.T) {
 		t.Error("Create left CreatedAt zero")
 	}
 
-	got, err := f.requests.ListByItem(testCtx(t), it.ID)
+	got, err := f.requests.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestReturnRequestRepository_Create_AllowsReRequestAfterResolution(t *testin
 	if err := f.requests.Create(testCtx(t), first); err != nil {
 		t.Fatalf("Create(first): %v", err)
 	}
-	if _, err := f.requests.Cancel(testCtx(t), first.ID, requester); err != nil {
+	if _, err := f.requests.Cancel(testCtx(t), f.household, first.ID, requester); err != nil {
 		t.Fatalf("Cancel(first): %v", err)
 	}
 
@@ -140,7 +140,7 @@ func TestReturnRequestRepository_ListByItem_NewestFirst(t *testing.T) {
 		t.Fatalf("Create(second): %v", err)
 	}
 
-	got, err := f.requests.ListByItem(testCtx(t), it.ID)
+	got, err := f.requests.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestReturnRequestRepository_ListByItem_NewestFirst(t *testing.T) {
 
 func TestReturnRequestRepository_ListByItem_Empty(t *testing.T) {
 	f := newItemFixture(t)
-	got, err := f.requests.ListByItem(testCtx(t), domain.NewItemID())
+	got, err := f.requests.ListByItem(testCtx(t), f.household, domain.NewItemID())
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestReturnRequestRepository_Cancel(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := f.requests.Cancel(testCtx(t), req.ID, requester)
+	got, err := f.requests.Cancel(testCtx(t), f.household, req.ID, requester)
 	if err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestReturnRequestRepository_Cancel_UnknownNotFound(t *testing.T) {
 	f := newItemFixture(t)
 	requester := f.seedUser(t, identity.RoleAdult)
 
-	_, err := f.requests.Cancel(testCtx(t), domain.NewReturnRequestID(), requester)
+	_, err := f.requests.Cancel(testCtx(t), f.household, domain.NewReturnRequestID(), requester)
 	if !errors.Is(err, domain.ErrReturnRequestNotFound) {
 		t.Errorf("Cancel(unknown) = %v, want ErrReturnRequestNotFound", err)
 	}
@@ -210,12 +210,12 @@ func TestReturnRequestRepository_Cancel_WrongRequesterMasked(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	_, err := f.requests.Cancel(testCtx(t), req.ID, stranger)
+	_, err := f.requests.Cancel(testCtx(t), f.household, req.ID, stranger)
 	if !errors.Is(err, domain.ErrReturnRequestNotFound) {
 		t.Errorf("Cancel(wrong requester) = %v, want ErrReturnRequestNotFound", err)
 	}
 
-	got, err := f.requests.ListByItem(testCtx(t), it.ID)
+	got, err := f.requests.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -235,11 +235,11 @@ func TestReturnRequestRepository_Cancel_AlreadyResolvedRejected(t *testing.T) {
 	if err := f.requests.Create(testCtx(t), req); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := f.requests.Cancel(testCtx(t), req.ID, requester); err != nil {
+	if _, err := f.requests.Cancel(testCtx(t), f.household, req.ID, requester); err != nil {
 		t.Fatalf("first Cancel: %v", err)
 	}
 
-	_, err := f.requests.Cancel(testCtx(t), req.ID, requester)
+	_, err := f.requests.Cancel(testCtx(t), f.household, req.ID, requester)
 	if !errors.Is(err, domain.ErrReturnRequestNotOpen) {
 		t.Errorf("second Cancel(already cancelled) = %v, want ErrReturnRequestNotOpen", err)
 	}
@@ -265,12 +265,12 @@ func TestReturnRequestRepository_FulfillOpenForItem(t *testing.T) {
 			t.Fatalf("seed request: %v", err)
 		}
 	}
-	if _, err := f.requests.Cancel(testCtx(t), cancelled.ID, cancelled.RequesterID); err != nil {
+	if _, err := f.requests.Cancel(testCtx(t), f.household, cancelled.ID, cancelled.RequesterID); err != nil {
 		t.Fatalf("Cancel(cancelled): %v", err)
 	}
 
 	at := time.Now().UTC().Truncate(time.Microsecond)
-	fulfilled, err := f.requests.FulfillOpenForItem(testCtx(t), it.ID, at)
+	fulfilled, err := f.requests.FulfillOpenForItem(testCtx(t), f.household, it.ID, at)
 	if err != nil {
 		t.Fatalf("FulfillOpenForItem: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestReturnRequestRepository_FulfillOpenForItem(t *testing.T) {
 		}
 	}
 
-	got, err := f.requests.ListByItem(testCtx(t), it.ID)
+	got, err := f.requests.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestReturnRequestRepository_FulfillOpenForItem(t *testing.T) {
 		t.Errorf("an already-cancelled request must stay cancelled, got %v", statuses[cancelled.ID])
 	}
 
-	otherGot, err := f.requests.ListByItem(testCtx(t), otherIt.ID)
+	otherGot, err := f.requests.ListByItem(testCtx(t), f.household, otherIt.ID)
 	if err != nil {
 		t.Fatalf("ListByItem(other item): %v", err)
 	}
@@ -309,7 +309,7 @@ func TestReturnRequestRepository_FulfillOpenForItem(t *testing.T) {
 
 func TestReturnRequestRepository_FulfillOpenForItem_Empty(t *testing.T) {
 	f := newItemFixture(t)
-	fulfilled, err := f.requests.FulfillOpenForItem(testCtx(t), domain.NewItemID(), time.Now())
+	fulfilled, err := f.requests.FulfillOpenForItem(testCtx(t), f.household, domain.NewItemID(), time.Now())
 	if err != nil {
 		t.Fatalf("FulfillOpenForItem: %v", err)
 	}
@@ -333,11 +333,11 @@ func TestReturnRequestRepository_CascadeDeleteWithItem(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := f.repo.Delete(testCtx(t), it.ID); err != nil {
+	if err := f.repo.Delete(testCtx(t), f.household, it.ID); err != nil {
 		t.Fatalf("Delete(item): %v", err)
 	}
 
-	got, err := f.requests.ListByItem(testCtx(t), it.ID)
+	got, err := f.requests.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem after item cascade delete: %v", err)
 	}

@@ -154,12 +154,12 @@ type ReturnRequestRepository interface {
 	// (created_at DESC, id DESC), viewer-independent — the caller has
 	// already authorized itemID's visibility. Returns an empty slice, not
 	// an error, when itemID has none.
-	ListByItem(ctx context.Context, itemID ItemID) ([]ReturnRequest, error)
+	ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID ItemID) ([]ReturnRequest, error)
 	// Cancel withdraws id on requesterID's behalf. See the interface's own
 	// error contract above.
-	Cancel(ctx context.Context, id ReturnRequestID, requesterID identity.UserID) (*ReturnRequest, error)
+	Cancel(ctx context.Context, householdID identity.HouseholdID, id ReturnRequestID, requesterID identity.UserID) (*ReturnRequest, error)
 	// FulfillOpenForItem flips every open request on itemID to fulfilled at
 	// the given time, returning the flipped rows so the caller's notifier
 	// can fan out without a second query.
-	FulfillOpenForItem(ctx context.Context, itemID ItemID, at time.Time) ([]ReturnRequest, error)
+	FulfillOpenForItem(ctx context.Context, householdID identity.HouseholdID, itemID ItemID, at time.Time) ([]ReturnRequest, error)
 }

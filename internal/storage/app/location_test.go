@@ -45,7 +45,7 @@ func (f *fakeLocationRepo) FindVisibleByID(_ context.Context, _ identity.Princip
 	return l, nil
 }
 
-func (f *fakeLocationRepo) List(_ context.Context) ([]domain.Location, error) {
+func (f *fakeLocationRepo) List(_ context.Context, _ identity.Principal) ([]domain.Location, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -56,7 +56,7 @@ func (f *fakeLocationRepo) List(_ context.Context) ([]domain.Location, error) {
 	return locations, nil
 }
 
-func (f *fakeLocationRepo) Rename(_ context.Context, id domain.LocationID, name string) error {
+func (f *fakeLocationRepo) Rename(_ context.Context, _ identity.Principal, id domain.LocationID, name string) error {
 	if f.renameErr != nil {
 		return f.renameErr
 	}
@@ -68,7 +68,7 @@ func (f *fakeLocationRepo) Rename(_ context.Context, id domain.LocationID, name 
 	return nil
 }
 
-func (f *fakeLocationRepo) Delete(_ context.Context, id domain.LocationID) error {
+func (f *fakeLocationRepo) Delete(_ context.Context, _ identity.Principal, id domain.LocationID) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
@@ -209,8 +209,9 @@ func TestLocationService_Rename_Success(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
-	if err := svc.Rename(context.Background(), garage.ID, "  Attic  "); err != nil {
+	if err := svc.Rename(context.Background(), viewer, garage.ID, "  Attic  "); err != nil {
 		t.Fatalf("Rename: %v", err)
 	}
 	if locs.locations[garage.ID].Name != "Attic" {
@@ -225,8 +226,9 @@ func TestLocationService_Delete_Success(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
-	if err := svc.Delete(context.Background(), garage.ID); err != nil {
+	if err := svc.Delete(context.Background(), viewer, garage.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, ok := locs.locations[garage.ID]; ok {
@@ -273,8 +275,9 @@ func TestLocationService_Create_RepositoryErrorWrapped(t *testing.T) {
 
 func TestLocationService_Rename_ValidationRejected(t *testing.T) {
 	svc := app.NewLocationService(newFakeLocationRepo(), &fakeBinLister{}, testLogger())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
-	err := svc.Rename(context.Background(), domain.NewLocationID(), "  ")
+	err := svc.Rename(context.Background(), viewer, domain.NewLocationID(), "  ")
 	if !errors.Is(err, domain.ErrInvalidLocationName) {
 		t.Errorf("Rename(blank name) error = %v, want ErrInvalidLocationName", err)
 	}
@@ -282,8 +285,9 @@ func TestLocationService_Rename_ValidationRejected(t *testing.T) {
 
 func TestLocationService_Rename_NotFoundWrapped(t *testing.T) {
 	svc := app.NewLocationService(newFakeLocationRepo(), &fakeBinLister{}, testLogger())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
-	err := svc.Rename(context.Background(), domain.NewLocationID(), "Garage")
+	err := svc.Rename(context.Background(), viewer, domain.NewLocationID(), "Garage")
 	if !errors.Is(err, domain.ErrLocationNotFound) {
 		t.Errorf("Rename(unknown) error = %v, want wrapped ErrLocationNotFound", err)
 	}
@@ -293,8 +297,9 @@ func TestLocationService_Delete_NotEmptyWrapped(t *testing.T) {
 	locs := newFakeLocationRepo()
 	locs.deleteErr = domain.ErrLocationNotEmpty
 	svc := app.NewLocationService(locs, &fakeBinLister{}, testLogger())
+	viewer := identity.NewUserPrincipal(identity.NewUserID(), identity.RoleAdult, "Viewer")
 
-	err := svc.Delete(context.Background(), domain.NewLocationID())
+	err := svc.Delete(context.Background(), viewer, domain.NewLocationID())
 	if !errors.Is(err, domain.ErrLocationNotEmpty) {
 		t.Errorf("Delete() error = %v, want wrapped ErrLocationNotEmpty", err)
 	}

@@ -328,6 +328,6 @@ type HistoryPage struct {
 //     own comment) so an unknown item/bin id is never rejected here.
 type ItemEventRepository interface {
 	Append(ctx context.Context, e *ItemEvent) error
-	ListByItem(ctx context.Context, itemID ItemID, page HistoryPage) ([]ItemEvent, error)
-	ListByBin(ctx context.Context, binID BinID, page HistoryPage) ([]ItemEvent, error)
+	ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID ItemID, page HistoryPage) ([]ItemEvent, error)
+	ListByBin(ctx context.Context, householdID identity.HouseholdID, binID BinID, page HistoryPage) ([]ItemEvent, error)
 }

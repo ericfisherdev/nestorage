@@ -47,8 +47,9 @@ const itemSearchColumns = `
 // exception). Returns domain.ErrItemNotFound both when id is unknown and
 // when the item exists but viewer may not see it.
 func (r *ItemRepository) FindVisibleDetail(ctx context.Context, viewer identity.Principal, id domain.ItemID) (*domain.ItemDetailResult, error) {
-	q := itemDetailColumns + ` WHERE i.id = $1 AND ` + itemVisibilityWhere(1)
-	args := append([]any{id.String()}, viewerArgs(viewer)...)
+	q := itemDetailColumns + ` WHERE i.id = $1 AND i.household_id = $2 AND ` + itemVisibilityWhere(2)
+	args := append([]any{id.String()}, householdArgs(viewer)...)
+	args = append(args, viewerArgs(viewer)...)
 
 	result, err := scanItemDetail(r.dbtx.QueryRow(ctx, q, args...))
 	if err != nil {
@@ -70,11 +71,12 @@ func (r *ItemRepository) FindVisibleDetail(ctx context.Context, viewer identity.
 // Returns an empty slice, not an error, when nothing matches.
 func (r *ItemRepository) SearchVisible(ctx context.Context, viewer identity.Principal, query string, limit int) ([]domain.ItemSearchResult, error) {
 	pattern := "%" + escapeLikeTerm(query) + "%"
-	q := itemSearchColumns + ` WHERE ` + itemVisibilityWhere(0) + `
-		AND (i.name ILIKE $3 OR i.description ILIKE $3 OR b.name ILIKE $3 OR l.name ILIKE $3)
+	q := itemSearchColumns + ` WHERE i.household_id = $1 AND ` + itemVisibilityWhere(1) + `
+		AND (i.name ILIKE $4 OR i.description ILIKE $4 OR b.name ILIKE $4 OR l.name ILIKE $4)
 		ORDER BY i.name, i.id
-		LIMIT $4`
-	args := append(viewerArgs(viewer), pattern, limit)
+		LIMIT $5`
+	args := append(householdArgs(viewer), viewerArgs(viewer)...)
+	args = append(args, pattern, limit)
 
 	rows, err := r.dbtx.Query(ctx, q, args...)
 	if err != nil {

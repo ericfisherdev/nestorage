@@ -171,15 +171,15 @@ type ItemRepository interface {
 	// constructor) for the lock to have any scope beyond the single
 	// statement. Not visibility-scoped: NSTR-29 calls this only after a
 	// prior Get has already confirmed the principal may see the item.
-	GetForUpdate(ctx context.Context, id ItemID) (*Item, error)
-	Update(ctx context.Context, it *Item) error
+	GetForUpdate(ctx context.Context, householdID identity.HouseholdID, id ItemID) (*Item, error)
+	Update(ctx context.Context, householdID identity.HouseholdID, it *Item) error
 	// Move is the placement primitive NSTR-29's add/remove/return build on:
 	// it swaps current_bin_id/held_by to match dst in one statement,
 	// advancing PlacementChangedAt, and reports the number of rows affected
 	// (0 or 1) alongside the usual error contract, so a caller that already
 	// holds the row FOR UPDATE can confirm the write actually landed
 	// without a second round trip.
-	Move(ctx context.Context, id ItemID, dst Placement) (rowsAffected int64, err error)
+	Move(ctx context.Context, householdID identity.HouseholdID, id ItemID, dst Placement) (rowsAffected int64, err error)
 	// ListByBin returns every item in binID viewer may see, ordered by
 	// name, tie-broken by id.
 	ListByBin(ctx context.Context, viewer identity.Principal, binID BinID) ([]Item, error)
@@ -197,7 +197,7 @@ type ItemRepository interface {
 	// absent from the map; the caller treats a missing key as zero, the same
 	// "absence means zero/none" contract ListVisible's empty slice follows.
 	CountsByBin(ctx context.Context, viewer identity.Principal) (map[BinID]int, error)
-	Delete(ctx context.Context, id ItemID) error
+	Delete(ctx context.Context, householdID identity.HouseholdID, id ItemID) error
 	// FindVisibleDetail returns id's detail read model — the joined bin/
 	// location name or holder name/color Get's bare Item does not carry —
 	// scoped to what viewer may see (the same rule Get applies, including
@@ -220,5 +220,5 @@ type ItemRepository interface {
 	// would show: a private bin's contents still get a moved event when
 	// its bin relocates. Returns an empty slice, not an error, when binID
 	// holds no items.
-	ListIDsByBin(ctx context.Context, binID BinID) ([]ItemRef, error)
+	ListIDsByBin(ctx context.Context, householdID identity.HouseholdID, binID BinID) ([]ItemRef, error)
 }

@@ -26,7 +26,7 @@ func newFakeItemLinkRepo() *fakeItemLinkRepo {
 	return &fakeItemLinkRepo{links: make(map[domain.ItemLinkID]*domain.ItemLink)}
 }
 
-func (f *fakeItemLinkRepo) Create(_ context.Context, l *domain.ItemLink) error {
+func (f *fakeItemLinkRepo) Create(_ context.Context, _ identity.HouseholdID, l *domain.ItemLink) error {
 	if f.createErr != nil {
 		return f.createErr
 	}
@@ -35,7 +35,7 @@ func (f *fakeItemLinkRepo) Create(_ context.Context, l *domain.ItemLink) error {
 	return nil
 }
 
-func (f *fakeItemLinkRepo) Update(_ context.Context, itemID domain.ItemID, id domain.ItemLinkID, label, rawURL string) error {
+func (f *fakeItemLinkRepo) Update(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID, id domain.ItemLinkID, label, rawURL string) error {
 	if f.updateErr != nil {
 		return f.updateErr
 	}
@@ -47,7 +47,7 @@ func (f *fakeItemLinkRepo) Update(_ context.Context, itemID domain.ItemID, id do
 	return nil
 }
 
-func (f *fakeItemLinkRepo) Delete(_ context.Context, itemID domain.ItemID, id domain.ItemLinkID) error {
+func (f *fakeItemLinkRepo) Delete(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID, id domain.ItemLinkID) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
@@ -59,7 +59,7 @@ func (f *fakeItemLinkRepo) Delete(_ context.Context, itemID domain.ItemID, id do
 	return nil
 }
 
-func (f *fakeItemLinkRepo) ListByItem(_ context.Context, itemID domain.ItemID) ([]domain.ItemLink, error) {
+func (f *fakeItemLinkRepo) ListByItem(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID) ([]domain.ItemLink, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -72,7 +72,7 @@ func (f *fakeItemLinkRepo) ListByItem(_ context.Context, itemID domain.ItemID) (
 	return links, nil
 }
 
-func (f *fakeItemLinkRepo) NextPosition(_ context.Context, itemID domain.ItemID) (int, error) {
+func (f *fakeItemLinkRepo) NextPosition(_ context.Context, _ identity.HouseholdID, itemID domain.ItemID) (int, error) {
 	if f.nextPositionErr != nil {
 		return 0, f.nextPositionErr
 	}

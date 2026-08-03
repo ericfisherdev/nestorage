@@ -36,14 +36,14 @@ func TestItemLinkRepository_CreateAndListByItem(t *testing.T) {
 	}
 
 	l := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "Manual", URL: "https://example.com/manual", Position: 0}
-	if err := linkRepo.Create(testCtx(t), l); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, l); err != nil {
 		t.Fatalf("Create(link): %v", err)
 	}
 	if l.CreatedAt.IsZero() || l.UpdatedAt.IsZero() {
 		t.Error("Create left a timestamp zero")
 	}
 
-	got, err := linkRepo.ListByItem(testCtx(t), it.ID)
+	got, err := linkRepo.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -65,14 +65,14 @@ func TestItemLinkRepository_ListByItem_OrderedByPosition(t *testing.T) {
 
 	second := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "Second", URL: "https://example.com/2", Position: 1}
 	first := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "First", URL: "https://example.com/1", Position: 0}
-	if err := linkRepo.Create(testCtx(t), second); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, second); err != nil {
 		t.Fatalf("Create(second): %v", err)
 	}
-	if err := linkRepo.Create(testCtx(t), first); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, first); err != nil {
 		t.Fatalf("Create(first): %v", err)
 	}
 
-	got, err := linkRepo.ListByItem(testCtx(t), it.ID)
+	got, err := linkRepo.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -97,14 +97,14 @@ func TestItemLinkRepository_ListByItem_TieBreaksByID(t *testing.T) {
 
 	a := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "A", URL: "https://example.com/a", Position: 0}
 	b := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "B", URL: "https://example.com/b", Position: 0}
-	if err := linkRepo.Create(testCtx(t), a); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, a); err != nil {
 		t.Fatalf("Create(a): %v", err)
 	}
-	if err := linkRepo.Create(testCtx(t), b); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, b); err != nil {
 		t.Fatalf("Create(b): %v", err)
 	}
 
-	got, err := linkRepo.ListByItem(testCtx(t), it.ID)
+	got, err := linkRepo.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestItemLinkRepository_ListByItem_TieBreaksByID(t *testing.T) {
 func TestItemLinkRepository_ListByItem_Empty(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	got, err := linkRepo.ListByItem(testCtx(t), domain.NewItemID())
+	got, err := linkRepo.ListByItem(testCtx(t), f.household, domain.NewItemID())
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestItemLinkRepository_Create_UnknownItemRejected(t *testing.T) {
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
 	l := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: domain.NewItemID(), Label: "Ghost", URL: "https://example.com", Position: 0}
 
-	err := linkRepo.Create(testCtx(t), l)
+	err := linkRepo.Create(testCtx(t), f.household, l)
 	if !errors.Is(err, domain.ErrItemNotFound) {
 		t.Errorf("Create(unknown item) = %v, want ErrItemNotFound", err)
 	}
@@ -154,7 +154,7 @@ func TestItemLinkRepository_NextPosition(t *testing.T) {
 		t.Fatalf("Create(item): %v", err)
 	}
 
-	next, err := linkRepo.NextPosition(testCtx(t), it.ID)
+	next, err := linkRepo.NextPosition(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("NextPosition(empty): %v", err)
 	}
@@ -163,11 +163,11 @@ func TestItemLinkRepository_NextPosition(t *testing.T) {
 	}
 
 	l := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "Manual", URL: "https://example.com", Position: next}
-	if err := linkRepo.Create(testCtx(t), l); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, l); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	next, err = linkRepo.NextPosition(testCtx(t), it.ID)
+	next, err = linkRepo.NextPosition(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("NextPosition(populated): %v", err)
 	}
@@ -187,15 +187,15 @@ func TestItemLinkRepository_Update(t *testing.T) {
 		t.Fatalf("Create(item): %v", err)
 	}
 	l := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "Manual", URL: "https://example.com/old", Position: 0}
-	if err := linkRepo.Create(testCtx(t), l); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, l); err != nil {
 		t.Fatalf("Create(link): %v", err)
 	}
 
-	if err := linkRepo.Update(testCtx(t), it.ID, l.ID, "Owner's manual", "https://example.com/new"); err != nil {
+	if err := linkRepo.Update(testCtx(t), f.household, it.ID, l.ID, "Owner's manual", "https://example.com/new"); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
-	got, err := linkRepo.ListByItem(testCtx(t), it.ID)
+	got, err := linkRepo.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem after Update: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestItemLinkRepository_Update(t *testing.T) {
 func TestItemLinkRepository_Update_NotFound(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	err := linkRepo.Update(testCtx(t), domain.NewItemID(), domain.NewItemLinkID(), "Manual", "https://example.com")
+	err := linkRepo.Update(testCtx(t), f.household, domain.NewItemID(), domain.NewItemLinkID(), "Manual", "https://example.com")
 	if !errors.Is(err, domain.ErrItemLinkNotFound) {
 		t.Errorf("Update(unknown) = %v, want ErrItemLinkNotFound", err)
 	}
@@ -231,11 +231,11 @@ func TestItemLinkRepository_Update_WrongItemRejected(t *testing.T) {
 		t.Fatalf("Create(itemB): %v", err)
 	}
 	l := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: itA.ID, Label: "Manual", URL: "https://example.com", Position: 0}
-	if err := linkRepo.Create(testCtx(t), l); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, l); err != nil {
 		t.Fatalf("Create(link): %v", err)
 	}
 
-	err := linkRepo.Update(testCtx(t), itB.ID, l.ID, "Hijacked", "https://evil.example.com")
+	err := linkRepo.Update(testCtx(t), f.household, itB.ID, l.ID, "Hijacked", "https://evil.example.com")
 	if !errors.Is(err, domain.ErrItemLinkNotFound) {
 		t.Errorf("Update(link, wrong item) = %v, want ErrItemLinkNotFound", err)
 	}
@@ -252,14 +252,14 @@ func TestItemLinkRepository_Delete(t *testing.T) {
 		t.Fatalf("Create(item): %v", err)
 	}
 	l := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "Manual", URL: "https://example.com", Position: 0}
-	if err := linkRepo.Create(testCtx(t), l); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, l); err != nil {
 		t.Fatalf("Create(link): %v", err)
 	}
 
-	if err := linkRepo.Delete(testCtx(t), it.ID, l.ID); err != nil {
+	if err := linkRepo.Delete(testCtx(t), f.household, it.ID, l.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	got, err := linkRepo.ListByItem(testCtx(t), it.ID)
+	got, err := linkRepo.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem after Delete: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestItemLinkRepository_Delete(t *testing.T) {
 func TestItemLinkRepository_Delete_NotFound(t *testing.T) {
 	f := newItemFixture(t)
 	linkRepo := adapter.NewItemLinkRepository(f.pool)
-	err := linkRepo.Delete(testCtx(t), domain.NewItemID(), domain.NewItemLinkID())
+	err := linkRepo.Delete(testCtx(t), f.household, domain.NewItemID(), domain.NewItemLinkID())
 	if !errors.Is(err, domain.ErrItemLinkNotFound) {
 		t.Errorf("Delete(unknown) = %v, want ErrItemLinkNotFound", err)
 	}
@@ -294,15 +294,15 @@ func TestItemLinkRepository_Delete_WrongItemRejected(t *testing.T) {
 		t.Fatalf("Create(itemB): %v", err)
 	}
 	l := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: itA.ID, Label: "Manual", URL: "https://example.com", Position: 0}
-	if err := linkRepo.Create(testCtx(t), l); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, l); err != nil {
 		t.Fatalf("Create(link): %v", err)
 	}
 
-	err := linkRepo.Delete(testCtx(t), itB.ID, l.ID)
+	err := linkRepo.Delete(testCtx(t), f.household, itB.ID, l.ID)
 	if !errors.Is(err, domain.ErrItemLinkNotFound) {
 		t.Errorf("Delete(link, wrong item) = %v, want ErrItemLinkNotFound", err)
 	}
-	got, err := linkRepo.ListByItem(testCtx(t), itA.ID)
+	got, err := linkRepo.ListByItem(testCtx(t), f.household, itA.ID)
 	if err != nil {
 		t.Fatalf("ListByItem after rejected delete: %v", err)
 	}
@@ -325,15 +325,15 @@ func TestItemLinkRepository_CascadeDeleteWithItem(t *testing.T) {
 		t.Fatalf("Create(item): %v", err)
 	}
 	l := &domain.ItemLink{ID: domain.NewItemLinkID(), ItemID: it.ID, Label: "Manual", URL: "https://example.com", Position: 0}
-	if err := linkRepo.Create(testCtx(t), l); err != nil {
+	if err := linkRepo.Create(testCtx(t), f.household, l); err != nil {
 		t.Fatalf("Create(link): %v", err)
 	}
 
-	if err := f.repo.Delete(testCtx(t), it.ID); err != nil {
+	if err := f.repo.Delete(testCtx(t), f.household, it.ID); err != nil {
 		t.Fatalf("Delete(item): %v", err)
 	}
 
-	got, err := linkRepo.ListByItem(testCtx(t), it.ID)
+	got, err := linkRepo.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem after item cascade delete: %v", err)
 	}

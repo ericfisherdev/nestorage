@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	identity "github.com/ericfisherdev/nestorage/internal/identity/domain"
 )
 
 // MaxItemLinkLabelRunes bounds ValidateItemLinkLabel's accepted label length,
@@ -87,7 +89,11 @@ func ValidateItemLinkURL(raw string) (string, error) {
 // bounded-context row; internal/media's Photo is the analogous child entity
 // for images). Removing an item removes its links with it (item_id's ON
 // DELETE CASCADE in 00011_item_link.sql); ItemLink carries no visibility of
-// its own and inherits whatever the owning item's is.
+// its own and inherits whatever the owning item's is. It also carries no
+// household_id column of its own (00018_household_scoping.sql's own
+// comment): it is an ON DELETE CASCADE child scoped entirely through the
+// item it belongs to, so every method below joins against item.household_id
+// rather than a column on item_link itself.
 type ItemLink struct {
 	ID        ItemLinkID
 	ItemID    ItemID
@@ -99,46 +105,54 @@ type ItemLink struct {
 }
 
 // ItemLinkRepository is the outbound port for persisting and retrieving an
-// item's labeled URLs. Implementations live in the adapter package.
+// item's labeled URLs, scoped throughout by householdID via a join against
+// the owning item's household_id — so a link id or item id from another
+// household is treated as not found, even when a caller reaches a method
+// directly rather than through app.ItemLinkService's own visibility gate.
+// Implementations live in the adapter package.
 //
-// Deliberately NOT visibility-scoped, matching ItemRepository.Delete's own
-// contract: every method here trusts the caller has already confirmed the
-// owning item is visible to the acting principal. app.ItemLinkService is
-// that caller — every one of its methods resolves the item through a
-// visibility-scoped Get first (see its own doc).
+// Every method here trusts the caller has already confirmed the owning item
+// is VISIBLE to the acting principal (app.ItemLinkService is that caller —
+// every one of its methods resolves the item through a visibility-scoped Get
+// first, see its own doc) — householdID alone stops a cross-household link
+// id or item id from being read or mutated, but does not itself enforce
+// Bin/Item's private-visibility rule among members of the same household.
 //
 // Persistence contracts (the caller sets identity and valid fields; the
 // store sets timestamps):
 //   - Create expects l.ID, a validated l.Label/l.URL (see
-//     ValidateItemLinkLabel/ValidateItemLinkURL), a valid l.ItemID, and
-//     l.Position (typically from a preceding NextPosition call); it
-//     populates CreatedAt/UpdatedAt.
+//     ValidateItemLinkLabel/ValidateItemLinkURL), a valid l.ItemID naming an
+//     item in householdID, and l.Position (typically from a preceding
+//     NextPosition call); it populates CreatedAt/UpdatedAt.
 //   - Update overwrites only label and url — never item id or position.
 //
 // Error contracts:
-//   - Create returns a wrapped ErrItemNotFound when item_id is unknown (the
-//     item_link_item_id_fkey foreign-key violation).
-//   - Update and Delete return ErrItemLinkNotFound when no row matches both
-//     the link id and itemID — a link id from another item is treated as
-//     not found, never mutated, so a caller cannot use one item's link id to
-//     reach into another item's links.
+//   - Create returns a wrapped ErrItemNotFound when item_id is unknown or
+//     belongs to a different household (the item_link_item_id_fkey foreign-key
+//     violation, or the household join finding no match).
+//   - Update and Delete return ErrItemLinkNotFound when no row matches the
+//     link id, itemID, and householdID together — a link id from another
+//     item, or an item from another household, is treated as not found,
+//     never mutated, so a caller cannot use one item's link id (or another
+//     household's item id) to reach into another item's links.
 //   - ListByItem and NextPosition return an empty slice / 0 respectively,
-//     never an error, when the item has no links yet.
+//     never an error, when the item has no links yet, is unknown, or belongs
+//     to a different household.
 type ItemLinkRepository interface {
-	Create(ctx context.Context, l *ItemLink) error
-	// Update overwrites the (itemID, id) link's label and url. Returns
-	// ErrItemLinkNotFound when no row matches both columns.
-	Update(ctx context.Context, itemID ItemID, id ItemLinkID, label, rawURL string) error
-	// Delete removes the (itemID, id) link. Returns ErrItemLinkNotFound when
-	// no row matches both columns.
-	Delete(ctx context.Context, itemID ItemID, id ItemLinkID) error
+	Create(ctx context.Context, householdID identity.HouseholdID, l *ItemLink) error
+	// Update overwrites the (itemID, id) link's label and url, scoped to
+	// householdID. Returns ErrItemLinkNotFound when no row matches all three.
+	Update(ctx context.Context, householdID identity.HouseholdID, itemID ItemID, id ItemLinkID, label, rawURL string) error
+	// Delete removes the (itemID, id) link, scoped to householdID. Returns
+	// ErrItemLinkNotFound when no row matches all three.
+	Delete(ctx context.Context, householdID identity.HouseholdID, itemID ItemID, id ItemLinkID) error
 	// ListByItem returns itemID's links ordered by position, tie-broken by
 	// id — the same deterministic-order convention every other list in this
 	// codebase follows. Returns an empty slice, not an error, when itemID
-	// has no links.
-	ListByItem(ctx context.Context, itemID ItemID) ([]ItemLink, error)
+	// has no links, is unknown, or belongs to a different household.
+	ListByItem(ctx context.Context, householdID identity.HouseholdID, itemID ItemID) ([]ItemLink, error)
 	// NextPosition returns one past itemID's current highest link position
-	// (0 when it has none yet), for Create's caller to assign to a newly
-	// added link.
-	NextPosition(ctx context.Context, itemID ItemID) (int, error)
+	// (0 when it has none yet, is unknown, or belongs to a different
+	// household), for Create's caller to assign to a newly added link.
+	NextPosition(ctx context.Context, householdID identity.HouseholdID, itemID ItemID) (int, error)
 }

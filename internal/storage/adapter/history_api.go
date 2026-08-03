@@ -150,7 +150,7 @@ func (h *HistoryAPIHandlers) ItemHistory(w http.ResponseWriter, r *http.Request)
 	}
 	limit := requestHistoryLimit(r)
 	events, nextCursor, err := loadHistoryEventPage(before, limit, func(page domain.HistoryPage) ([]domain.ItemEvent, error) {
-		return h.itemEvents.ListByItem(r.Context(), itemID, page)
+		return h.itemEvents.ListByItem(r.Context(), viewer.HouseholdID, itemID, page)
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "history api: item history: list", "error", err)
@@ -182,7 +182,7 @@ func (h *HistoryAPIHandlers) BinHistory(w http.ResponseWriter, r *http.Request) 
 	}
 	limit := requestHistoryLimit(r)
 	events, nextCursor, err := loadHistoryEventPage(before, limit, func(page domain.HistoryPage) ([]domain.ItemEvent, error) {
-		return h.binEvents.ListByBin(r.Context(), binID, page)
+		return h.binEvents.ListByBin(r.Context(), viewer.HouseholdID, binID, page)
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "history api: bin history: list", "error", err)

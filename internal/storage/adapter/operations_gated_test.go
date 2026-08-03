@@ -69,6 +69,7 @@ func TestOperationService_AddToBin_MovesHeldItemIntoBin(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after AddToBin: %v", err)
@@ -166,6 +167,7 @@ func TestOperationService_RemoveFromBin_IntegrationPrincipalRejected(t *testing.
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after rejected RemoveFromBin: %v", err)
@@ -251,11 +253,12 @@ func TestOperationService_Edit_DoesNotAdvancePlacementChangedAt(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 	desc := "Two-burner camping stove"
 	update := &domain.Item{ID: it.ID, Name: "Camping stove", Description: &desc, Quantity: 2}
-	if err := f.repo.Update(testCtx(t), update); err != nil {
+	if err := f.repo.Update(testCtx(t), f.household, update); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after Update: %v", err)
@@ -321,6 +324,7 @@ func TestOperationService_RemoveFromBin_ConcurrentAttemptsOnlyOneWins(t *testing
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after concurrent RemoveFromBin: %v", err)
@@ -366,6 +370,7 @@ func TestOperationAndEventCommitTogether(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after AddToBin: %v", err)
@@ -374,7 +379,7 @@ func TestOperationAndEventCommitTogether(t *testing.T) {
 		t.Errorf("placement change did not commit: CurrentBinID = %v, want %v", got.CurrentBinID, bin)
 	}
 
-	events, err := f.events.ListByItem(testCtx(t), it.ID, domain.HistoryPage{Limit: 10})
+	events, err := f.events.ListByItem(testCtx(t), f.household, it.ID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -412,6 +417,7 @@ func TestOperationAndEventRollBackTogether(t *testing.T) {
 	}
 
 	viewer := identity.NewUserPrincipal(creator, identity.RoleAdult, "Creator")
+	viewer.HouseholdID = f.household
 	got, err := f.repo.Get(testCtx(t), viewer, it.ID)
 	if err != nil {
 		t.Fatalf("Get after rejected AddToBin: %v", err)
@@ -420,7 +426,7 @@ func TestOperationAndEventRollBackTogether(t *testing.T) {
 		t.Error("rejected AddToBin must leave the placement unchanged")
 	}
 
-	events, err := f.events.ListByItem(testCtx(t), it.ID, domain.HistoryPage{Limit: 10})
+	events, err := f.events.ListByItem(testCtx(t), f.household, it.ID, domain.HistoryPage{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListByItem: %v", err)
 	}
@@ -464,7 +470,7 @@ func TestOperationService_ReturnToBin_FulfillsOpenReturnRequest(t *testing.T) {
 		t.Fatalf("Operation.FulfilledReturnRequests = %+v, want exactly [%v]", op.FulfilledReturnRequests, req.ID)
 	}
 
-	got, err := f.requests.ListByItem(testCtx(t), it.ID)
+	got, err := f.requests.ListByItem(testCtx(t), f.household, it.ID)
 	if err != nil {
 		t.Fatalf("ListByItem after ReturnToBin: %v", err)
 	}

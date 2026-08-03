@@ -168,12 +168,12 @@ func (h *LocationsAPIHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, h.logger, &req) {
 		return
 	}
-	if err := h.locations.Rename(r.Context(), id, req.Name); err != nil {
+	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
+	if err := h.locations.Rename(r.Context(), viewer, id, req.Name); err != nil {
 		writeDomainError(w, r, h.logger, err, "locations api: update")
 		return
 	}
 
-	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
 	l, err := h.locations.Get(r.Context(), viewer, id)
 	if err != nil {
 		writeDomainError(w, r, h.logger, err, "locations api: update: reload")
@@ -189,7 +189,8 @@ func (h *LocationsAPIHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.locations.Delete(r.Context(), id); err != nil {
+	viewer, _ := identityadapter.CurrentPrincipal(r.Context())
+	if err := h.locations.Delete(r.Context(), viewer, id); err != nil {
 		writeDomainError(w, r, h.logger, err, "locations api: delete")
 		return
 	}
