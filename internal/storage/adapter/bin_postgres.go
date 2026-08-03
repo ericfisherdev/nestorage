@@ -97,8 +97,7 @@ func (r *BinRepository) Create(ctx context.Context, b *domain.Bin) error {
 // household, or exists but viewer may not see it.
 func (r *BinRepository) FindVisibleByID(ctx context.Context, viewer identity.Principal, id domain.BinID) (*domain.Bin, error) {
 	q := binColumns + ` WHERE id = $1 AND ` + householdWhere(1) + ` AND ` + visibilityWhere(2)
-	args := append([]any{id.String()}, householdArgs(viewer)...)
-	args = append(args, viewerArgs(viewer)...)
+	args := scopedArgs([]any{id.String()}, viewer)
 
 	b, err := scanBin(r.dbtx.QueryRow(ctx, q, args...))
 	if err != nil {
@@ -142,7 +141,7 @@ func (r *BinRepository) FindVisibleByCode(ctx context.Context, viewer identity.P
 // visible.
 func (r *BinRepository) ListVisible(ctx context.Context, viewer identity.Principal) ([]domain.Bin, error) {
 	q := binColumns + ` WHERE ` + householdWhere(0) + ` AND ` + visibilityWhere(1) + ` ORDER BY code`
-	args := append(householdArgs(viewer), viewerArgs(viewer)...)
+	args := scopedArgs(nil, viewer)
 
 	rows, err := r.dbtx.Query(ctx, q, args...)
 	if err != nil {
@@ -170,8 +169,7 @@ func (r *BinRepository) ListVisible(ctx context.Context, viewer identity.Princip
 // memory, so a non-owner's private bin never crosses the wire at all.
 func (r *BinRepository) ListVisibleByLocation(ctx context.Context, viewer identity.Principal, locationID domain.LocationID) ([]domain.Bin, error) {
 	q := binColumns + ` WHERE location_id = $1 AND ` + householdWhere(1) + ` AND ` + visibilityWhere(2) + ` ORDER BY code`
-	args := append([]any{locationID.String()}, householdArgs(viewer)...)
-	args = append(args, viewerArgs(viewer)...)
+	args := scopedArgs([]any{locationID.String()}, viewer)
 
 	rows, err := r.dbtx.Query(ctx, q, args...)
 	if err != nil {
@@ -206,11 +204,10 @@ func (r *BinRepository) Update(ctx context.Context, viewer identity.Principal, b
 	q := `
 		UPDATE bin SET name = $2, description = $3, owner_id = $4, visibility = $5, updated_at = now()
 		WHERE id = $1 AND ` + householdWhere(5) + ` AND ` + visibilityWhere(6)
-	args := append(
+	args := scopedArgs(
 		[]any{b.ID.String(), b.Name, b.Description, userIDParam(b.OwnerID), b.Visibility.String()},
-		householdArgs(viewer)...,
+		viewer,
 	)
-	args = append(args, viewerArgs(viewer)...)
 
 	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {
@@ -232,8 +229,7 @@ func (r *BinRepository) Update(ctx context.Context, viewer identity.Principal, b
 // domain.ErrBinNotFound when id is unknown or not mutable by viewer.
 func (r *BinRepository) UpdateVisibility(ctx context.Context, viewer identity.Principal, id domain.BinID, visibility domain.Visibility) error {
 	q := `UPDATE bin SET visibility = $2, updated_at = now() WHERE id = $1 AND ` + householdWhere(2) + ` AND ` + visibilityWhere(3)
-	args := append([]any{id.String(), visibility.String()}, householdArgs(viewer)...)
-	args = append(args, viewerArgs(viewer)...)
+	args := scopedArgs([]any{id.String(), visibility.String()}, viewer)
 
 	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {
@@ -253,8 +249,7 @@ func (r *BinRepository) UpdateVisibility(ctx context.Context, viewer identity.Pr
 // of LocationRepository.Delete's ErrLocationNotEmpty.
 func (r *BinRepository) Delete(ctx context.Context, viewer identity.Principal, id domain.BinID) error {
 	q := `DELETE FROM bin WHERE id = $1 AND ` + householdWhere(1) + ` AND ` + visibilityWhere(2)
-	args := append([]any{id.String()}, householdArgs(viewer)...)
-	args = append(args, viewerArgs(viewer)...)
+	args := scopedArgs([]any{id.String()}, viewer)
 
 	tag, err := r.dbtx.Exec(ctx, q, args...)
 	if err != nil {

@@ -58,10 +58,12 @@ import (
 //	ListMissingThumbnail -> same trusted-batch-job caller as SetThumbnailRef.
 //	ListPrimaryForItems  -> called only by PhotoService.ListPrimaryThumbRefs
 //	                        with itemIDs already scoped by the CALLER's own
-//	                        household+visibility-scoped query (SearchVisible/
-//	                        ListVisible) before it ever reaches this method
-//	                        — see ListPrimaryForItems' own doc in ports.go
-//	                        for why itemIDs is trusted pre-scoped input.
+//	                        household+visibility-scoped query (items_web.go's
+//	                        SearchVisible-backed search results, bins_web.go's
+//	                        ListInBin-backed bin contents) before it ever
+//	                        reaches this method — see ListPrimaryForItems'
+//	                        own doc in ports.go for why itemIDs is trusted
+//	                        pre-scoped input.
 //
 // ---------------------------------------------------------------------------
 
