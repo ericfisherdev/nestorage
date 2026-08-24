@@ -577,3 +577,36 @@ func TestEnsureProfile_ConcurrentSameUser_Idempotent(t *testing.T) {
 		t.Errorf("same user got two different colors: %v vs %v", results[0].Color, results[1].Color)
 	}
 }
+
+// TestEnsureProfile_DeactivatedUserIsNotProvisioned pins the guard that keeps
+// a revoked user from consuming a palette color. Authenticate calls
+// EnsureProfile before it checks Active, so without the guard a deactivated
+// user arriving on a still-live shared session would have a profile row
+// minted for them — and NextColor counts every persisted row, out of a
+// palette of four. Mirrors nestova's
+// TestEnsureMemberProfile_DeactivatedMemberIsNotProvisioned, so the two
+// provisioning paths stay in agreement.
+func TestEnsureProfile_DeactivatedUserIsNotProvisioned(t *testing.T) {
+	repo, pool, householdID := newTestRepoWithPool(t)
+	userID := seedProfilelessMember(t, pool, householdID, "Revoked", "revoked@example.com")
+
+	if _, err := pool.Exec(testCtx(t), "UPDATE identity.member SET active = false WHERE id = $1", userID.String()); err != nil {
+		t.Fatalf("deactivate member: %v", err)
+	}
+
+	u, err := repo.EnsureProfile(testCtx(t), userID)
+	if err != nil {
+		t.Fatalf("EnsureProfile(deactivated): %v", err)
+	}
+	if u == nil || u.Active {
+		t.Fatalf("EnsureProfile(deactivated) user = %+v, want the user returned with Active false", u)
+	}
+
+	var profiles int
+	if err := pool.QueryRow(testCtx(t), "SELECT count(*) FROM profile WHERE member_id = $1", userID.String()).Scan(&profiles); err != nil {
+		t.Fatalf("count profile rows: %v", err)
+	}
+	if profiles != 0 {
+		t.Errorf("profile rows for a deactivated user = %d, want 0", profiles)
+	}
+}

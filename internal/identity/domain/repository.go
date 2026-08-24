@@ -67,6 +67,12 @@ type UserRepository interface {
 	// in one app gets a real profile row in the other on first arrival,
 	// rather than only ever rendering a display-time default. Returns
 	// ErrUserNotFound when id is unknown, exactly like FindByID.
+	//
+	// A DEACTIVATED user is returned unprovisioned: no profile row is
+	// created, since the caller rejects them immediately afterwards and the
+	// household palette is only four colors wide. The user is still returned
+	// (with Active false) rather than reported missing, so this keeps
+	// FindByID's contract.
 	EnsureProfile(ctx context.Context, id UserID) (*User, error)
 }
 

@@ -163,8 +163,10 @@ func (r *UserRepository) List(ctx context.Context) ([]domain.User, error) {
 	return users, nil
 }
 
-// EnsureProfile implements domain.UserRepository.EnsureProfile. It is
-// idempotent: a user with an existing profile row is returned unchanged, at
+// EnsureProfile implements domain.UserRepository.EnsureProfile. A
+// deactivated user is returned as-is, without provisioning (see the guard
+// below). It is otherwise idempotent: a user with an existing profile row is
+// returned unchanged, at
 // the cost of one extra (cheap, indexed) query per call — a deliberate
 // simplicity trade-off over caching "already provisioned" state, since
 // provisioning only ever happens once per user in this app's lifetime and
@@ -183,6 +185,21 @@ func (r *UserRepository) EnsureProfile(ctx context.Context, id domain.UserID) (*
 		return nil, err
 	}
 	if hadProfile {
+		return u, nil
+	}
+	// A deactivated user is never provisioned. Authenticate rejects them a
+	// few lines after this returns (resolveSessionUser's !u.Active branch),
+	// so minting a row would only burn one of the four palette colors —
+	// NextColor counts every persisted row — on someone with no access. The
+	// path is reachable because identity.member.active is shared now:
+	// nestcore's SetMemberActive can flip it without this app's revoker
+	// running, leaving a session Nestova wrote alive until its next request
+	// here, which is exactly the cross-app arrival this method serves.
+	//
+	// The guard belongs here rather than in findByIDRow: FindByID's other
+	// callers — device tokens, password reset, the notify dispatcher and
+	// storage operations — all need deactivated users to stay visible.
+	if !u.Active {
 		return u, nil
 	}
 
